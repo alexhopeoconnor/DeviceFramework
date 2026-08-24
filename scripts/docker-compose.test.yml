@@ -1,0 +1,24 @@
+services:
+  # Endpoint fetcher service - fetches and caches responses from ESP8266/ESP32 devices
+  endpoint-fetcher:
+    build:
+      context: ./endpoint-fetcher
+      dockerfile: Dockerfile
+    ports:
+      - "${FETCHER_PORT:-8080}:8080"
+    networks:
+      - test-network
+    environment:
+      - ASPNETCORE_URLS=http://+:8080
+      - ASPNETCORE_ENVIRONMENT=Production
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:8080/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    restart: on-failure
+
+networks:
+  test-network:
+    driver: bridge

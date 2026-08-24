@@ -1,0 +1,10 @@
+.pio/
+platformio.local.ini.*
+test/.env
+test/test_device_framework/test_config.generated.h
+compile_commands.json
+.clangd
+.cache/
+scripts/endpoint-fetcher/bin/
+scripts/endpoint-fetcher/obj/
+*.tar.gz

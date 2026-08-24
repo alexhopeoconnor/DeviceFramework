@@ -1,0 +1,360 @@
+#include "DeviceFramework.h"
+#include "Utils/TimeUtils.h"
+#include "Utils/CRC32Utils.h"
+#include "DeviceFrameworkDebug.h"
+#include "Storage/DeviceFrameworkRTC.h"
+#include "Logging/DeviceFrameworkWiFiManagerLogSink.h"
+#include "Logging/DeviceFrameworkArduinoHALogSink.h"
+#include "WiFi/DeviceFrameworkWiFi.h"
+#include <ArduinoHALog.h>
+
+namespace {
+DeviceFrameworkWiFiManagerLogSink g_deviceFrameworkWiFiManagerLogSink;
+DeviceFrameworkArduinoHALogSink g_deviceFrameworkArduinoHALogSink;
+}
+
+#ifdef ENABLE_WEB_INTERFACE
+#include "WebInterface/DeviceFrameworkWebSerial.h"
+#include "WebInterface/DeviceFrameworkTemplatePlaceholders.h"
+#include "WebInterface/DeviceFrameworkDeviceStatus.h"
+#endif
+
+// No static registry - it's owned by DeviceFrameworkParameters
+
+// RTC memory management
+RtcData DeviceFramework::rtcData = {};
+bool DeviceFramework::rtcCleared = false;
+bool DeviceFramework::beforeSetupCalled = false;
+
+
+void DeviceFramework::beforeSetup(void (*registerParametersCallback)()) {
+    if (beforeSetupCalled) return;  // Already called
+
+    // Initialize early logging with default log level
+    applyDefaultLogLevel();
+
+    // Setup storage first
+    DeviceFrameworkStorage::setup();
+
+    // Initialize DeviceFrameworkParameters BEFORE RTC check
+    // This registers core parameters so triple reset can save defaults
+    DeviceFrameworkParameters::initialize();
+
+    // Call user callback to register custom parameters BEFORE RTC check
+    // This ensures custom parameters are included in triple reset saves
+    if (registerParametersCallback != nullptr) {
+        registerParametersCallback();
+    }
+
+    // Initialize RTC memory (may call restoreDefaults/saveParameters on triple reset)
+    // All parameters (core + custom) are now registered
+    setupRTCMemory();
+
+    beforeSetupCalled = true;
+}
+
+void DeviceFramework::setup() {
+    // Call beforeSetup if not already called
+    if (!beforeSetupCalled) {
+        beforeSetup();
+    }
+
+    // Load parameters from storage (overrides defaults with saved values)
+    LOG_MEMORY_BEFORE(F("loadParameters()"));
+    loadParameters();
+    LOG_MEMORY_AFTER(F("loadParameters()"));
+
+    // Setup log level system (applies saved/default level)
+    LOG_MEMORY_BEFORE(F("applyLogLevel()"));
+    applyLogLevel(DeviceFrameworkParameters::getLogLevel());
+    LOG_MEMORY_AFTER(F("applyLogLevel()"));
+
+    DeviceFrameworkWiFi::getWiFiManager().setLogSink(&g_deviceFrameworkWiFiManagerLogSink);
+    arduinoHASetLogSink(&g_deviceFrameworkArduinoHALogSink);
+
+    // Setup WiFi
+    // WiFi accesses parameters via DeviceFrameworkParameters
+    LOG_MEMORY_BEFORE(F("DeviceFrameworkWiFi::setup()"));
+    DeviceFrameworkWiFi::setup();
+    LOG_MEMORY_AFTER(F("DeviceFrameworkWiFi::setup()"));
+
+    arduinoHASetNetworkStatusFn([]() -> int {
+        return static_cast<int>(WiFi.status());
+    });
+
+    // Setup mDNS with sanitized hostname
+    LOG_MEMORY_BEFORE(F("DeviceFrameworkMDNS::setup()"));
+    DeviceFrameworkMDNS::setup(getSanitizedHostname());
+    LOG_MEMORY_AFTER(F("DeviceFrameworkMDNS::setup()"));
+
+    // Setup OTA
+    LOG_MEMORY_BEFORE(F("DeviceFrameworkOTA::setup()"));
+    DeviceFrameworkOTA::setup();
+    LOG_MEMORY_AFTER(F("DeviceFrameworkOTA::setup()"));
+
+    // Setup Home Assistant device and MQTT client
+    LOG_MEMORY_BEFORE(F("DeviceFrameworkMQTT::setup()"));
+    DeviceFrameworkMQTT::setup();
+    LOG_MEMORY_AFTER(F("DeviceFrameworkMQTT::setup()"));
+
+    // Setup web interface if enabled
+#ifdef ENABLE_WEB_INTERFACE
+    // DeviceFrameworkWeb::setup() handles template engine logging integration,
+    // DeviceFrameworkTemplatePlaceholders::setup(), and DeviceStatusManager initialization internally
+    LOG_MEMORY_BEFORE(F("DeviceFrameworkWeb::setup()"));
+    DeviceFrameworkWeb::setup();
+    LOG_MEMORY_AFTER(F("DeviceFrameworkWeb::setup()"));
+#endif
+
+    LOG_MEMORY_AFTER(F("DeviceFramework::setup() - Complete"));
+    LOG_INFOLN(F("DeviceFramework setup completed."));
+}
+
+void DeviceFramework::loop() {
+    unsigned long currentMillis = millis();
+
+    // Clear RTC data after timeout
+    if (!rtcCleared && TimeUtils::hasTimeElapsed(currentMillis, 0, CONFIG_resetTimeout)) {
+        DeviceFrameworkRTC::clear();
+        rtcCleared = true;
+    }
+
+    // Handle WiFiManager portal activity
+    DeviceFrameworkWiFi::loop();
+
+    // If WiFi is not connected, exit early as further tasks depend on WiFi
+    if (WiFi.status() != WL_CONNECTED) {
+        return;
+    }
+
+    // Handle mDNS updates
+    DeviceFrameworkMDNS::loop();
+
+    // Handle OTA updates
+    DeviceFrameworkOTA::loop();
+
+    // Handle MQTT reconnection and processing
+    DeviceFrameworkMQTT::loop();
+
+#ifdef ENABLE_WEB_INTERFACE
+    // Handle web interface loop (includes runtime status updates)
+    DeviceFrameworkWeb::loop();
+#endif
+}
+
+void DeviceFramework::setupRTCMemory() {
+    // Initialize RTC storage if not already done
+    DeviceFrameworkRTC::begin();
+
+    // Read RTC memory
+    if (!DeviceFrameworkRTC::read(&rtcData)) {
+        // If read failed, initialize with zeros
+        memset(&rtcData, 0, sizeof(rtcData));
+    }
+
+    // Calculate CRC of the data excluding the CRC field itself
+    uint32_t crcOfData = CRC32Utils::calculate(((uint8_t*)&rtcData) + 4, sizeof(rtcData) - 4);
+
+    if (rtcData.magic == CONFIG_rtcMagicNumber && rtcData.crc32 == crcOfData) {
+        uint32_t timeSinceLastReset = TimeUtils::safeTimeDifference(millis(), rtcData.lastReset);
+
+        if (timeSinceLastReset < CONFIG_resetTimeout) {
+            // Within timeout, increment reset count
+            rtcData.resetCount++;
+        } else {
+            // Timeout expired, reset count to 1
+            rtcData.resetCount = 1;
+        }
+
+        // Always increment total reset count
+        rtcData.totalResetCount++;
+    } else {
+        // No valid data in RTC memory; initialize it
+        rtcData.magic = CONFIG_rtcMagicNumber;
+        rtcData.resetCount = 1;
+        rtcData.totalResetCount = 1;
+    }
+
+    // Update lastReset time
+    rtcData.lastReset = millis();
+
+    // Recalculate CRC
+    rtcData.crc32 = CRC32Utils::calculate(((uint8_t*)&rtcData) + 4, sizeof(rtcData) - 4);
+
+    // Write updated RTC data back
+    DeviceFrameworkRTC::write(&rtcData);
+
+    // Check reset count and perform actions
+    if (rtcData.resetCount == 2) {
+        // Double reset detected
+        LOG_INFOLN(F("Double reset detected! Resetting Wi-Fi credentials."));
+        DeviceFrameworkWiFi::getWiFiManager().resetSettings();  // Reset Wi-Fi settings
+    } else if (rtcData.resetCount >= 3) {
+        // Triple reset detected
+        LOG_INFOLN(F("Triple reset detected! Resetting all configurations."));
+        DeviceFrameworkWiFi::getWiFiManager().resetSettings();
+        clearEEPROM();
+        restoreDefaultParameters(); // Restore default values
+        saveParameters();
+
+        // Reset resetCount
+        rtcData.resetCount = 0;
+
+        // Update RTC memory
+        rtcData.lastReset = millis();
+        rtcData.crc32 = CRC32Utils::calculate(((uint8_t*)&rtcData) + 4, sizeof(rtcData) - 4);
+        DeviceFrameworkRTC::write(&rtcData);
+
+        // Restart the device
+        ESP.restart();
+    }
+}
+
+bool DeviceFramework::isInConfigMode() {
+    return DeviceFrameworkWiFi::isInConfigMode();
+}
+
+String DeviceFramework::generateDeviceSpecificTopic(const HABaseDeviceType* device, const char* suffix, size_t bufferSize) {
+    return DeviceFrameworkMQTT::generateDeviceSpecificTopic(device, suffix, bufferSize);
+}
+
+String DeviceFramework::generateSharedTopic(const char* suffix, size_t bufferSize) {
+    return DeviceFrameworkMQTT::generateSharedTopic(suffix, bufferSize);
+}
+
+void DeviceFramework::addMQTTResetCommand(const char* suffix) {
+    DeviceFrameworkMQTT::addResetCommand(suffix);
+}
+
+void DeviceFramework::addMQTTRestartCommand(const char* suffix) {
+    DeviceFrameworkMQTT::addRestartCommand(suffix);
+}
+
+const char* DeviceFramework::getDeviceName() {
+    return DeviceFrameworkParameters::getDeviceName();
+}
+
+const char* DeviceFramework::getSanitizedHostname() {
+    static String sanitized;
+    // Use getSanitizedHostname (not sanitize only): empty/invalid device name after wipe
+    // must fall back to a non-empty host label or mDNS/OTA hostname setup fails.
+    sanitized = HostnameUtils::getSanitizedHostname(getDeviceName());
+    return sanitized.c_str();
+}
+
+const char* DeviceFramework::getMqttServer() {
+    return DeviceFrameworkParameters::getMqttServer();
+}
+
+uint16_t DeviceFramework::getMqttPort() {
+    return DeviceFrameworkParameters::getMqttPort();
+}
+
+const char* DeviceFramework::getMqttUser() {
+    return DeviceFrameworkParameters::getMqttUser();
+}
+
+const char* DeviceFramework::getMqttPass() {
+    return DeviceFrameworkParameters::getMqttPass();
+}
+
+void DeviceFramework::setDeviceName(const char* name) {
+    DeviceFrameworkParameters::setDeviceName(name);
+}
+
+void DeviceFramework::setMqttServer(const char* server) {
+    DeviceFrameworkParameters::setMqttServer(server);
+}
+
+void DeviceFramework::setMqttPort(uint16_t port) {
+    DeviceFrameworkParameters::setMqttPort(port);
+}
+
+void DeviceFramework::setMqttUser(const char* user) {
+    DeviceFrameworkParameters::setMqttUser(user);
+}
+
+void DeviceFramework::setMqttPass(const char* pass) {
+    DeviceFrameworkParameters::setMqttPass(pass);
+}
+
+const char* DeviceFramework::getCustomParameterValue(const char* id) {
+    return DeviceFrameworkParameters::getValue(id);
+}
+
+void DeviceFramework::setCustomParameterValue(const char* id, const char* value) {
+    DeviceFrameworkParameters::setValue(id, value);
+}
+
+WiFiManager& DeviceFramework::getWiFiManager() {
+    return DeviceFrameworkWiFi::getWiFiManager();
+}
+
+HADevice& DeviceFramework::getHADevice() {
+    return DeviceFrameworkMQTT::getHADevice();
+}
+
+HAMqtt& DeviceFramework::getHAMqtt() {
+    return DeviceFrameworkMQTT::getHAMqtt();
+}
+
+DeviceFrameworkParameterRegistry& DeviceFramework::getParameterRegistry() {
+    return DeviceFrameworkParameters::getRegistry();
+}
+
+void DeviceFramework::registerDeviceCommandHandler(const HABaseDeviceType* device, const char* suffix, CommandHandler handler) {
+    DeviceFrameworkMQTT::registerDeviceCommandHandler(device, suffix, handler);
+}
+
+void DeviceFramework::registerSharedCommandHandler(const char* suffix, CommandHandler handler) {
+    DeviceFrameworkMQTT::registerSharedCommandHandler(suffix, handler);
+}
+
+void DeviceFramework::setSaveConfigCallback(void (*callback)()) {
+    DeviceFrameworkWiFi::setSaveConfigCallback(callback);
+}
+
+void DeviceFramework::setConfigModeCallback(void (*callback)()) {
+    DeviceFrameworkWiFi::setConfigModeCallback(callback);
+}
+
+void DeviceFramework::restoreDefaultParameters() {
+    DeviceFrameworkParameters::restoreDefaults();
+}
+
+void DeviceFramework::clearEEPROM() {
+    DeviceFrameworkStorage::clear();
+}
+
+void DeviceFramework::saveParameters() {
+    DeviceFrameworkParameters::getRegistry().saveToStorage();
+}
+
+void DeviceFramework::loadParameters() {
+    DeviceFrameworkParameters::getRegistry().loadFromStorage();
+}
+
+#ifdef ENABLE_WEB_INTERFACE
+void DeviceFramework::setupWebInterface() {
+    DeviceFrameworkWeb::setup();
+}
+
+void DeviceFramework::shutdownWebInterface() {
+    DeviceFrameworkWeb::shutdown();
+}
+
+void DeviceFramework::restartWebInterface() {
+    DeviceFrameworkWeb::restart();
+}
+
+void DeviceFramework::webInterfaceLoop() {
+    // Web interface loop handles runtime status updates and WebSerial maintenance
+#ifdef ENABLE_WEB_INTERFACE
+    DeviceFrameworkWeb::loop();
+#endif
+}
+
+bool DeviceFramework::isWebInterfaceEnabled() {
+    return DeviceFrameworkWeb::isEnabled();
+}
+#endif

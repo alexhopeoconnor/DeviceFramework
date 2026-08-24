@@ -1,0 +1,54 @@
+{
+  "$schema": "https://raw.githubusercontent.com/platformio/platformio-core/develop/platformio/assets/schema/library.json",
+  "name": "DeviceFramework",
+  "version": "1.0.0",
+  "description": "Reusable ESP8266 and ESP32 device framework with WiFi provisioning, MQTT, OTA, local web UI, and Home Assistant integration.",
+  "keywords": [
+    "iot",
+    "esp8266",
+    "esp32",
+    "wifi",
+    "mqtt",
+    "ota",
+    "mdns",
+    "home-assistant",
+    "web-interface"
+  ],
+  "authors": [
+    {
+      "name": "Alex Hope-O\u2019Connor",
+      "url": "https://github.com/alexhopeoconnor",
+      "maintainer": true
+    }
+  ],
+  "license": "MIT",
+  "homepage": "https://github.com/alexhopeoconnor/DeviceFramework",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/alexhopeoconnor/DeviceFramework.git"
+  },
+  "frameworks": "arduino",
+  "platforms": [
+    "espressif8266",
+    "espressif32"
+  ],
+  "dependencies": {
+    "WiFiManager": "https://github.com/alexhopeoconnor/WiFiManager.git#v3.0.2",
+    "DeviceFrameworkTemplateEngine": "https://github.com/alexhopeoconnor/DFTE.git#v1.0.2",
+    "home-assistant-integration": "https://github.com/alexhopeoconnor/arduino-home-assistant.git#v3.0.0",
+    "madpilot/mDNSResolver": "^0.3.0",
+    "knolleary/PubSubClient": "2.8.0",
+    "ESP32Async/ESPAsyncWebServer": "3.9.1",
+    "bblanchon/ArduinoJson": "7.4.2"
+  },
+  "export": {
+    "include": [
+      "include",
+      "src",
+      "examples",
+      "README.md",
+      "LICENSE",
+      "library.json"
+    ]
+  }
+}
