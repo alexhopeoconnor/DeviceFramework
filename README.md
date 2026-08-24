@@ -46,4 +46,5 @@ Released configuration uses public, pinned Git URLs. To work on sibling library 
 - `./scripts/run-tests.sh hardware --platform esp8266 --port /dev/ttyUSB0 --env-file test/.env` runs the optional connected-device/Docker integration suite. Copy `test/.env.example`; it is ignored and no credentials are cached.
 - `./scripts/prepare-release.sh v1.0.0 --tag` validates the manifest and creates an annotated tag. Push the branch and tag; GitHub Actions runs package validation and creates the GitHub Release.
 
-See [compatibility](docs/COMPATIBILITY.md) and [test setup](docs/TESTING.md).
+See [compatibility](docs/COMPATIBILITY.md), [test setup](docs/TESTING.md), and the
+[development and release guide](docs/DEVELOPMENT.md).
