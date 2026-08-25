@@ -28,10 +28,9 @@ void test_device_framework_setup_verification() {
     TEST_ASSERT_TRUE_MESSAGE(mdnsInitialized,
         "MDNS should be initialized after DeviceFramework::setup()");
 
-    // Verify Storage was initialized during DeviceFramework::setup()
-    bool versionValid = DeviceFrameworkStorage::isVersionValid();
-    TEST_ASSERT_TRUE_MESSAGE(versionValid,
-        "Storage version should be valid after DeviceFramework::setup()");
+    const DeviceFrameworkStorageLoadResult storage = DeviceFrameworkStorage::getLastLoadResult();
+    TEST_ASSERT_TRUE_MESSAGE(storage.hasUsableConfiguration(), "Storage should load a V2 configuration after setup");
+
 
     // Verify ParameterRegistry has core parameters registered
     DeviceFrameworkParameterRegistry& registry = DeviceFramework::getParameterRegistry();

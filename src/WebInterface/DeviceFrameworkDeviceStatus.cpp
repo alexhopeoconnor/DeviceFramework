@@ -1,6 +1,7 @@
 #ifdef ENABLE_WEB_INTERFACE
 #include "DeviceFrameworkDeviceStatus.h"
 #include "../Configuration/DeviceFrameworkParameters.h"
+#include "../Configuration/DeviceFrameworkIdentity.h"
 #include "../WiFi/DeviceFrameworkWiFi.h"
 #include "../MQTT/DeviceFrameworkMQTT.h"
 #include "../Utils/TimeUtils.h"
@@ -202,7 +203,8 @@ void DeviceStatusManager::initializeHardwareInfo() {
         deviceStatus.hardware.flashSpeed = ESP.getFlashChipSpeed() / 1000000; // Convert Hz to MHz
     #endif
 
-    deviceStatus.hardware.version = String(CONFIG_version);
+    const DeviceFrameworkApplicationIdentity& application = DeviceFrameworkIdentity::getApplication();
+    deviceStatus.hardware.version = String(application.firmwareVersion) + F(" (DF ") + DeviceFrameworkIdentity::getLibraryVersion() + F(")");
 
     hardwareInitialized = true;
 }

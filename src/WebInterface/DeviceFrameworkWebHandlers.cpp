@@ -2,6 +2,7 @@
 // Include DeviceFrameworkConfig.h first to ensure config defaults are available
 // when template headers are processed via TemplateEngine.h
 #include "../Configuration/DeviceFrameworkConfig.h"
+#include "../DeviceFramework.h"
 #include "DeviceFrameworkWebHandlers.h"
 #include <memory>
 #include "DeviceFrameworkDeviceStatus.h"
@@ -94,9 +95,15 @@ void DeviceFrameworkWebHandlers::handleAPIControl(AsyncWebServerRequest *request
             delay(1000);
             ESP.restart();
         } else if (body.indexOf("\"action\":\"reset\"") >= 0) {
-            request->send(200, "application/json", "{\"status\":\"success\",\"message\":\"Reset command received\"}");
-        } else if (body.indexOf("\"action\":\"clear_eeprom\"") >= 0) {
-            request->send(200, "application/json", "{\"status\":\"success\",\"message\":\"Clear EEPROM command received\"}");
+            DeviceFramework::reset(DeviceFrameworkResetScope::ParametersOnly);
+            request->send(200, "application/json", "{\"status\":\"success\",\"message\":\"Configuration reset\"}");
+            delay(250);
+            ESP.restart();
+        } else if (body.indexOf("\"action\":\"factory_reset\"") >= 0) {
+            DeviceFramework::reset(DeviceFrameworkResetScope::Factory);
+            request->send(200, "application/json", "{\"status\":\"success\",\"message\":\"Factory reset\"}");
+            delay(250);
+            ESP.restart();
         } else if (body.indexOf("\"action\":\"config_mode\"") >= 0) {
             request->send(200, "application/json", "{\"status\":\"success\",\"message\":\"Config mode command received\"}");
         } else if (body.indexOf("\"action\":\"disconnect_wifi\"") >= 0) {

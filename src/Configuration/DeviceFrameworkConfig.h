@@ -17,7 +17,6 @@ extern uint16_t CONFIG_rtcMemAddr;
 extern uint32_t CONFIG_resetTimeout;
 extern uint16_t CONFIG_eepromStart;
 extern uint16_t CONFIG_eepromSize;
-extern char CONFIG_version[6];
 extern uint32_t CONFIG_dnsResolutionTimeout;
 extern uint32_t CONFIG_dnsCacheDuration;
 extern uint32_t CONFIG_mqttReconnectRateLimit;
@@ -40,10 +39,6 @@ extern uint32_t CONFIG_wsCleanupInterval;
 extern uint32_t CONFIG_mdnsMinFreeHeap;
 extern uint32_t CONFIG_mdnsPacketDrainMinFreeHeap;
 extern uint32_t CONFIG_mdnsPacketDrainInterval;
-
-// Parameter registry configuration
-extern uint16_t CONFIG_maxParameters;
-#define CONFIG_minParameters 6   // Minimum required for core framework parameters
 
 // Template engine configuration
 extern uint16_t CONFIG_templatePlaceholderNameSize;
@@ -72,8 +67,6 @@ typedef struct {
 } RtcData;
 
 // Configuration getters and setters
-const char* getConfigVersion();
-void setConfigVersion(const char* version);
 // The Admin names are retained as compatibility aliases for the shared device password.
 const char* getConfigAdminPassword();
 bool setConfigAdminPassword(const char* password);
@@ -105,8 +98,6 @@ uint32_t getConfigMQTTHAResyncInterval();
 void setConfigMQTTHAResyncInterval(uint32_t interval);
 uint32_t getConfigWiFiReconnectInterval();
 void setConfigWiFiReconnectInterval(uint32_t interval);
-uint16_t getConfigMaxParameters();
-void setConfigMaxParameters(uint16_t maxParams);
 uint32_t getConfigSerialBaudRate();
 void setConfigSerialBaudRate(uint32_t baudRate);
 

@@ -1,4 +1,5 @@
 #include "DeviceFrameworkMQTT.h"
+#include "../Configuration/DeviceFrameworkIdentity.h"
 #include "../Utils/TimeUtils.h"
 #include "../Configuration/DeviceFrameworkConfig.h"
 #include "../Configuration/DeviceFrameworkParameters.h"
@@ -242,7 +243,7 @@ void DeviceFrameworkMQTT::setup() {
     WiFi.macAddress(mac);
     haDevice.setUniqueId(mac, sizeof(mac));
     haDevice.setName(DeviceFrameworkParameters::getDeviceName());
-    haDevice.setSoftwareVersion(CONFIG_version);
+    haDevice.setSoftwareVersion(DeviceFrameworkIdentity::getApplication().firmwareVersion.c_str());
     haDevice.enableExtendedUniqueIds();
 
      // Enable shared availability and MQTT LWT

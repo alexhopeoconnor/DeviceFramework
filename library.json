@@ -1,7 +1,13 @@
 {
   "$schema": "https://raw.githubusercontent.com/platformio/platformio-core/develop/platformio/assets/schema/library.json",
   "name": "DeviceFramework",
-  "version": "1.0.0",
+  "version": "2.0.0",
+  "build": {
+    "extraScript": "tools/platformio/profile.py",
+    "flags": [
+      "-DDEVICEFRAMEWORK_LIBRARY_VERSION=\\\"2.0.0\\\""
+    ]
+  },
   "description": "Reusable ESP8266 and ESP32 device framework with WiFi provisioning, MQTT, OTA, local web UI, and Home Assistant integration.",
   "keywords": [
     "iot",
@@ -48,6 +54,7 @@
       "examples",
       "README.md",
       "LICENSE",
+      "tools",
       "library.json"
     ]
   }

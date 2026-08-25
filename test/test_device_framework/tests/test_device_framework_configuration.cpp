@@ -20,7 +20,6 @@ void test_device_framework_configuration() {
     uint16_t originalMqttPort = DeviceFramework::getMqttPort();
     String originalMqttUser = DeviceFramework::getMqttUser() ? String(DeviceFramework::getMqttUser()) : String("");
     String originalMqttPassword = DeviceFramework::getMqttPass() ? String(DeviceFramework::getMqttPass()) : String("");
-    String originalConfigVersion = getConfigVersion() ? String(getConfigVersion()) : String("");
     String originalAdminPassword = getConfigAdminPassword() ? String(getConfigAdminPassword()) : String("");
 
     // Set test parameters
@@ -82,18 +81,6 @@ void test_device_framework_configuration() {
     TEST_ASSERT_EQUAL_STRING_MESSAGE("", nullAdminPassword,
         "Admin password should be empty string after setting NULL");
 
-    // Test config version - should return default value
-    const char* configVersion = getConfigVersion();
-    TEST_ASSERT_NOT_NULL_MESSAGE(configVersion, "Config version should not be NULL");
-    TEST_ASSERT_TRUE_MESSAGE(strlen(configVersion) > 0,
-        "Config version should not be empty");
-
-    // Test setting empty version (should be allowed)
-    setConfigVersion("");
-    const char* emptyVersion = getConfigVersion();
-    TEST_ASSERT_NOT_NULL_MESSAGE(emptyVersion, "Empty version should not be NULL");
-    TEST_ASSERT_EQUAL_STRING_MESSAGE("", emptyVersion,
-        "Version should be empty string");
 
     // Restore original values
     DeviceFramework::setDeviceName(originalDeviceName.c_str());
@@ -106,9 +93,6 @@ void test_device_framework_configuration() {
     }
     if (originalMqttPassword.length() > 0) {
         DeviceFramework::setMqttPass(originalMqttPassword.c_str());
-    }
-    if (originalConfigVersion.length() > 0) {
-        setConfigVersion(originalConfigVersion.c_str());
     }
     setConfigAdminPassword(originalAdminPassword.c_str());
 

@@ -54,6 +54,9 @@ void DeviceFrameworkParameters::registerCoreParameters() {
     mqttPortMeta.defaultValue = "1883";
     mqttPortMeta.maxLength = 6;
     mqttPortMeta.order = 2;
+    mqttPortMeta.valueType = DeviceFrameworkParameterValueType::UnsignedInteger;
+    mqttPortMeta.hasNumericRange = true;
+    mqttPortMeta.minValue = 1; mqttPortMeta.maxValue = 65535;
     // HTML attributes for better UX - numeric keyboard on mobile
     mqttPortMeta.htmlAttributes.inputmode = "numeric";
     mqttPortMeta.htmlAttributes.autocomplete = "off";
@@ -97,6 +100,8 @@ void DeviceFrameworkParameters::registerCoreParameters() {
     logLevelMeta.defaultValue = logLevelToString(DEFAULT_LOG_LEVEL);
     logLevelMeta.maxLength = 8;  // "Verbose" is 7 chars + null terminator
     logLevelMeta.order = 5;
+    logLevelMeta.valueType = DeviceFrameworkParameterValueType::Enum;
+    logLevelMeta.allowedValues = "Off;Error;Warn;Info;Verbose";
 
     // Home Assistant configuration - use SELECT for dropdown
     logLevelMeta.haDeviceType = HAConfigDeviceType::SELECT;

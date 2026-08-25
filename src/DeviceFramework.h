@@ -19,6 +19,7 @@
 
 // Include our modular components
 #include "Configuration/DeviceFrameworkConfig.h"
+#include "Configuration/DeviceFrameworkIdentity.h"
 #include "Configuration/DeviceFrameworkParameterRegistry.h"
 #include "Configuration/DeviceFrameworkParameters.h"
 #include "DeviceFrameworkDebug.h"
@@ -35,8 +36,20 @@
 // Define CommandHandler type for MQTT command handlers
 typedef void (*CommandHandler)(const uint8_t* payload, const uint16_t length);
 
+enum class DeviceFrameworkResetScope {
+    WiFiOnly,
+    ParametersOnly,
+    Factory
+};
+
 class DeviceFramework {
 public:
+    static bool configureApplication(const char* applicationId, const char* firmwareVersion,
+                                     uint16_t configurationSchema,
+                                     DeviceFrameworkConfigMigrationCallback migration = nullptr);
+    static const char* getLibraryVersion();
+    static const DeviceFrameworkApplicationIdentity& getApplicationIdentity();
+
     // Initialize core systems with optional callback for custom parameter registration
     static void beforeSetup(void (*registerParametersCallback)() = nullptr);
 
@@ -91,11 +104,11 @@ public:
     static void setSaveConfigCallback(void (*callback)());
     static void setConfigModeCallback(void (*callback)());
 
-    // Reset to default parameter values
+    // Reset and configuration persistence
+    static void reset(DeviceFrameworkResetScope scope);
     static void restoreDefaultParameters();
 
-    // Save and load parameters from EEPROM
-    static void clearEEPROM();
+    // Save and load parameters from transactional storage
     static void saveParameters();
     static void loadParameters();
 

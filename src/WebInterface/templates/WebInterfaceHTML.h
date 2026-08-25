@@ -180,8 +180,8 @@ const char PROGMEM spa_content_template[] = R"rawliteral(
             <div class="control-group">
                 <h3>System Controls</h3>
                 <button onclick="restartDevice()" class="btn btn-danger">Restart Device</button>
-                <button onclick="resetToDefaults()" class="btn btn-warning">Reset to Defaults</button>
-                <button onclick="clearEEPROM()" class="btn">Clear EEPROM</button>
+                <button onclick="resetToDefaults()" class="btn btn-warning">Reset Configuration</button>
+                <button onclick="factoryReset()" class="btn btn-danger">Factory Reset</button>
             </div>
 
             <div class="control-group">

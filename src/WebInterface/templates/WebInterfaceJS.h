@@ -1162,25 +1162,25 @@ async function resetToDefaults() {
     }
 }
 
-async function clearEEPROM() {
-    if (confirm('Are you sure you want to clear EEPROM? This will erase all saved settings!')) {
+async function factoryReset() {
+    if (confirm('Factory reset WiFi and all framework configuration?')) {
         try {
             const response = await fetch('/api/control', {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
                 },
-                body: JSON.stringify({ action: 'clear_eeprom' })
+                body: JSON.stringify({ action: 'factory_reset' })
             });
 
             if (response.ok) {
-                showSuccess('Clear EEPROM command sent!');
+                showSuccess('Factory reset started; device is restarting.');
             } else {
-                throw new Error('Failed to send clear EEPROM command');
+                throw new Error('Failed to send factory reset command');
             }
         } catch (error) {
-            console.error('Error clearing EEPROM:', error);
-            showError('Failed to send clear EEPROM command');
+            console.error('Error during factory reset:', error);
+            showError('Failed to send factory reset command');
         }
     }
 }

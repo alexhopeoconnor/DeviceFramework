@@ -169,8 +169,6 @@ void setup() {
     Serial.println("[TEST]     Setting admin password...");
     setConfigAdminPassword("");
 
-    Serial.println("[TEST]     Setting max parameters...");
-    setConfigMaxParameters(8);
 
     Serial.println("[TEST]     Calling DeviceFramework::beforeSetup()...");
     DeviceFramework::beforeSetup([]() {

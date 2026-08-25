@@ -6,6 +6,7 @@
 #include "Logging/DeviceFrameworkWiFiManagerLogSink.h"
 #include "Logging/DeviceFrameworkArduinoHALogSink.h"
 #include "WiFi/DeviceFrameworkWiFi.h"
+#include "Provisioning/DeviceFrameworkProvisioning.h"
 #include <ArduinoHALog.h>
 
 namespace {
@@ -25,6 +26,20 @@ DeviceFrameworkArduinoHALogSink g_deviceFrameworkArduinoHALogSink;
 RtcData DeviceFramework::rtcData = {};
 bool DeviceFramework::rtcCleared = false;
 bool DeviceFramework::beforeSetupCalled = false;
+
+bool DeviceFramework::configureApplication(const char* applicationId, const char* firmwareVersion,
+                                           uint16_t configurationSchema,
+                                           DeviceFrameworkConfigMigrationCallback migration) {
+    return DeviceFrameworkIdentity::configureApplication(applicationId, firmwareVersion, configurationSchema, migration);
+}
+
+const char* DeviceFramework::getLibraryVersion() {
+    return DeviceFrameworkIdentity::getLibraryVersion();
+}
+
+const DeviceFrameworkApplicationIdentity& DeviceFramework::getApplicationIdentity() {
+    return DeviceFrameworkIdentity::getApplication();
+}
 
 
 void DeviceFramework::beforeSetup(void (*registerParametersCallback)()) {
@@ -61,7 +76,17 @@ void DeviceFramework::setup() {
 
     // Load parameters from storage (overrides defaults with saved values)
     LOG_MEMORY_BEFORE(F("loadParameters()"));
-    loadParameters();
+    const DeviceFrameworkStorageLoadResult storageResult = DeviceFrameworkStorage::load();
+    const bool profileApplied = DeviceFrameworkProvisioning::apply(storageResult);
+    if (storageResult.requiresSave || profileApplied) {
+        DeviceFrameworkStorage::save();
+    }
+    if (DeviceFrameworkProvisioning::hasPendingWiFi()) {
+        DeviceFrameworkWiFi::preloadWiFi(
+            DeviceFrameworkProvisioning::getPendingWiFiSSID(),
+            DeviceFrameworkProvisioning::getPendingWiFiPassword()
+        );
+    }
     LOG_MEMORY_AFTER(F("loadParameters()"));
 
     // Setup log level system (applies saved/default level)
@@ -75,7 +100,8 @@ void DeviceFramework::setup() {
     // Setup WiFi
     // WiFi accesses parameters via DeviceFrameworkParameters
     LOG_MEMORY_BEFORE(F("DeviceFrameworkWiFi::setup()"));
-    DeviceFrameworkWiFi::setup();
+    const bool wifiConnected = DeviceFrameworkWiFi::setup();
+    if (wifiConnected) DeviceFrameworkProvisioning::markConnectionSucceeded();
     LOG_MEMORY_AFTER(F("DeviceFrameworkWiFi::setup()"));
 
     arduinoHASetNetworkStatusFn([]() -> int {
@@ -192,10 +218,7 @@ void DeviceFramework::setupRTCMemory() {
     } else if (rtcData.resetCount >= 3) {
         // Triple reset detected
         LOG_INFOLN(F("Triple reset detected! Resetting all configurations."));
-        DeviceFrameworkWiFi::getWiFiManager().resetSettings();
-        clearEEPROM();
-        restoreDefaultParameters(); // Restore default values
-        saveParameters();
+        reset(DeviceFrameworkResetScope::Factory);
 
         // Reset resetCount
         rtcData.resetCount = 0;
@@ -322,16 +345,23 @@ void DeviceFramework::restoreDefaultParameters() {
     DeviceFrameworkParameters::restoreDefaults();
 }
 
-void DeviceFramework::clearEEPROM() {
-    DeviceFrameworkStorage::clear();
+void DeviceFramework::reset(DeviceFrameworkResetScope scope) {
+    if (scope == DeviceFrameworkResetScope::WiFiOnly || scope == DeviceFrameworkResetScope::Factory) {
+        DeviceFrameworkWiFi::getWiFiManager().resetSettings();
+    }
+    if (scope == DeviceFrameworkResetScope::ParametersOnly || scope == DeviceFrameworkResetScope::Factory) {
+        DeviceFrameworkStorage::reset();
+        restoreDefaultParameters();
+        DeviceFrameworkStorage::save();
+    }
 }
 
 void DeviceFramework::saveParameters() {
-    DeviceFrameworkParameters::getRegistry().saveToStorage();
+    DeviceFrameworkStorage::save();
 }
 
 void DeviceFramework::loadParameters() {
-    DeviceFrameworkParameters::getRegistry().loadFromStorage();
+    DeviceFrameworkStorage::load();
 }
 
 #ifdef ENABLE_WEB_INTERFACE

@@ -5,6 +5,8 @@
 #include "../DeviceFrameworkDebug.h"
 #include <WiFiManager.h>
 #include <algorithm>
+#include <stdlib.h>
+#include <math.h>
 
 // Forward declaration for WiFi access
 class DeviceFrameworkWiFi {
@@ -38,17 +40,17 @@ String DeviceFrameworkParameterRegistry::valueForLog(const String& id, const Str
 }
 
 DeviceFrameworkParameterRegistry::DeviceFrameworkParameterRegistry() :
+    parameters(nullptr),
     parameterCount(0),
+    parameterCapacity(0),
     mqttReady(false),
     haResyncPending(false),
     haResyncNextIndex(0),
     lastHAResyncAt(0),
     changeCallback(nullptr) {
     instance = this;
-    // Allocate parameters array to full size upfront
-    parameters = new DeviceFrameworkParameterEntry[CONFIG_maxParameters];
-    if (parameters == nullptr) {
-        LOG_ERRORLN(F("Failed to allocate parameters array in constructor"));
+    if (!ensureParameterCapacity(8)) {
+        LOG_ERRORLN(F("Failed to allocate parameter registry"));
     }
     // Initialize fixed-size arrays to null - will allocate during setup
     wifiManagerRefs = nullptr;
@@ -127,6 +129,11 @@ bool DeviceFrameworkParameterRegistry::registerParameter(const DeviceFrameworkPa
         return false;
     }
 
+    if (!validateValue(meta, meta.defaultValue)) {
+        LOG_WARNLN(F("Parameter default value does not satisfy its validation rules"));
+        return false;
+    }
+
     // Insert into array
     return addParameter(meta);
 }
@@ -170,6 +177,12 @@ bool DeviceFrameworkParameterRegistry::setValue(const String& id, const String& 
     }
 
     String oldValue = entry->value.asString();
+    if (!validateValue(entry->metadata, validatedValue)) {
+        LOG_WARN_SP(F("Rejected invalid value for parameter: "), true);
+        LOG_WARNLN_SP(id, false);
+        return false;
+    }
+
     entry->value.setValue(validatedValue);
 
     LOG_DEBUG_SP(F("Parameter updated: "), true);
@@ -1446,86 +1459,80 @@ const DeviceFrameworkParameterEntry* DeviceFrameworkParameterRegistry::findParam
     return nullptr;
 }
 
-bool DeviceFrameworkParameterRegistry::addParameter(const DeviceFrameworkParameterMetadata& meta) {
-    // Ensure parameters array is allocated
-    if (parameters == nullptr) {
-        parameters = new DeviceFrameworkParameterEntry[CONFIG_maxParameters];
-        if (parameters == nullptr) {
-            LOG_ERRORLN("Failed to allocate parameters array");
-            return false;
-        }
-    }
-
-    // Check against configured maximum (user-configurable limit)
-    if (parameterCount >= CONFIG_maxParameters) {
-        LOG_ERROR_SP(F("Maximum parameter count reached: "), true);
-        LOG_ERROR_SP(String(CONFIG_maxParameters), false);
-        LOG_ERRORLN_SP(F(" (configured limit)"), false);
+bool DeviceFrameworkParameterRegistry::ensureParameterCapacity(size_t required) {
+    static constexpr size_t kInitialCapacity = 8;
+    static constexpr size_t kMaximumCapacity = 32;
+    if (required <= parameterCapacity) return true;
+    if (required > kMaximumCapacity) {
+        LOG_ERRORLN(F("DeviceFramework parameter limit exceeded"));
         return false;
     }
 
-    // Add to end of array
-    parameters[parameterCount] = DeviceFrameworkParameterEntry(meta);
-    parameterCount++;
+    size_t newCapacity = parameterCapacity == 0 ? kInitialCapacity : parameterCapacity;
+    while (newCapacity < required && newCapacity < kMaximumCapacity) newCapacity *= 2;
+    if (newCapacity > kMaximumCapacity) newCapacity = kMaximumCapacity;
 
-    // Don't sort here - keep insertion order for stability
-    // Sorting will be done on-the-fly in getParameterIdsSorted()
-
+    DeviceFrameworkParameterEntry* replacement = new DeviceFrameworkParameterEntry[newCapacity];
+    if (replacement == nullptr) {
+        LOG_ERRORLN(F("Failed to grow parameter registry"));
+        return false;
+    }
+    for (size_t i = 0; i < parameterCount; ++i) replacement[i] = parameters[i];
+    delete[] parameters;
+    parameters = replacement;
+    parameterCapacity = newCapacity;
     return true;
 }
 
-void DeviceFrameworkParameterRegistry::reallocateParameters() {
-    // If we have existing parameters, we need to preserve them
-    if (parameters != nullptr && parameterCount > 0) {
-        // Create temporary array to hold existing parameters
-        DeviceFrameworkParameterEntry* temp = new DeviceFrameworkParameterEntry[parameterCount];
-        if (temp == nullptr) {
-            LOG_ERRORLN("Failed to allocate temporary array for reallocation");
-            return;
-        }
-
-        // Copy existing parameters to temporary array
-        for (size_t i = 0; i < parameterCount; i++) {
-            temp[i] = parameters[i];
-        }
-
-        // Delete old array
-        delete[] parameters;
-
-        // Allocate new array with new size
-        parameters = new DeviceFrameworkParameterEntry[CONFIG_maxParameters];
-        if (parameters == nullptr) {
-            LOG_ERRORLN("Failed to allocate new parameters array");
-            // Restore from temp array
-            parameters = temp;
-            return;
-        }
-
-        // Copy parameters back (up to the new limit)
-        size_t copyCount = (parameterCount > CONFIG_maxParameters) ? CONFIG_maxParameters : parameterCount;
-        for (size_t i = 0; i < copyCount; i++) {
-            parameters[i] = temp[i];
-        }
-
-        // Update parameter count if we had to truncate
-        if (parameterCount > CONFIG_maxParameters) {
-            LOG_WARN_SP(F("Parameter count truncated from "), true);
-            LOG_WARN_SP(String(parameterCount), false);
-            LOG_WARN_SP(F(" to "), false);
-            LOG_WARNLN_SP(String(CONFIG_maxParameters), false);
-            parameterCount = CONFIG_maxParameters;
-        }
-
-        // Clean up temporary array
-        delete[] temp;
-    } else {
-        // No existing parameters, just allocate new array
-        if (parameters != nullptr) {
-            delete[] parameters;
-        }
-        parameters = new DeviceFrameworkParameterEntry[CONFIG_maxParameters];
-        if (parameters == nullptr) {
-            LOG_ERRORLN("Failed to allocate parameters array");
-        }
-    }
+bool DeviceFrameworkParameterRegistry::addParameter(const DeviceFrameworkParameterMetadata& meta) {
+    if (!ensureParameterCapacity(parameterCount + 1)) return false;
+    parameters[parameterCount++] = DeviceFrameworkParameterEntry(meta);
+    return true;
 }
+bool DeviceFrameworkParameterRegistry::validateValue(const DeviceFrameworkParameterMetadata& metadata, const String& value) const {
+    if (metadata.valueType == DeviceFrameworkParameterValueType::String) return true;
+    if (value.length() == 0) return false;
+    char* end = nullptr;
+    double numericValue = 0;
+    switch (metadata.valueType) {
+        case DeviceFrameworkParameterValueType::UnsignedInteger: {
+            if (value.startsWith("-")) return false;
+            const unsigned long parsed = strtoul(value.c_str(), &end, 10);
+            if (end == value.c_str() || *end != 0) return false;
+            numericValue = parsed;
+            break;
+        }
+        case DeviceFrameworkParameterValueType::SignedInteger: {
+            const long parsed = strtol(value.c_str(), &end, 10);
+            if (end == value.c_str() || *end != 0) return false;
+            numericValue = parsed;
+            break;
+        }
+        case DeviceFrameworkParameterValueType::Float:
+            numericValue = strtod(value.c_str(), &end);
+            if (end == value.c_str() || *end != 0) return false;
+            break;
+        case DeviceFrameworkParameterValueType::Boolean:
+            return value == "0" || value == "1" || value.equalsIgnoreCase("true") ||
+                   value.equalsIgnoreCase("false") || value.equalsIgnoreCase("on") ||
+                   value.equalsIgnoreCase("off") || value.equalsIgnoreCase("yes") ||
+                   value.equalsIgnoreCase("no");
+        case DeviceFrameworkParameterValueType::Enum: {
+            const String options = metadata.allowedValues.length() ? metadata.allowedValues : metadata.haConstraints.options;
+            int start = 0;
+            while (start <= static_cast<int>(options.length())) {
+                const int separator = options.indexOf(static_cast<char>(59), start);
+                const String option = options.substring(start, separator < 0 ? options.length() : separator);
+                if (option == value) return true;
+                if (separator < 0) break;
+                start = separator + 1;
+            }
+            return false;
+        }
+        case DeviceFrameworkParameterValueType::String:
+            return true;
+    }
+    if (!isfinite(numericValue)) return false;
+    return !metadata.hasNumericRange || (numericValue >= metadata.minValue && numericValue <= metadata.maxValue);
+}
+#include <math.h>

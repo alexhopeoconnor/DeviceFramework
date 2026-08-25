@@ -21,6 +21,15 @@ enum class DeviceFrameworkParameterUpdateOrigin {
 };
 
 // Home Assistant device types for configuration
+enum class DeviceFrameworkParameterValueType {
+    String,
+    UnsignedInteger,
+    SignedInteger,
+    Float,
+    Boolean,
+    Enum
+};
+
 // Based on ArduinoHA device types suitable for runtime configuration
 enum class HAConfigDeviceType {
     NONE,       // Not exposed to HA

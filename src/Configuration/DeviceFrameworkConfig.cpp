@@ -1,5 +1,4 @@
 #include "DeviceFrameworkConfig.h"
-#include "DeviceFrameworkParameters.h"
 
 // General library configuration
 char CONFIG_adminPassword[32] = "";
@@ -10,14 +9,12 @@ uint32_t CONFIG_rtcMagicNumber = 0xDEADBEEF;
 uint16_t CONFIG_rtcMemAddr = 65;
 uint32_t CONFIG_resetTimeout = 5000;
 uint16_t CONFIG_eepromStart = 64;
-uint16_t CONFIG_eepromSize = 512;
-char CONFIG_version[6] = "V1.0";
+uint16_t CONFIG_eepromSize = 1024;
 uint32_t CONFIG_dnsResolutionTimeout = 2000;  // 2 seconds DNS timeout
 uint32_t CONFIG_dnsCacheDuration = 300000;    // 5 minutes DNS cache
 uint32_t CONFIG_mqttReconnectRateLimit = 5000; // 5 seconds between MQTT reconnection attempts
 uint32_t CONFIG_mqttHAResyncInterval = 100;   // 100ms between paced HA parameter resyncs
 uint32_t CONFIG_serialBaudRate = 9600; // Default serial baud rate
-uint16_t CONFIG_maxParameters = CONFIG_minParameters; // Default to minimum - users must configure for custom params
 
 // Reset tracking configuration defaults
 uint32_t CONFIG_resetCountTimeout = 300000; // 5 minutes - reset count expires after this
@@ -47,19 +44,6 @@ uint16_t CONFIG_templateRamChunkSize = CONFIG_templateRamChunkSize_default;
 
 
 // Configuration getters and setters
-const char* getConfigVersion() {
-    return CONFIG_version;
-}
-
-void setConfigVersion(const char* version) {
-    if (version) {
-        strncpy(CONFIG_version, version, sizeof(CONFIG_version) - 1);
-        CONFIG_version[sizeof(CONFIG_version) - 1] = '\0';
-    } else {
-        CONFIG_version[0] = '\0'; // Set to empty string
-    }
-}
-
 const char* getConfigAdminPassword() {
     return getConfigDevicePassword();
 }
@@ -185,21 +169,6 @@ uint32_t getConfigWiFiReconnectInterval() {
 
 void setConfigWiFiReconnectInterval(uint32_t interval) {
     CONFIG_wifiReconnectInterval = interval;
-}
-
-uint16_t getConfigMaxParameters() {
-    return CONFIG_maxParameters;
-}
-
-void setConfigMaxParameters(uint16_t maxParams) {
-    if (maxParams >= CONFIG_minParameters) {
-        CONFIG_maxParameters = maxParams;
-        // Reallocate parameters array if registry exists
-        DeviceFrameworkParameterRegistry* registry = DeviceFrameworkParameterRegistry::getInstance();
-        if (registry != nullptr) {
-            registry->reallocateParameters();
-        }
-    }
 }
 
 uint32_t getConfigSerialBaudRate() {

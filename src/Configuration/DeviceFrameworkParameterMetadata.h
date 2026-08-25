@@ -13,6 +13,11 @@ struct DeviceFrameworkParameterMetadata {
     String defaultValue;                    // Default value (always stored as string)
     uint8_t maxLength;                      // Maximum string length (for storage and WiFiManager)
     uint16_t order;                         // Storage order (lower values saved first)
+    DeviceFrameworkParameterValueType valueType;
+    bool hasNumericRange;
+    float minValue;
+    float maxValue;
+    String allowedValues;
 
     // Home Assistant configuration (only if SOURCE_HOME_ASSISTANT is set)
     HAConfigDeviceType haDeviceType;        // Type of HA device (NUMBER, SELECT, TEXT)
@@ -33,12 +38,13 @@ struct DeviceFrameworkParameterMetadata {
     DeviceFrameworkParameterMetadata()
         : sources(SOURCE_NONE),
           maxLength(32),
-          order(1000),
+          order(1000), valueType(DeviceFrameworkParameterValueType::String), hasNumericRange(false), minValue(0), maxValue(0),
           haDeviceType(HAConfigDeviceType::NONE) {}
 
     DeviceFrameworkParameterMetadata(const String& id, const String& label, uint8_t sources, const String& defaultValue, uint8_t maxLen = 32, uint16_t ord = 1000)
         : id(id), label(label), sources(sources), defaultValue(defaultValue),
-          maxLength(maxLen), order(ord), haDeviceType(HAConfigDeviceType::NONE) {}
+          maxLength(maxLen), order(ord), valueType(DeviceFrameworkParameterValueType::String),
+          hasNumericRange(false), minValue(0), maxValue(0), haDeviceType(HAConfigDeviceType::NONE) {}
 
     // Check if parameter supports a specific source
     bool supportsSource(DeviceFrameworkParameterSource source) const {

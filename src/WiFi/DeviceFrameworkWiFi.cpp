@@ -43,7 +43,7 @@ void (*DeviceFrameworkWiFi::userSaveParamsCallback)(WiFiManager::WiFiManagerRequ
 void (*DeviceFrameworkWiFi::userSaveConfigCallback)() = nullptr;
 void (*DeviceFrameworkWiFi::userConfigModeCallback)() = nullptr;
 
-void DeviceFrameworkWiFi::setup() {
+bool DeviceFrameworkWiFi::setup() {
     // Get registry reference from DeviceFrameworkParameters
     registry = &DeviceFrameworkParameters::getRegistry();
 
@@ -91,13 +91,21 @@ void DeviceFrameworkWiFi::setup() {
         LOG_WARNLN(F("Initial WiFi connection failed - entering config mode"));
         isConfigMode = true;
         setupWebInterfaceTemplateEngineLogging();
+        return false;
     } else {
         LOG_INFOLN(F("Connected to WiFi on startup"));
         isConfigMode = false;
     }
+    return true;
+}
+
+void DeviceFrameworkWiFi::preloadWiFi(const char* ssid, const char* password) {
+    if (!ssid || !ssid[0]) return;
+    wm.preloadWiFi(ssid, password ? password : "");
 }
 
 void DeviceFrameworkWiFi::loop() {
+    // Process WiFiManager tasks (may block briefly; shutdownConfigPortal uses delay(1000))
     // Process WiFiManager tasks (may block briefly; shutdownConfigPortal uses delay(1000))
     wm.process();
 

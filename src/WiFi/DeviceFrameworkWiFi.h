@@ -35,7 +35,8 @@ private:
     static void configModeCallbackInternal();
 
 public:
-    static void setup();
+    static bool setup();
+    static void preloadWiFi(const char* ssid, const char* password);
     static void loop();
 
     // State management

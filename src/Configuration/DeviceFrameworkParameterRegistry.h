@@ -31,10 +31,11 @@ struct DeviceFrameworkParameterEntry {
 
 class DeviceFrameworkParameterRegistry {
 private:
-    // Core storage - combined metadata and values in sorted array
-    // Dynamic allocation based on CONFIG_maxParameters (configurable limit)
+    // Core storage - combined metadata and values. Capacity grows only while
+    // the application registers parameters during startup.
     DeviceFrameworkParameterEntry* parameters;
     size_t parameterCount;
+    size_t parameterCapacity;
 
     // References to created WiFiManager parameters (fixed-size arrays)
     WiFiManagerParameterRef* wifiManagerRefs;
@@ -63,6 +64,7 @@ public:
     ParameterChangeCallback changeCallback;
 
     // Internal helpers
+    bool validateValue(const DeviceFrameworkParameterMetadata& metadata, const String& value) const;
     void notifyValueChanged(const String& id, const String& oldValue, const String& newValue, DeviceFrameworkParameterUpdateOrigin origin);
     String generateCustomHTML(const HTMLInputAttributes& attrs) const;
     String generateCustomInputHTML(const DeviceFrameworkParameterMetadata& meta) const;
@@ -75,11 +77,10 @@ public:
     DeviceFrameworkParameterEntry* findParameter(const String& id);
     const DeviceFrameworkParameterEntry* findParameter(const String& id) const;
     bool addParameter(const DeviceFrameworkParameterMetadata& meta);
+    bool ensureParameterCapacity(size_t required);
 
     DeviceFrameworkParameterRegistry();
     ~DeviceFrameworkParameterRegistry();
-
-    void reallocateParameters(); // Reallocate when CONFIG_maxParameters changes
 
     // Static callbacks for HA devices
     static void onHANumberCommand(HANumeric value, HANumber* sender);
