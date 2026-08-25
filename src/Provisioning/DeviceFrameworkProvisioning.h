@@ -17,8 +17,10 @@ struct DeviceFrameworkProvisionedParameter {
 
 class DeviceFrameworkProvisioning {
 public:
-    // Applies an optional build-local profile. Bootstrap only seeds an empty
-    // device; reconcile applies once for each new profile revision.
+    // Loads the optional build-local shared device password on every boot.
+    // Bootstrap seeds empty storage or a valid record for another application;
+    // reconcile applies WiFi and parameter values once for each new profile
+    // revision.
     static bool apply(const DeviceFrameworkStorageLoadResult& storageResult);
     static void markConnectionSucceeded();
     static bool hasPendingWiFi();

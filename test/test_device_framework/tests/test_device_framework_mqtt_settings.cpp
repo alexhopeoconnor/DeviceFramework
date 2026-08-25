@@ -67,15 +67,19 @@ void test_device_framework_mqtt_settings() {
     // Test that we can access the MQTT client
     HAMqtt& mqttClient = DeviceFrameworkMQTT::getHAMqtt();
 
-    // Test publishing to shared reset command topic
+    // Test publishing to a harmless registered shared command topic
     String resetTopic = DeviceFrameworkMQTT::generateSharedTopic("reset_command");
+    String testTopic = DeviceFrameworkMQTT::generateSharedTopic("test_command");
     TEST_ASSERT_FALSE_MESSAGE(resetTopic.isEmpty(),
-        "Reset command topic should be generated");
+        "Reset command topic should be generated"
+    );
+    TEST_ASSERT_FALSE_MESSAGE(testTopic.isEmpty(),
+        "Test command topic should be generated");
 
     // Test publishing a test message (this will actually publish to MQTT)
-    bool publishResult = mqttClient.publish(resetTopic.c_str(), "test", false);
+    bool publishResult = mqttClient.publish(testTopic.c_str(), "test", false);
     TEST_ASSERT_TRUE_MESSAGE(publishResult,
         "Should be able to publish test message to MQTT");
 
-    Serial.println("[TEST]     MQTT test message published successfully");
+    Serial.println("[TEST]     Harmless MQTT test message published successfully");
 }

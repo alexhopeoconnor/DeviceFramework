@@ -18,6 +18,7 @@ def option(name):
     except Exception:
         return None
 
+
 profile_path = option("custom_device_profile")
 if not profile_path:
     # A profile is optional. Normal builds never see a generated header.
@@ -70,6 +71,15 @@ if wifi_password and not wifi_ssid:
 device_password = text(document.get("device_password"), "device_password")
 if device_password and not 8 <= len(device_password) <= 31:
     fail("device_password must be empty or 8-31 characters")
+
+# The profile is the only source for the shared OTA password. Endpoint and
+# transport settings remain project-local PlatformIO options, while espota gets
+# its authentication flag from the same device_password compiled into firmware.
+if option("upload_protocol") == "espota" and device_password:
+    configured_upload_flags = option("upload_flags") or ""
+    if "--auth" in str(configured_upload_flags):
+        fail("remove espota --auth from PlatformIO config; use profile device_password")
+    env.Append(UPLOAD_FLAGS=["--auth={}".format(device_password)])
 
 parameters = document.get("parameters", {})
 if not isinstance(parameters, dict):

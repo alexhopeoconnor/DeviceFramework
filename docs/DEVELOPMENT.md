@@ -8,23 +8,26 @@ set.
 
 ## Build without hardware
 
-PlatformIO and Python 3 are required. The compile checks build the complete
-Unity test firmware, but deliberately do not upload or execute it, so no board
-or credentials are needed:
+PlatformIO and Python 3 are required. The compile checks build a minimal clean
+consumer which declares only DeviceFramework; they do not upload or execute
+firmware, so no board or credentials are needed:
 
 ```bash
 ./scripts/run-tests.sh compile --platform esp8266
+./scripts/run-tests.sh compile --platform esp8266 --profile-fixture
 ./scripts/run-tests.sh compile --platform esp32
+./scripts/run-tests.sh compile --platform esp32 --profile-fixture
 ```
 
-The CI workflow runs both commands for every push and pull request, as well as
-the ESP8266 configuration with the web interface disabled.
+CI runs these normal and profile-fixture checks for every push and pull request.
+The normal ESP8266 command also checks the web-interface-free configuration.
 
 ## Run the connected-device suite
 
-The optional hardware suite exercises WiFi, MQTT, storage, and the local
-endpoint fetcher on a connected board. It needs Docker, a reachable MQTT
-broker, a WiFi network, and an unused development device. Copy the template;
+The optional hardware suite exercises WiFi, MQTT, storage, web-interface restart,
+and direct HTTP requests from the development host to a connected board. It needs
+curl and Avahi for automatic mDNS discovery (or an explicit device address), a reachable MQTT broker, a WiFi network,
+and an unused development device. Copy the template;
 the real file is ignored and must never be committed:
 
 ```bash
@@ -34,7 +37,9 @@ cp test/.env.example test/.env
 
 Use `--env-file path/to/file` when the credentials live outside the repository.
 The runner creates its generated test header only for the run and removes it on
-exit. It also starts and stops the local Docker endpoint-fetcher service.
+exit. Profile-fixture builds advertise a unique mDNS name; after Unity completes,
+the host verifies authenticated status, root-page, and 404 responses directly. Set
+`DEVICEFRAMEWORK_TEST_DEVICE_HOST` in the ignored env file when Avahi or mDNS is unavailable.
 
 ## Work against sibling checkouts
 
@@ -50,7 +55,7 @@ change.
 1. Update `library.json`, `CHANGELOG.md`, and documentation for the intended
    semantic version. Keep the compatibility table current when the tested stack
    changes.
-2. Run the two compile checks above; run the hardware suite when its covered
+2. Run the four compile checks above; run the hardware suite when its covered
    behavior changed.
 3. Commit the release preparation, then validate and create the annotated tag:
 

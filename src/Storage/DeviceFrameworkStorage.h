@@ -13,6 +13,10 @@ enum class DeviceFrameworkStorageLoadStatus {
     Migrated,
     LegacyImported,
     Empty,
+    // A valid V2 record belongs to a different APPLICATION_ID. Its values are
+    // deliberately not loaded into this firmware, but an explicit local
+    // bootstrap profile may safely seed this application without an erase.
+    ForeignApplication,
     Corrupt,
     Incompatible
 };

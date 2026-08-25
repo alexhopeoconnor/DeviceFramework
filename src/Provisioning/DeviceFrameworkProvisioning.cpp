@@ -52,10 +52,17 @@ bool DeviceFrameworkProvisioning::apply(const DeviceFrameworkStorageLoadResult& 
     }
 
     activeProfileRevision = DEVICEFRAMEWORK_PROFILE_REVISION;
+    // The shared device password is runtime configuration for this firmware,
+    // not a provisioned parameter. Apply it every boot, independently of the
+    // profile policy that decides whether stored WiFi/parameter values change.
+    if (!setConfigDevicePassword(DEVICEFRAMEWORK_PROFILE_DEVICE_PASSWORD)) {
+        LOG_WARNLN(F("DeviceFramework profile: rejected device password (must be 8-31 characters)"));
+    }
     const DeviceFrameworkProvisioningState previous = DeviceFrameworkStorage::getProvisioningState();
     const bool bootstrap = DEVICEFRAMEWORK_PROFILE_POLICY == DEVICEFRAMEWORK_PROFILE_BOOTSTRAP;
     const bool applyNow = bootstrap
-        ? storageResult.status == DeviceFrameworkStorageLoadStatus::Empty
+        ? storageResult.status == DeviceFrameworkStorageLoadStatus::Empty ||
+              storageResult.status == DeviceFrameworkStorageLoadStatus::ForeignApplication
         : previous.profileHash != activeProfileHash || previous.attemptedRevision != activeProfileRevision;
     if (!applyNow) return false;
 
@@ -63,10 +70,6 @@ bool DeviceFrameworkProvisioning::apply(const DeviceFrameworkStorageLoadResult& 
     next.profileHash = activeProfileHash;
     next.attemptedRevision = activeProfileRevision;
     DeviceFrameworkStorage::setProvisioningState(next);
-
-    if (DEVICEFRAMEWORK_PROFILE_DEVICE_PASSWORD[0] && !setConfigDevicePassword(DEVICEFRAMEWORK_PROFILE_DEVICE_PASSWORD)) {
-        LOG_WARNLN(F("DeviceFramework profile: rejected device password (must be 8-31 characters)"));
-    }
 
     DeviceFrameworkParameterRegistry& registry = DeviceFrameworkParameters::getRegistry();
     for (size_t index = 0; index < DEVICEFRAMEWORK_PROFILE_PARAMETER_COUNT; ++index) {

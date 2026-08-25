@@ -1,5 +1,18 @@
 # Changelog
 
+## 2.0.1
+
+- Treat a fully validated V2 record from another application as an explicit
+  foreign-application state, so a local bootstrap profile can safely provision
+  a new firmware family without an erase while preserving corruption handling.
+
+- Restore a selected profile's shared device password on every boot, even when
+  `bootstrap` correctly leaves matching stored WiFi and parameters untouched.
+- Make that profile password the sole `espota` authentication source and add a
+  safe profiled regression fixture for ESP8266 and ESP32.
+- Correct the PlatformIO dependency metadata, pin WiFiManager 3.0.5, and add
+  board-free clean-consumer compile checks that declare only DeviceFramework.
+
 ## 2.0.0
 
 - Replace positional `V1.0` EEPROM records with application-bound, ID-keyed V2 records in two CRC-validated slots.

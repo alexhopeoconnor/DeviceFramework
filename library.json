@@ -1,11 +1,11 @@
 {
   "$schema": "https://raw.githubusercontent.com/platformio/platformio-core/develop/platformio/assets/schema/library.json",
   "name": "DeviceFramework",
-  "version": "2.0.0",
+  "version": "2.0.1",
   "build": {
     "extraScript": "tools/platformio/profile.py",
     "flags": [
-      "-DDEVICEFRAMEWORK_LIBRARY_VERSION=\\\"2.0.0\\\""
+      "-DDEVICEFRAMEWORK_LIBRARY_VERSION=\\\"2.0.1\\\""
     ]
   },
   "description": "Reusable ESP8266 and ESP32 device framework with WiFi provisioning, MQTT, OTA, local web UI, and Home Assistant integration.",
@@ -38,15 +38,36 @@
     "espressif8266",
     "espressif32"
   ],
-  "dependencies": {
-    "WiFiManager": "https://github.com/alexhopeoconnor/WiFiManager.git#v3.0.2",
-    "DeviceFrameworkTemplateEngine": "https://github.com/alexhopeoconnor/DFTE.git#v1.0.2",
-    "home-assistant-integration": "https://github.com/alexhopeoconnor/arduino-home-assistant.git#v3.0.0",
-    "madpilot/mDNSResolver": "^0.3.0",
-    "knolleary/PubSubClient": "2.8.0",
-    "ESP32Async/ESPAsyncWebServer": "3.9.1",
-    "bblanchon/ArduinoJson": "7.4.2"
-  },
+  "dependencies": [
+    {
+      "name": "WiFiManager",
+      "version": "https://github.com/alexhopeoconnor/WiFiManager.git#v3.0.5"
+    },
+    {
+      "name": "DeviceFrameworkTemplateEngine",
+      "version": "https://github.com/alexhopeoconnor/DFTE.git#v1.0.2"
+    },
+    {
+      "name": "home-assistant-integration",
+      "version": "https://github.com/alexhopeoconnor/arduino-home-assistant.git#v3.0.0"
+    },
+    { "owner": "madpilot", "name": "mDNSResolver", "version": "^0.3.0" },
+    { "owner": "knolleary", "name": "PubSubClient", "version": "2.8.0" },
+    { "owner": "bblanchon", "name": "ArduinoJson", "version": "7.4.2" },
+    { "owner": "ESP32Async", "name": "ESPAsyncWebServer", "version": "3.9.1" },
+    {
+      "owner": "ESP32Async",
+      "name": "ESPAsyncTCP",
+      "version": "2.0.0",
+      "platforms": "espressif8266"
+    },
+    {
+      "owner": "ESP32Async",
+      "name": "AsyncTCP",
+      "version": "3.4.9",
+      "platforms": "espressif32"
+    }
+  ],
   "export": {
     "include": [
       "include",

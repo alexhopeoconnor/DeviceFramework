@@ -13,9 +13,6 @@
 #endif
 
 #ifdef DEVICEFRAMEWORK_TEST_CONFIG_DEFAULTS
-  #define TEST_FETCHER_HOST ""
-  #define TEST_FETCHER_PORT 8080
-  #define TEST_FETCHER_URL ""
   #define TEST_WIFI_SSID ""
   #define TEST_WIFI_PASSWORD ""
   #define TEST_MQTT_SERVER ""

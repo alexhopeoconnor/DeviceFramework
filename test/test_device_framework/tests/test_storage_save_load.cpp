@@ -36,3 +36,35 @@ void test_storage_save_load() {
     TEST_ASSERT_TRUE_MESSAGE(DeviceFrameworkStorage::save(), "Restoring test configuration should save");
     Serial.println("[TEST]   V2 storage save/load/reset tests completed.");
 }
+
+void test_storage_foreign_application_is_distinguished() {
+    const DeviceFrameworkApplicationIdentity originalIdentity = DeviceFramework::getApplicationIdentity();
+
+    TEST_ASSERT_TRUE_MESSAGE(DeviceFrameworkStorage::reset(), "Foreign-application test should start with empty storage");
+    TEST_ASSERT_TRUE_MESSAGE(
+        DeviceFramework::configureApplication("storage-source", "1.0.0", 1),
+        "Source application identity should be valid"
+    );
+    TEST_ASSERT_TRUE_MESSAGE(DeviceFrameworkStorage::save(), "Source application configuration should save");
+
+    TEST_ASSERT_TRUE_MESSAGE(
+        DeviceFramework::configureApplication("storage-target", "1.0.0", 1),
+        "Target application identity should be valid"
+    );
+    const DeviceFrameworkStorageLoadResult foreign = DeviceFrameworkStorage::load();
+    TEST_ASSERT_EQUAL_MESSAGE(
+        static_cast<int>(DeviceFrameworkStorageLoadStatus::ForeignApplication),
+        static_cast<int>(foreign.status),
+        "A valid V2 record for another application must not be reported as corrupt"
+    );
+    TEST_ASSERT_FALSE_MESSAGE(foreign.hasUsableConfiguration(), "Foreign application values must not be loaded");
+
+    TEST_ASSERT_TRUE_MESSAGE(
+        DeviceFramework::configureApplication(
+            originalIdentity.applicationId.c_str(), originalIdentity.firmwareVersion.c_str(),
+            originalIdentity.configurationSchema, originalIdentity.migration
+        ),
+        "Original application identity should restore"
+    );
+    TEST_ASSERT_TRUE_MESSAGE(DeviceFrameworkStorage::save(), "Original test configuration should restore");
+}

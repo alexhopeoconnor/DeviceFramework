@@ -25,6 +25,8 @@ void test_web_interface_methods() {
 
     // Test restart doesn't crash
     DeviceFrameworkWeb::restart();
+    // Async listener rebinding completes on the network scheduler.
+    delay(1000);
 
     // Test methods still work after restart
     bool enabledAfter = DeviceFrameworkWeb::isEnabled();

@@ -165,6 +165,25 @@ bool readSlot(uint8_t slot, std::map<String, String>& values, uint16_t& schema, 
     return true;
 }
 
+bool hasForeignApplicationData() {
+    const uint32_t expectedApplicationHash = applicationHash(DeviceFrameworkIdentity::getApplication().applicationId);
+    for (uint8_t slot = 0; slot < 2; ++slot) {
+        StorageHeader header{};
+        const uint16_t base = slotBase(slot);
+        if (!readHeader(base, header) || header.applicationHash == expectedApplicationHash) continue;
+
+        std::vector<uint8_t> payload(header.payloadLength);
+        for (uint16_t index = 0; index < header.payloadLength; ++index) {
+            payload[index] = EEPROM.read(base + kHeaderSize + index);
+        }
+        if (CRC32Utils::calculate(payload.data(), payload.size()) != header.payloadCrc) continue;
+
+        std::map<String, String> values;
+        if (decodePayload(payload, values)) return true;
+    }
+    return false;
+}
+
 bool hasAnyStoredData() {
     for (uint8_t slot = 0; slot < 2; ++slot) {
         if (EEPROM.read(slotBase(slot)) != 0xff) return true;
@@ -359,9 +378,15 @@ DeviceFrameworkStorageLoadResult DeviceFrameworkStorage::load() {
         return lastLoadResult;
     }
 
+    if (hasForeignApplicationData()) {
+        lastLoadResult = DeviceFrameworkStorageLoadResult(DeviceFrameworkStorageLoadStatus::ForeignApplication, false);
+        return lastLoadResult;
+    }
+
+    const bool containsStoredData = hasAnyStoredData();
     lastLoadResult = DeviceFrameworkStorageLoadResult(
-        hasAnyStoredData() ? DeviceFrameworkStorageLoadStatus::Corrupt : DeviceFrameworkStorageLoadStatus::Empty,
-        !hasAnyStoredData()
+        containsStoredData ? DeviceFrameworkStorageLoadStatus::Corrupt : DeviceFrameworkStorageLoadStatus::Empty,
+        !containsStoredData
     );
     return lastLoadResult;
 }

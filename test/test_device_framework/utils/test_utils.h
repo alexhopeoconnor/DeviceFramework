@@ -2,13 +2,8 @@
 #define TEST_UTILS_H
 
 #include <Arduino.h>
-#include <WiFiClient.h>
-#include <DeviceFrameworkPlatform.h>  // Platform abstraction (includes HTTP client headers)
 #include <DeviceFrameworkDebug.h>
 
-// Include HTTP testing classes
-#include "HTTPTestManager.h"
-#include "CachedEndpointTester.h"
 
 // Test structure and state management
 using TestFn = void(*)();
@@ -21,8 +16,6 @@ struct TestCase {
 
 #define TEST_ENTRY(fn) { #fn, fn, __LINE__ }
 
-// Simple HTTP request utility function for basic health checks
-bool testHttpEndpoint(const String& url, int expectedCode, const String& expectedContent, const String& testName, int timeoutMs = 5000);
 
 // Memory logging utilities for tests
 #ifdef ENABLE_MEMORY_LOGGING

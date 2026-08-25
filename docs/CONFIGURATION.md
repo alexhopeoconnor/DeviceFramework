@@ -12,18 +12,17 @@ the schema only for a rename, unit conversion, incompatible interpretation, or a
 
 ## Optional private profile
 
-A profile is an opt-in build input. It is not committed and it never writes a secrets file into the
-firmware project. Create the ignored directory and copy the safe template:
+A profile is an opt-in build input owned by the consuming firmware. Keep a safe template beside that firmware, such as `profiles.example/bootstrap.json`, and keep real values in its ignored `profiles.local/` directory. The ignored `platformio.local.ini.<machine>` beside the firmware only selects a profile, an OTA endpoint, or local sibling libraries. It contains no credentials itself.
 
-```bash
-mkdir -p device-profiles.local
-# copy a repository-specific non-secret profile example into device-profiles.local/
-# copy the consuming project's platformio.local.example.ini to an ignored platformio.local.ini.<machine>
+```text
+my-firmware/
+├── platformio.ini                    # tracked release build
+├── platformio.local.example.ini      # tracked local selector example
+├── profiles.example/bootstrap.json   # tracked safe template
+└── profiles.local/home.json          # ignored real profile
 ```
 
-Set real WiFi, MQTT, and device-password values in `device-profiles.local/your-firmware.json`.
-The generated header lives only under `.pio`; it is not a source file and is removed with the build
-directory. `platformio.local.ini.*` and `device-profiles.local/` are ignored by Git.
+The generated C++ header lives only under `.pio`; it is not a source file and is removed with the build directory. The library-owned PlatformIO/SCons hook uses only Python’s standard library. Sketches do not declare `extra_scripts`, manage a Python environment, or parse credentials. With no `custom_device_profile` option, it does nothing.
 
 The profile compiler accepts this strict JSON shape:
 
@@ -38,22 +37,21 @@ The profile compiler accepts this strict JSON shape:
 }
 ```
 
-`bootstrap` seeds only a device whose DeviceFramework storage is empty. `reconcile` applies once
-for every new profile ID or revision; it records both an attempt and a successful WiFi connection.
-It therefore does not overwrite portal-managed values on every boot. Increase `profile.revision` to
-deliberately apply a changed reconciliation profile.
+`bootstrap` is the safe default for a new device. It applies when storage is empty or when a fully valid V2 record belongs to a different `APPLICATION_ID`; an explicit profile can therefore hand a board from one firmware family to another without a preliminary erase. It does not overwrite matching-application configuration or unverified/corrupt data.
 
-The DeviceFramework PlatformIO package owns the Python profile compiler. It uses only Python’s
-standard library and is run by PlatformIO/SCons; sketches do not declare `extra_scripts` or manage a
-separate Python environment. With no `custom_device_profile` option, it does nothing.
+`reconcile` applies once for each new profile ID or revision and records the attempt before WiFi connects, so it does not rewrite portal-managed values on every boot. Increase `profile.revision` after deliberately changing a reconciliation profile; a failed initial WiFi attempt also counts as an attempt.
 
-## Reset and migration behavior
 
-- **Reset Configuration** retains WiFi credentials and resets framework parameters to their defaults.
-- **Factory Reset** clears WiFi credentials and both transactional configuration slots.
-- A V1 positional EEPROM record is imported once when it exactly matches the known legacy layout, then
-  rewritten as V2. V1 import is intentionally bounded and will be removed in a later major release.
-- A saved schema newer than the firmware is not loaded. A firmware schema newer than the saved schema
-  requires the application migration callback to approve the transformation.
+### Shared device password and OTA
 
-Normal builds need no profile. This keeps OTA upgrades safe: an unprofiled new firmware reads the
+`device_password` is intentionally separate from the stored parameter configuration. A selected profile installs it into runtime memory on **every boot**, before WiFiManager, Arduino OTA, HTTP Basic authentication, and WebSerial start. Profile policy controls only WiFi and parameter seeding; an already-applied `bootstrap` profile therefore continues protecting ordinary reboots and OTA updates without rewriting saved configuration.
+
+The password is not written to the V2 configuration record. Build every protected USB or OTA firmware with the same ignored local profile. For an `espota` upload, the library hook supplies PlatformIO's `--auth` flag from that same `device_password`; the local INI needs only the upload protocol and endpoint. Do not add a separate `--auth` option.
+
+## Normal builds, migration, and reset
+
+A normal build has no `custom_device_profile`. It generates no private header, starts with an empty device password, and never pre-seeds or overwrites saved configuration. Matching V2 data is loaded; a valid record for another application remains isolated and the new firmware uses defaults until its normal provisioning flow or an explicit profile provides values. Use this profile-free mode only for an intentionally open local device or interactive provisioning.
+
+Adding, removing, or reordering parameter IDs requires no schema change. Bump the application schema only for a semantic conversion and supply a `DeviceFrameworkConfigMigrationCallback`; return `false` when a prior schema cannot be transformed safely. A firmware never loads a stored schema newer than itself.
+
+**Reset Configuration** retains WiFi credentials and restores framework parameters to defaults. **Factory Reset** clears WiFi credentials and both transactional configuration slots. A V1 positional record is imported only when it exactly matches the bounded legacy layout, then rewritten as V2; that transitional reader will be removed in a future major release.

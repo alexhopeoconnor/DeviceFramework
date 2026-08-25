@@ -82,11 +82,24 @@ void DeviceFrameworkWeb::cleanup() {
 void DeviceFrameworkWeb::restart() {
     LOG_DEBUGLN(F("Restarting web interface..."));
 
-    // Clean up resources
-    cleanup();
+    // Destroying an active AsyncWebServer can leave ESP8266 TCP callbacks
+    // pointing at freed handlers. Keep routes and WebSerial ownership stable;
+    // restart only the listening socket. Dynamic route authentication reads the
+    // current shared device password for each request.
+    if (DeviceFrameworkWiFi::isInConfigMode()) {
+        shutdown();
+        return;
+    }
+    if (!webServer) {
+        setup();
+        return;
+    }
 
-    // Re-setup
-    setup();
+    webServer->end();
+    // Give ESPAsyncTCP one scheduler turn to release the previous listener.
+    delay(50);
+    webServer->begin();
+    webInterfaceEnabled = true;
 }
 
 void DeviceFrameworkWeb::shutdown() {

@@ -17,15 +17,23 @@
 #ifdef DF_PLATFORM_ESP8266
     #include <ESP8266WiFi.h>
     #include <ESP8266mDNS.h>
-    #define DF_DEFAULT_HOSTNAME "esp8266"
-    #define DF_DEFAULT_DEVICE_NAME "esp8266-controller"
+    #ifndef DF_DEFAULT_HOSTNAME
+        #define DF_DEFAULT_HOSTNAME "esp8266"
+    #endif
+    #ifndef DF_DEFAULT_DEVICE_NAME
+        #define DF_DEFAULT_DEVICE_NAME "esp8266-controller"
+    #endif
     // ESP8266 uses system_rtc_mem_read/write
     #define DF_HAS_RTC_MEMORY
 #elif defined(DF_PLATFORM_ESP32)
     #include <WiFi.h>
     #include <ESPmDNS.h>
-    #define DF_DEFAULT_HOSTNAME "esp32"
-    #define DF_DEFAULT_DEVICE_NAME "esp32-controller"
+    #ifndef DF_DEFAULT_HOSTNAME
+        #define DF_DEFAULT_HOSTNAME "esp32"
+    #endif
+    #ifndef DF_DEFAULT_DEVICE_NAME
+        #define DF_DEFAULT_DEVICE_NAME "esp32-controller"
+    #endif
     // ESP32 will use Preferences API for persistent storage
     #define DF_HAS_PREFERENCES
     #include <Preferences.h>

@@ -13,6 +13,7 @@ public:
     // Main interface methods
     static void setup();
     static void loop();
+    // Safely rebinds the HTTP listener without destroying active async handlers.
     static void restart();
     static void shutdown();
     static bool isEnabled();

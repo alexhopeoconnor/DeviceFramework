@@ -54,11 +54,17 @@ void test_device_framework_configuration() {
     TEST_ASSERT_EQUAL_STRING_MESSAGE("testpass", mqttPass,
         "MQTT password should be set to 'testpass'");
 
-    // Test admin password - should return empty value (set for testing)
+    // A profile fixture sets the shared password at setup; ordinary test builds
+    // intentionally start open so their behaviour remains covered too.
     const char* adminPassword = getConfigAdminPassword();
     TEST_ASSERT_NOT_NULL_MESSAGE(adminPassword, "Admin password should not be NULL");
+#if defined(DEVICEFRAMEWORK_HAS_LOCAL_PROFILE) && DEVICEFRAMEWORK_HAS_LOCAL_PROFILE
+    TEST_ASSERT_EQUAL_STRING_MESSAGE("profile-fixture-password", adminPassword,
+        "Profiled test firmware should install its shared device password");
+#else
     TEST_ASSERT_EQUAL_STRING_MESSAGE("", adminPassword,
         "Admin password should be empty for testing");
+#endif
 
     // Test setting admin password
     setConfigAdminPassword("testadmin");

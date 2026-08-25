@@ -18,6 +18,8 @@ void test_eeprom_storage_methods();
 // Group 3: Configuration & Storage
 void test_device_framework_configuration();
 void test_storage_save_load();
+void test_storage_foreign_application_is_distinguished();
+void test_profile_password_is_restored_without_reprovisioning();
 
 // Group 4: Network-Dependent
 void test_wifi_manager_state();
@@ -30,7 +32,6 @@ void test_parameter_registry_ha_origin_updates_shadow_state();
 
 // Group 6: Web Interface
 void test_web_interface_methods();
-void test_web_interface_http_requests();
 
 // Dummy test device entities (simulating typical consuming sketch)
 extern HASensorNumber testSensor;
