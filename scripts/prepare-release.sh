@@ -6,6 +6,11 @@ tag="${1:-}"
 [[ "${2:-}" == "" || "${2:-}" == "--tag" ]] || { echo "Usage: $0 vMAJOR.MINOR.PATCH [--tag]" >&2; exit 2; }
 version="${tag#v}"
 manifest_version="$(sed -n 's/.*"version": "\([^"]*\)".*/\1/p' library.json | head -n 1)"
+grep -q "^## $version$" CHANGELOG.md || {
+    echo "CHANGELOG.md has no $version heading" >&2
+    exit 1
+}
+git diff --check
 [[ "$manifest_version" == "$version" ]] || { echo "library.json is $manifest_version, expected $version" >&2; exit 1; }
 package_dir="$(mktemp -d)"
 trap 'rm -rf "$package_dir"' EXIT

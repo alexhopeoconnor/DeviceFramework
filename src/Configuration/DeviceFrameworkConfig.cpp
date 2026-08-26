@@ -1,7 +1,7 @@
 #include "DeviceFrameworkConfig.h"
 
 // General library configuration
-char CONFIG_adminPassword[32] = "";
+char CONFIG_devicePassword[32] = "";
 uint32_t CONFIG_configModeTimeout = 120000;
 uint32_t CONFIG_configLEDToggleRate = 500;
 uint32_t CONFIG_wifiReconnectInterval = 5000;   // Attempt WiFi reconnect every 5 seconds when offline
@@ -44,32 +44,19 @@ uint16_t CONFIG_templateRamChunkSize = CONFIG_templateRamChunkSize_default;
 
 
 // Configuration getters and setters
-const char* getConfigAdminPassword() {
-    return getConfigDevicePassword();
-}
-
-bool setConfigAdminPassword(const char* password) {
-    return setConfigDevicePassword(password);
-}
-
 const char* getConfigDevicePassword() {
-    return CONFIG_adminPassword;
+    return CONFIG_devicePassword;
+}
+
+bool isConfigDevicePasswordValid(const char* password) {
+    const size_t length = password ? strlen(password) : 0;
+    return length == 0 || (length >= 8 && length < sizeof(CONFIG_devicePassword));
 }
 
 bool setConfigDevicePassword(const char* password) {
-    if (password == nullptr || password[0] == '\0') {
-        CONFIG_adminPassword[0] = '\0';
-        return true;
-    }
-
-    const size_t length = strlen(password);
-    // WPA2 access points require at least eight characters. Rejecting invalid
-    // input keeps all four protected interfaces on the same password policy.
-    if (length < 8 || length >= sizeof(CONFIG_adminPassword)) {
-        return false;
-    }
-
-    memcpy(CONFIG_adminPassword, password, length + 1);
+    if (!isConfigDevicePasswordValid(password)) return false;
+    const char* value = password ? password : "";
+    memcpy(CONFIG_devicePassword, value, strlen(value) + 1);
     return true;
 }
 

@@ -1,5 +1,12 @@
 # Changelog
 
+## 2.1.0
+
+- Replace V2/V1 storage readers with V3 transactional records that bind the active shared device password to the same CRC-validated configuration write as parameters and provisioning state.
+- Make local profiles initial seeds and recovery fallbacks only. A valid V3 password now survives ordinary boots and later profiled OTA firmware; runtime rotation is available through `DeviceFramework::setDevicePassword()` and the optional web interface.
+- Classify DFC2 without decoding it, allowing an explicitly selected profile to replace it in one normal boot while avoiding legacy mappers and erase-only update flows.
+- Remove obsolete AdminPassword compatibility aliases and redundant web-loop sketch boilerplate; document V3 reset, profile, password-rotation, and OTA behavior.
+
 ## 2.0.1
 
 - Treat a fully validated V2 record from another application as an explicit

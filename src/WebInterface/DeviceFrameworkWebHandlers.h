@@ -12,8 +12,12 @@ public:
     static void handleWebNotFound(AsyncWebServerRequest *request);
     static void handleAPIStatus(AsyncWebServerRequest *request);
     static void handleAPIControl(AsyncWebServerRequest *request);
+    static void handleAPIDevicePassword(AsyncWebServerRequest *request);
 
     // Requires HTTP Basic authentication only when a device password is set.
+    // Completes delayed restarts after an async response has been queued.
+    static void loop();
+
     static bool isAuthenticated(AsyncWebServerRequest *request);
 
     // Streaming response

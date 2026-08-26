@@ -17,10 +17,10 @@ struct DeviceFrameworkProvisionedParameter {
 
 class DeviceFrameworkProvisioning {
 public:
-    // Loads the optional build-local shared device password on every boot.
-    // Bootstrap seeds empty storage or a valid record for another application;
-    // reconcile applies WiFi and parameter values once for each new profile
-    // revision.
+    // A selected profile seeds an empty/foreign/DFC2 record and provides a
+    // RAM-only password fallback for corrupt storage. Valid V3 records retain
+    // their password; reconcile applies WiFi and parameter values once per
+    // profile revision.
     static bool apply(const DeviceFrameworkStorageLoadResult& storageResult);
     static void markConnectionSucceeded();
     static bool hasPendingWiFi();

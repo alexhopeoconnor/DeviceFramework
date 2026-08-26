@@ -52,18 +52,32 @@ bool DeviceFrameworkProvisioning::apply(const DeviceFrameworkStorageLoadResult& 
     }
 
     activeProfileRevision = DEVICEFRAMEWORK_PROFILE_REVISION;
-    // The shared device password is runtime configuration for this firmware,
-    // not a provisioned parameter. Apply it every boot, independently of the
-    // profile policy that decides whether stored WiFi/parameter values change.
-    if (!setConfigDevicePassword(DEVICEFRAMEWORK_PROFILE_DEVICE_PASSWORD)) {
-        LOG_WARNLN(F("DeviceFramework profile: rejected device password (must be 8-31 characters)"));
-    }
     const DeviceFrameworkProvisioningState previous = DeviceFrameworkStorage::getProvisioningState();
     const bool bootstrap = DEVICEFRAMEWORK_PROFILE_POLICY == DEVICEFRAMEWORK_PROFILE_BOOTSTRAP;
+    const bool initialConfiguration =
+        storageResult.status == DeviceFrameworkStorageLoadStatus::Empty ||
+        storageResult.status == DeviceFrameworkStorageLoadStatus::ForeignApplication ||
+        storageResult.status == DeviceFrameworkStorageLoadStatus::UnsupportedLegacyFormat;
+    const bool passwordFallback = initialConfiguration ||
+        storageResult.status == DeviceFrameworkStorageLoadStatus::Corrupt;
+
+    // A local profile is an initial seed and recovery fallback, not the source
+    // of truth after a V3 record has been committed. This preserves a password
+    // changed at runtime across every later boot and OTA update.
+    if (passwordFallback && !setConfigDevicePassword(DEVICEFRAMEWORK_PROFILE_DEVICE_PASSWORD)) {
+        LOG_WARNLN(F("DeviceFramework profile: rejected device password (must be empty or 8-31 characters)"));
+        return false;
+    }
+
+    // Corrupt or schema-incompatible V3 data must not be overwritten by an
+    // automatic profile reconcile. Corrupt data still receives the RAM-only
+    // profile fallback so the local recovery surfaces remain usable.
+    if (!initialConfiguration && !storageResult.hasUsableConfiguration()) return false;
+
     const bool applyNow = bootstrap
-        ? storageResult.status == DeviceFrameworkStorageLoadStatus::Empty ||
-              storageResult.status == DeviceFrameworkStorageLoadStatus::ForeignApplication
-        : previous.profileHash != activeProfileHash || previous.attemptedRevision != activeProfileRevision;
+        ? initialConfiguration
+        : initialConfiguration || previous.profileHash != activeProfileHash ||
+              previous.attemptedRevision != activeProfileRevision;
     if (!applyNow) return false;
 
     DeviceFrameworkProvisioningState next = previous;

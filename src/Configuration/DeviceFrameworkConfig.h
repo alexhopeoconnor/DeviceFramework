@@ -5,10 +5,10 @@
 
 // General library configuration
 // One optional password shared by the WiFi configuration portal, Arduino OTA,
-// HTTP Basic authentication, and WebSerial. Leave it empty only when the
-// device is intentionally managed on an open local network. WiFi access-point
-// security requires 8–31 characters when a password is enabled.
-extern char CONFIG_adminPassword[32];
+// HTTP Basic authentication, and WebSerial. This is runtime state; the
+// transactional storage layer owns its durable value. Leave it empty only
+// when the device is intentionally managed on an open local network.
+extern char CONFIG_devicePassword[32];
 extern uint32_t CONFIG_configModeTimeout;
 extern uint32_t CONFIG_configLEDToggleRate;
 extern uint32_t CONFIG_wifiReconnectInterval;
@@ -67,12 +67,10 @@ typedef struct {
 } RtcData;
 
 // Configuration getters and setters
-// The Admin names are retained as compatibility aliases for the shared device password.
-const char* getConfigAdminPassword();
-bool setConfigAdminPassword(const char* password);
 const char* getConfigDevicePassword();
-// Empty disables local authentication. A non-empty value must contain 8–31 characters
-// so the WiFi provisioning AP, OTA, HTTP Basic authentication, and WebSerial agree.
+// Empty disables local authentication. A non-empty value must contain 8–31
+// characters so all protected local surfaces share the same policy.
+bool isConfigDevicePasswordValid(const char* password);
 bool setConfigDevicePassword(const char* password);
 uint32_t getConfigModeTimeout();
 void setConfigModeTimeout(uint32_t timeout);

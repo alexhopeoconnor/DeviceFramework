@@ -200,6 +200,20 @@ const char PROGMEM spa_content_template[] = R"rawliteral(
             </div>
 
             <div class="control-group">
+                <h3>Device Password</h3>
+                <p>One optional password protects the provisioning AP, OTA, this web interface, and WebSerial.</p>
+                <div class="control-item">
+                    <label for="device-password">New password (8–31 characters):</label>
+                    <input id="device-password" type="password" autocomplete="new-password" maxlength="31">
+                </div>
+                <div class="control-item">
+                    <label for="device-password-confirm">Confirm new password:</label>
+                    <input id="device-password-confirm" type="password" autocomplete="new-password" maxlength="31">
+                </div>
+                <button onclick="updateDevicePassword()" class="btn">Save Password and Restart</button>
+            </div>
+
+            <div class="control-group">
                 <h3>WiFi Controls</h3>
                 <button onclick="enterConfigMode()" class="btn">Enter Config Mode</button>
                 <button onclick="disconnectWiFi()" class="btn">Disconnect WiFi</button>

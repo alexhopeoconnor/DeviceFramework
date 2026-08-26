@@ -1,11 +1,11 @@
 {
   "$schema": "https://raw.githubusercontent.com/platformio/platformio-core/develop/platformio/assets/schema/library.json",
   "name": "DeviceFramework",
-  "version": "2.0.1",
+  "version": "2.1.0",
   "build": {
     "extraScript": "tools/platformio/profile.py",
     "flags": [
-      "-DDEVICEFRAMEWORK_LIBRARY_VERSION=\\\"2.0.1\\\""
+      "-DDEVICEFRAMEWORK_LIBRARY_VERSION=\\\"2.1.0\\\""
     ]
   },
   "description": "Reusable ESP8266 and ESP32 device framework with WiFi provisioning, MQTT, OTA, local web UI, and Home Assistant integration.",
@@ -41,7 +41,7 @@
   "dependencies": [
     {
       "name": "WiFiManager",
-      "version": "https://github.com/alexhopeoconnor/WiFiManager.git#v3.0.5"
+      "version": "https://github.com/alexhopeoconnor/WiFiManager.git#v3.0.6"
     },
     {
       "name": "DeviceFrameworkTemplateEngine",
@@ -54,15 +54,15 @@
     { "owner": "madpilot", "name": "mDNSResolver", "version": "^0.3.0" },
     { "owner": "knolleary", "name": "PubSubClient", "version": "2.8.0" },
     { "owner": "bblanchon", "name": "ArduinoJson", "version": "7.4.2" },
-    { "owner": "ESP32Async", "name": "ESPAsyncWebServer", "version": "3.9.1" },
+    { "owner": "esp32async", "name": "ESPAsyncWebServer", "version": "3.9.1" },
     {
-      "owner": "ESP32Async",
+      "owner": "esp32async",
       "name": "ESPAsyncTCP",
       "version": "2.0.0",
       "platforms": "espressif8266"
     },
     {
-      "owner": "ESP32Async",
+      "owner": "esp32async",
       "name": "AsyncTCP",
       "version": "3.4.9",
       "platforms": "espressif32"

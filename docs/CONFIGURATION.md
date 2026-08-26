@@ -6,7 +6,7 @@ Each consuming firmware declares three independent values in `include/FirmwareId
 - `FIRMWARE_VERSION` is shown by Home Assistant and the device status API.
 - `CONFIGURATION_SCHEMA` changes only when a saved value needs a semantic migration.
 
-Adding, removing, or reordering parameters does not need a schema bump. DeviceFramework 2 stores
+Adding, removing, or reordering parameters does not need a schema bump. DeviceFramework V3 stores
 parameter values by ID, ignores unknown IDs, and leaves new IDs at their registered defaults. Bump
 the schema only for a rename, unit conversion, incompatible interpretation, or another transformation.
 
@@ -37,21 +37,31 @@ The profile compiler accepts this strict JSON shape:
 }
 ```
 
-`bootstrap` is the safe default for a new device. It applies when storage is empty or when a fully valid V2 record belongs to a different `APPLICATION_ID`; an explicit profile can therefore hand a board from one firmware family to another without a preliminary erase. It does not overwrite matching-application configuration or unverified/corrupt data.
+`bootstrap` is the safe default for a new device. It applies when storage is empty, when a fully valid V3 record belongs to a different `APPLICATION_ID`, or when a recognised DFC2 record needs replacing. An explicit profile can therefore hand a board from one firmware family to another, or move it from 2.0.x storage to V3, without a preliminary erase. It does not overwrite matching-application configuration, unverified/corrupt V3 data, or a compatible schema that requires an explicit migration.
 
 `reconcile` applies once for each new profile ID or revision and records the attempt before WiFi connects, so it does not rewrite portal-managed values on every boot. Increase `profile.revision` after deliberately changing a reconciliation profile; a failed initial WiFi attempt also counts as an attempt.
 
 
 ### Shared device password and OTA
 
-`device_password` is intentionally separate from the stored parameter configuration. A selected profile installs it into runtime memory on **every boot**, before WiFiManager, Arduino OTA, HTTP Basic authentication, and WebSerial start. Profile policy controls only WiFi and parameter seeding; an already-applied `bootstrap` profile therefore continues protecting ordinary reboots and OTA updates without rewriting saved configuration.
+`device_password` is the profile's **initial seed**, not a second authority. On empty storage, an explicitly selected bootstrap/reconcile profile, or recognised DFC2 data, DeviceFramework applies it before WiFiManager, Arduino OTA, HTTP Basic authentication, and WebSerial start, then writes one CRC-protected V3 record containing both the parameters and active password. A corrupt V3 record receives that password only as a RAM recovery fallback; it is never overwritten automatically.
 
-The password is not written to the V2 configuration record. Build every protected USB or OTA firmware with the same ignored local profile. For an `espota` upload, the library hook supplies PlatformIO's `--auth` flag from that same `device_password`; the local INI needs only the upload protocol and endpoint. Do not add a separate `--auth` option.
+Once a valid V3 record exists, it restores the active password on every boot and the selected profile does not overwrite it. Rotate it from application code with:
+
+```cpp
+if (!DeviceFramework::setDevicePassword("new-local-password")) {
+    // The value was invalid or the verified V3 write failed; keep the old password.
+}
+```
+
+The optional web interface offers the same operation at **System Controls → Device Password** and restarts only after the write is verified. `setDevicePassword()` accepts empty (to intentionally disable local authentication) or 8–31 printable profile-compatible characters. The password remains one shared value for the provisioning AP, OTA, HTTP Basic authentication, and WebSerial.
+
+For `espota`, PlatformIO still needs the current password before it can deliver new firmware. The profile hook supplies `--auth` from the ignored profile's `device_password`; do not add a second `--auth` option. After a runtime rotation, update that same ignored JSON value before the next OTA upload. The next firmware boot keeps the V3 runtime value—matching the profile only lets the uploader authenticate.
 
 ## Normal builds, migration, and reset
 
-A normal build has no `custom_device_profile`. It generates no private header, starts with an empty device password, and never pre-seeds or overwrites saved configuration. Matching V2 data is loaded; a valid record for another application remains isolated and the new firmware uses defaults until its normal provisioning flow or an explicit profile provides values. Use this profile-free mode only for an intentionally open local device or interactive provisioning.
+A normal build has no `custom_device_profile`. It generates no private header and never seeds or overwrites saved configuration. A matching V3 record, including its saved password, loads normally; a valid V3 record for another application remains isolated and the new firmware uses defaults until normal provisioning or an explicit profile provides values. A DFC2 record is recognised but neither decoded nor silently erased; select a profile to replace it with fresh V3 data. Use fresh profile-free mode only for an intentionally open local device or interactive provisioning.
 
 Adding, removing, or reordering parameter IDs requires no schema change. Bump the application schema only for a semantic conversion and supply a `DeviceFrameworkConfigMigrationCallback`; return `false` when a prior schema cannot be transformed safely. A firmware never loads a stored schema newer than itself.
 
-**Reset Configuration** retains WiFi credentials and restores framework parameters to defaults. **Factory Reset** clears WiFi credentials and both transactional configuration slots. A V1 positional record is imported only when it exactly matches the bounded legacy layout, then rewritten as V2; that transitional reader will be removed in a future major release.
+**Reset Configuration** retains WiFi credentials and the active device password while restoring framework parameters to defaults. **Factory Reset** clears WiFi credentials, the device password, and both transactional configuration slots. After the restart, a selected profile can seed a new V3 record; without one, normal provisioning creates the new configuration. DeviceFramework 2.1.0 intentionally has no V1/V2 value decoder, mapper, or implicit migration path.

@@ -49,6 +49,12 @@ public:
                                      DeviceFrameworkConfigMigrationCallback migration = nullptr);
     static const char* getLibraryVersion();
     static const DeviceFrameworkApplicationIdentity& getApplicationIdentity();
+    // Optional password shared by the provisioning AP, OTA, HTTP Basic auth,
+    // and WebSerial. Updates are written transactionally before becoming live;
+    // restart after success to reconfigure all already-started transports.
+    static const char* getDevicePassword();
+    static bool setDevicePassword(const char* password);
+
 
     // Initialize core systems with optional callback for custom parameter registration
     static void beforeSetup(void (*registerParametersCallback)() = nullptr);

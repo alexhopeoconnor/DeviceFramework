@@ -1318,7 +1318,7 @@ body {
     font-size: 0.9rem;
 }
 
-.control-item select {
+.control-item select, .control-item input {
     width: 100%;
     padding: 0.5rem 0.75rem;
     border: 1px solid #d1d5db;
@@ -1328,7 +1328,7 @@ body {
     transition: border-color 0.2s ease;
 }
 
-.control-item select:focus {
+.control-item select:focus, .control-item input:focus {
     outline: none;
     border-color: #3b82f6;
     box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);

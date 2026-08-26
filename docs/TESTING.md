@@ -17,8 +17,7 @@ reads required WiFi and MQTT values from an ignored `test/.env`; copy
 `test/.env.example` and fill it locally. The runner generates an ignored C++ header
 only for the duration of the run, then removes it. With `--profile-fixture`, the
 flashed board has a unique mDNS name and the host directly verifies unauthenticated
-rejection plus authenticated status, root-page, and 404 content. Set
-Automatic `.local` discovery uses `avahi-resolve`; set `DEVICEFRAMEWORK_TEST_DEVICE_HOST` in the ignored env file if Avahi or mDNS is unavailable.
+rejection plus authenticated status, root-page, and 404 content. The Unity suite also checks that a profile does not overwrite a V3 password rotated through the public API. Automatic `.local` discovery uses `avahi-resolve`; set `DEVICEFRAMEWORK_TEST_DEVICE_HOST` in the ignored env file if Avahi or mDNS is unavailable.
 
 CI always runs both compile-only variants. Hardware tests remain an explicit
 local gate because they require LAN access, a board, and test credentials.

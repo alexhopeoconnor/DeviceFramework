@@ -17,9 +17,10 @@ void test_eeprom_storage_methods();
 
 // Group 3: Configuration & Storage
 void test_device_framework_configuration();
+void test_storage_incompatible_schema_retains_device_password();
 void test_storage_save_load();
 void test_storage_foreign_application_is_distinguished();
-void test_profile_password_is_restored_without_reprovisioning();
+void test_profile_password_is_persistent_without_reprovisioning();
 
 // Group 4: Network-Dependent
 void test_wifi_manager_state();

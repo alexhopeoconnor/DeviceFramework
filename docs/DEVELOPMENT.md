@@ -2,9 +2,12 @@
 
 This guide is for people working on DeviceFramework itself. Application firmware
 should depend on a released DeviceFramework tag; it should not declare
-WiFiManager, DFTE, or ArduinoHA separately. DeviceFramework's
+WiFiManager, DFTE, or ArduinoHA separately. The package's
 [`library.json`](../library.json) is the single source of the tested dependency
-set.
+set, including each platform-specific asynchronous TCP package. The clean
+consumer and framework test project both use LDF `deep+` so PlatformIO follows
+framework-library headers as well as source files.
+
 
 ## Build without hardware
 
@@ -19,13 +22,16 @@ firmware, so no board or credentials are needed:
 ./scripts/run-tests.sh compile --platform esp32 --profile-fixture
 ```
 
+The runner refreshes its generated PlatformIO package cache before each check, so
+CI and local runs compile the current source rather than a stale `.pio` copy.
 CI runs these normal and profile-fixture checks for every push and pull request.
 The normal ESP8266 command also checks the web-interface-free configuration.
 
 ## Run the connected-device suite
 
-The optional hardware suite exercises WiFi, MQTT, storage, web-interface restart,
-and direct HTTP requests from the development host to a connected board. It needs
+The optional hardware suite exercises WiFi, MQTT, V3 storage, password
+persistence, web-interface restart, and direct HTTP requests from the
+development host to a connected board. It needs
 curl and Avahi for automatic mDNS discovery (or an explicit device address), a reachable MQTT broker, a WiFi network,
 and an unused development device. Copy the template;
 the real file is ignored and must never be committed:

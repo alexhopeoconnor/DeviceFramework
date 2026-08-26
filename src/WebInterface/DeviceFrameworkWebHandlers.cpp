@@ -15,21 +15,31 @@
 #include "../WiFi/DeviceFrameworkWiFi.h"
 #include "../MQTT/DeviceFrameworkMQTT.h"
 #include "../Configuration/DeviceFrameworkParameters.h"
-#include "../Configuration/DeviceFrameworkConfig.h"
 
 namespace {
 
 struct StatusStreamResponseState {
     DeviceStatusManager::JSONStreamState stream;
     bool started;
-
     StatusStreamResponseState() : stream(), started(false) {}
 };
+
+bool restartPending = false;
+unsigned long restartAt = 0;
+
+void scheduleRestart() {
+    restartPending = true;
+    restartAt = millis() + 500;
+}
+
+bool restartDue(unsigned long now) {
+    return restartPending && static_cast<long>(now - restartAt) >= 0;
+}
 
 } // namespace
 
 bool DeviceFrameworkWebHandlers::isAuthenticated(AsyncWebServerRequest *request) {
-    const char* password = getConfigDevicePassword();
+    const char* password = DeviceFramework::getDevicePassword();
     if (password == nullptr || password[0] == '\0') {
         return true;
     }
@@ -92,18 +102,15 @@ void DeviceFrameworkWebHandlers::handleAPIControl(AsyncWebServerRequest *request
 
         if (body.indexOf("\"action\":\"restart\"") >= 0) {
             request->send(200, "application/json", "{\"status\":\"success\",\"message\":\"Restart command received\"}");
-            delay(1000);
-            ESP.restart();
+            scheduleRestart();
         } else if (body.indexOf("\"action\":\"reset\"") >= 0) {
             DeviceFramework::reset(DeviceFrameworkResetScope::ParametersOnly);
             request->send(200, "application/json", "{\"status\":\"success\",\"message\":\"Configuration reset\"}");
-            delay(250);
-            ESP.restart();
+            scheduleRestart();
         } else if (body.indexOf("\"action\":\"factory_reset\"") >= 0) {
             DeviceFramework::reset(DeviceFrameworkResetScope::Factory);
             request->send(200, "application/json", "{\"status\":\"success\",\"message\":\"Factory reset\"}");
-            delay(250);
-            ESP.restart();
+            scheduleRestart();
         } else if (body.indexOf("\"action\":\"config_mode\"") >= 0) {
             request->send(200, "application/json", "{\"status\":\"success\",\"message\":\"Config mode command received\"}");
         } else if (body.indexOf("\"action\":\"disconnect_wifi\"") >= 0) {
@@ -116,11 +123,45 @@ void DeviceFrameworkWebHandlers::handleAPIControl(AsyncWebServerRequest *request
     }
 }
 
+void DeviceFrameworkWebHandlers::handleAPIDevicePassword(AsyncWebServerRequest *request) {
+    if (!isAuthenticated(request)) return;
+    if (!request->hasParam("new_password", true) || !request->hasParam("confirm_password", true)) {
+        request->send(400, "application/json", "{\"status\":\"error\",\"message\":\"Password and confirmation are required\"}");
+        return;
+    }
+
+    const String password = request->getParam("new_password", true)->value();
+    const String confirmation = request->getParam("confirm_password", true)->value();
+    if (password != confirmation) {
+        request->send(400, "application/json", "{\"status\":\"error\",\"message\":\"Passwords do not match\"}");
+        return;
+    }
+    if (password.length() == 0 &&
+        (!request->hasParam("allow_empty", true) || request->getParam("allow_empty", true)->value() != "true")) {
+        request->send(400, "application/json", "{\"status\":\"error\",\"message\":\"Explicit confirmation is required to remove the password\"}");
+        return;
+    }
+    if (!DeviceFramework::setDevicePassword(password.c_str())) {
+        request->send(422, "application/json", "{\"status\":\"error\",\"message\":\"Password must be empty or 8-31 characters, and storage must be writable\"}");
+        return;
+    }
+
+    request->send(200, "application/json", "{\"status\":\"success\",\"message\":\"Device password updated; restarting\"}");
+    scheduleRestart();
+}
+
+void DeviceFrameworkWebHandlers::loop() {
+    if (restartDue(millis())) {
+        restartPending = false;
+        ESP.restart();
+    }
+}
+
+
 void DeviceFrameworkWebHandlers::sendStreamingResponse(AsyncWebServerRequest *request, const char* baseTemplate) {
     LOG_INFOLN(String(F("Starting streaming response: ")) + request->url());
-
-    // Get registry from web interface (may be nullptr if disabled)
     PlaceholderRegistry* registry = DeviceFrameworkWeb::getRegistry();
+    // Get registry from web interface (may be nullptr if disabled)
     if (!registry) {
         request->send(500, "text/plain", "Web interface not initialized");
         return;

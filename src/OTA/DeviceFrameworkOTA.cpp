@@ -1,6 +1,5 @@
 #include "DeviceFrameworkOTA.h"
 #include "../WiFi/DeviceFrameworkWiFi.h"
-#include "../Configuration/DeviceFrameworkConfig.h"
 #include "../DeviceFramework.h"
 
 void DeviceFrameworkOTA::setup() {
@@ -41,8 +40,8 @@ void DeviceFrameworkOTA::setup() {
 
     // Set the OTA hostname and authentication password
     ArduinoOTA.setHostname(DeviceFramework::getSanitizedHostname());
-    if (getConfigDevicePassword()[0] != '\0') {
-        ArduinoOTA.setPassword(getConfigDevicePassword());
+    if (DeviceFramework::getDevicePassword()[0] != '\0') {
+        ArduinoOTA.setPassword(DeviceFramework::getDevicePassword());
     }
 
     // Start OTA

@@ -41,7 +41,8 @@ TestCase tests[] = {
     TEST_ENTRY(test_device_framework_configuration),
     TEST_ENTRY(test_storage_save_load),
     TEST_ENTRY(test_storage_foreign_application_is_distinguished),
-    TEST_ENTRY(test_profile_password_is_restored_without_reprovisioning),
+    TEST_ENTRY(test_storage_incompatible_schema_retains_device_password),
+    TEST_ENTRY(test_profile_password_is_persistent_without_reprovisioning),
 
     // Group 4: Network-Dependent
     TEST_ENTRY(test_wifi_manager_state),
@@ -163,12 +164,8 @@ void setup() {
     #endif
     Serial.println("[TEST]   EEPROM cleared");
 
-    // Simulate a real sketch setup - set admin password and register custom parameter
+    // Simulate a real sketch setup and register custom parameters.
     Serial.println("[TEST]   Configuring test parameters...");
-
-    Serial.println("[TEST]     Setting admin password...");
-    setConfigAdminPassword("");
-
 
     Serial.println("[TEST]     Calling DeviceFramework::beforeSetup()...");
     DeviceFramework::beforeSetup([]() {

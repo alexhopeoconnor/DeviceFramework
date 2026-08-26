@@ -40,6 +40,19 @@ const char* DeviceFramework::getLibraryVersion() {
 const DeviceFrameworkApplicationIdentity& DeviceFramework::getApplicationIdentity() {
     return DeviceFrameworkIdentity::getApplication();
 }
+const char* DeviceFramework::getDevicePassword() {
+    return getConfigDevicePassword();
+}
+
+bool DeviceFramework::setDevicePassword(const char* password) {
+    if (!isConfigDevicePasswordValid(password)) return false;
+    const char* value = password ? password : "";
+
+    // Persist and verify the candidate before changing the runtime authority.
+    if (!DeviceFrameworkStorage::saveWithDevicePassword(value)) return false;
+    return setConfigDevicePassword(value);
+}
+
 
 
 void DeviceFramework::beforeSetup(void (*registerParametersCallback)()) {
@@ -147,6 +160,11 @@ void DeviceFramework::loop() {
 
     // Handle WiFiManager portal activity
     DeviceFrameworkWiFi::loop();
+#ifdef ENABLE_WEB_INTERFACE
+    // Complete delayed HTTP-triggered restarts even if WiFi was just reset.
+    DeviceFrameworkWebHandlers::loop();
+#endif
+
 
     // If WiFi is not connected, exit early as further tasks depend on WiFi
     if (WiFi.status() != WL_CONNECTED) {
@@ -350,9 +368,18 @@ void DeviceFramework::reset(DeviceFrameworkResetScope scope) {
         DeviceFrameworkWiFi::getWiFiManager().resetSettings();
     }
     if (scope == DeviceFrameworkResetScope::ParametersOnly || scope == DeviceFrameworkResetScope::Factory) {
+        const String existingPassword(getDevicePassword());
         DeviceFrameworkStorage::reset();
         restoreDefaultParameters();
-        DeviceFrameworkStorage::save();
+        if (scope == DeviceFrameworkResetScope::ParametersOnly) {
+            // A parameter reset deliberately retains the device password.
+            DeviceFrameworkStorage::saveWithDevicePassword(existingPassword.c_str());
+        } else {
+            // Factory reset is deliberately unseeded. On the next boot a
+            // selected profile may create its initial V3 record; otherwise
+            // normal provisioning determines the new local configuration.
+            setConfigDevicePassword("");
+        }
     }
 }
 

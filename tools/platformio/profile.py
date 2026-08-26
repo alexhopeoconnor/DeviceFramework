@@ -18,7 +18,6 @@ def option(name):
     except Exception:
         return None
 
-
 profile_path = option("custom_device_profile")
 if not profile_path:
     # A profile is optional. Normal builds never see a generated header.

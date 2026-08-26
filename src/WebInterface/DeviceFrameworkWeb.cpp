@@ -6,6 +6,7 @@
 #include "DeviceFrameworkDeviceStatus.h"
 #include "WebInterfaceTemplateEngineLogger.h"
 #include "../WiFi/DeviceFrameworkWiFi.h"
+#include "../DeviceFramework.h"
 #include "../Utils/TimeUtils.h"
 
 AsyncWebServer* DeviceFrameworkWeb::webServer = nullptr;
@@ -46,11 +47,12 @@ void DeviceFrameworkWeb::setup() {
     webServer->on("/api/status", HTTP_GET, DeviceFrameworkWebHandlers::handleAPIStatus);
     webServer->on("/api/control", HTTP_POST, DeviceFrameworkWebHandlers::handleAPIControl);
     webServer->onNotFound(DeviceFrameworkWebHandlers::handleWebNotFound);
+    webServer->on("/api/device-password", HTTP_POST, DeviceFrameworkWebHandlers::handleAPIDevicePassword);
 
     // Initialize WebSerial transport (read-only serial output)
     DeviceFrameworkWebSerial::begin(webServer, "/webserial");
-    if (getConfigDevicePassword()[0] != '\0') {
-        DeviceFrameworkWebSerial::setAuthentication("admin", getConfigDevicePassword());
+    if (DeviceFramework::getDevicePassword()[0] != '\0') {
+        DeviceFrameworkWebSerial::setAuthentication("admin", DeviceFramework::getDevicePassword());
     }
 
     webServer->begin();

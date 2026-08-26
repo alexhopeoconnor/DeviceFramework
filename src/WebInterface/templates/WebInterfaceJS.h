@@ -1116,6 +1116,48 @@ function loadSavedIntervals() {
 }
 
 // Control functions
+async function updateDevicePassword() {
+    const passwordInput = document.getElementById('device-password');
+    const confirmInput = document.getElementById('device-password-confirm');
+    const password = passwordInput.value;
+    const confirmation = confirmInput.value;
+
+    if (password !== confirmation) {
+        showError('The password confirmation does not match.');
+        return;
+    }
+    if (password.length > 0 && (password.length < 8 || password.length > 31)) {
+        showError('A device password must be 8–31 characters, or empty to disable it.');
+        return;
+    }
+    if (password.length === 0 && !confirm('Remove the device password? Local protected services will be open after restart.')) {
+        return;
+    }
+
+    try {
+        const body = new URLSearchParams({
+            new_password: password,
+            confirm_password: confirmation
+        });
+        if (password.length === 0) body.set('allow_empty', 'true');
+        const response = await fetch('/api/device-password', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+            body: body.toString()
+        });
+        if (!response.ok) {
+            const result = await response.json().catch(() => ({}));
+            throw new Error(result.message || 'Unable to update the device password');
+        }
+        passwordInput.value = '';
+        confirmInput.value = '';
+        showSuccess('Device password saved. The device is restarting. Update your local profile before the next OTA upload.');
+    } catch (error) {
+        console.error('Error updating device password:', error);
+        showError(error.message || 'Unable to update the device password');
+    }
+}
+
 async function restartDevice() {
     if (confirm('Are you sure you want to restart the device?')) {
         try {

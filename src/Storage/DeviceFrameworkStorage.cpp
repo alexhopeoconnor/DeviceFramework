@@ -9,12 +9,11 @@
 #include <vector>
 
 namespace {
-constexpr uint32_t kMagic = 0x44464332UL;  // DFC2
+constexpr uint32_t kMagic = 0x44464333UL;  // DFC3
 constexpr uint8_t kStateValid = 0xA5;
+constexpr uint32_t kLegacyV2Magic = 0x44464332UL;  // DFC2
 constexpr uint16_t kHeaderWithoutCrcSize = 36;
 constexpr uint16_t kHeaderSize = 40;
-constexpr uint16_t kLegacyEepromSize = 512;
-constexpr char kLegacyVersion[] = "V1.0";
 
 struct StorageHeader {
     uint32_t applicationHash;
@@ -76,7 +75,7 @@ uint32_t readU32(const uint8_t* data) {
     return value;
 }
 
-bool encodePayload(const DeviceFrameworkParameterRegistry& registry, std::vector<uint8_t>& payload) {
+bool appendParameterEntries(const DeviceFrameworkParameterRegistry& registry, std::vector<uint8_t>& payload) {
     const auto ids = registry.getParameterIds();
     for (size_t i = 0; i < ids.count; ++i) {
         const String& id = ids.ids[i];
@@ -90,21 +89,43 @@ bool encodePayload(const DeviceFrameworkParameterRegistry& registry, std::vector
     return true;
 }
 
-bool decodePayload(const std::vector<uint8_t>& payload, std::map<String, String>& values) {
+bool encodePayload(const DeviceFrameworkParameterRegistry& registry, const char* password,
+                   std::vector<uint8_t>& payload) {
+    if (!isConfigDevicePasswordValid(password)) return false;
+    const char* value = password ? password : "";
+    const size_t passwordLength = strlen(value);
+    payload.push_back(static_cast<uint8_t>(passwordLength));
+    payload.insert(payload.end(), value, value + passwordLength);
+    return appendParameterEntries(registry, payload);
+}
+
+bool decodeParameterEntries(const uint8_t* data, size_t size, std::map<String, String>& values) {
     size_t offset = 0;
-    while (offset < payload.size()) {
-        const uint8_t idLength = payload[offset++];
-        if (idLength == 0 || offset + idLength + 2 > payload.size()) return false;
+    while (offset < size) {
+        const uint8_t idLength = data[offset++];
+        if (idLength == 0 || offset + idLength + 2 > size) return false;
         String id;
-        for (uint8_t i = 0; i < idLength; ++i) id += static_cast<char>(payload[offset++]);
-        const uint16_t valueLength = readU16(&payload[offset]);
+        for (uint8_t i = 0; i < idLength; ++i) id += static_cast<char>(data[offset++]);
+        const uint16_t valueLength = readU16(data + offset);
         offset += 2;
-        if (offset + valueLength > payload.size()) return false;
+        if (offset + valueLength > size) return false;
         String value;
-        for (uint16_t i = 0; i < valueLength; ++i) value += static_cast<char>(payload[offset++]);
+        for (uint16_t i = 0; i < valueLength; ++i) value += static_cast<char>(data[offset++]);
         values[id] = value;
     }
     return true;
+}
+
+bool decodePayload(const std::vector<uint8_t>& payload, String& password,
+                   std::map<String, String>& values) {
+    if (payload.empty()) return false;
+    const uint8_t passwordLength = payload[0];
+    if (passwordLength >= sizeof(CONFIG_devicePassword) || payload.size() < static_cast<size_t>(passwordLength) + 1) return false;
+    password = "";
+    for (uint8_t i = 0; i < passwordLength; ++i) password += static_cast<char>(payload[i + 1]);
+    if (!isConfigDevicePasswordValid(password.c_str())) return false;
+    return decodeParameterEntries(payload.data() + passwordLength + 1,
+                                  payload.size() - passwordLength - 1, values);
 }
 
 bool readHeader(uint16_t base, StorageHeader& header) {
@@ -146,7 +167,9 @@ void writeHeader(uint16_t base, const StorageHeader& header) {
     for (uint16_t i = 0; i < kHeaderSize; ++i) EEPROM.write(base + i, raw[i]);
 }
 
-bool readSlot(uint8_t slot, std::map<String, String>& values, uint16_t& schema, uint32_t& generation, DeviceFrameworkProvisioningState* provisioning = nullptr) {
+bool readSlot(uint8_t slot, std::map<String, String>& values, String& password,
+              uint16_t& schema, uint32_t& generation,
+              DeviceFrameworkProvisioningState* provisioning = nullptr) {
     StorageHeader header{};
     const uint16_t base = slotBase(slot);
     if (!readHeader(base, header)) return false;
@@ -154,7 +177,7 @@ bool readSlot(uint8_t slot, std::map<String, String>& values, uint16_t& schema, 
     std::vector<uint8_t> payload(header.payloadLength);
     for (uint16_t i = 0; i < header.payloadLength; ++i) payload[i] = EEPROM.read(base + kHeaderSize + i);
     if (CRC32Utils::calculate(payload.data(), payload.size()) != header.payloadCrc) return false;
-    if (!decodePayload(payload, values)) return false;
+    if (!decodePayload(payload, password, values)) return false;
     schema = header.schema;
     generation = header.generation;
     if (provisioning) {
@@ -179,7 +202,19 @@ bool hasForeignApplicationData() {
         if (CRC32Utils::calculate(payload.data(), payload.size()) != header.payloadCrc) continue;
 
         std::map<String, String> values;
-        if (decodePayload(payload, values)) return true;
+        String password;
+        if (decodePayload(payload, password, values)) return true;
+    }
+    return false;
+}
+
+bool hasUnsupportedLegacyV2Data() {
+    for (uint8_t slot = 0; slot < 2; ++slot) {
+        const uint16_t base = slotBase(slot);
+        if (base + sizeof(uint32_t) > storageEnd()) continue;
+        uint8_t raw[sizeof(uint32_t)];
+        for (uint8_t index = 0; index < sizeof(raw); ++index) raw[index] = EEPROM.read(base + index);
+        if (readU32(raw) == kLegacyV2Magic) return true;
     }
     return false;
 }
@@ -200,9 +235,13 @@ void DeviceFrameworkStorage::setup() {
 }
 
 bool DeviceFrameworkStorage::save() {
+    return saveWithDevicePassword(getConfigDevicePassword());
+}
+
+bool DeviceFrameworkStorage::saveWithDevicePassword(const char* password) {
     auto& registry = DeviceFrameworkParameters::getRegistry();
     std::vector<uint8_t> payload;
-    if (!encodePayload(registry, payload)) {
+    if (!encodePayload(registry, password, payload)) {
         LOG_ERRORLN(F("DeviceFramework storage: unable to encode parameter payload"));
         return false;
     }
@@ -215,12 +254,14 @@ bool DeviceFrameworkStorage::save() {
 
     std::map<String, String> firstValues;
     std::map<String, String> secondValues;
+    String firstPassword;
+    String secondPassword;
     uint16_t firstSchema = 0;
     uint16_t secondSchema = 0;
     uint32_t firstGeneration = 0;
     uint32_t secondGeneration = 0;
-    const bool firstValid = readSlot(0, firstValues, firstSchema, firstGeneration);
-    const bool secondValid = readSlot(1, secondValues, secondSchema, secondGeneration);
+    const bool firstValid = readSlot(0, firstValues, firstPassword, firstSchema, firstGeneration);
+    const bool secondValid = readSlot(1, secondValues, secondPassword, secondSchema, secondGeneration);
     const uint8_t target = !firstValid ? 0 : (!secondValid ? 1 : (firstGeneration <= secondGeneration ? 0 : 1));
     const uint32_t generation = max(firstGeneration, secondGeneration) + 1;
     const uint16_t base = slotBase(target);
@@ -242,9 +283,11 @@ bool DeviceFrameworkStorage::save() {
     EEPROM.commit();
 
     std::map<String, String> verifiedValues;
+    String verifiedPassword;
     uint16_t verifiedSchema = 0;
     uint32_t verifiedGeneration = 0;
-    if (!readSlot(target, verifiedValues, verifiedSchema, verifiedGeneration)) {
+    if (!readSlot(target, verifiedValues, verifiedPassword, verifiedSchema, verifiedGeneration) ||
+        verifiedPassword != (password ? password : "")) {
         LOG_ERRORLN(F("DeviceFramework storage: post-write verification failed"));
         return false;
     }
@@ -253,76 +296,35 @@ bool DeviceFrameworkStorage::save() {
     return true;
 }
 
-bool DeviceFrameworkStorage::readV2(std::map<String, String>& values, uint16_t& schema, uint32_t& generation) {
+bool DeviceFrameworkStorage::readV3(std::map<String, String>& values, String& password,
+                                    uint16_t& schema, uint32_t& generation) {
     std::map<String, String> firstValues;
     std::map<String, String> secondValues;
+    String firstPassword;
+    String secondPassword;
     uint16_t firstSchema = 0;
     uint16_t secondSchema = 0;
     uint32_t firstGeneration = 0;
     uint32_t secondGeneration = 0;
     DeviceFrameworkProvisioningState firstProvisioning;
     DeviceFrameworkProvisioningState secondProvisioning;
-    const bool firstValid = readSlot(0, firstValues, firstSchema, firstGeneration, &firstProvisioning);
-    const bool secondValid = readSlot(1, secondValues, secondSchema, secondGeneration, &secondProvisioning);
+    const bool firstValid = readSlot(0, firstValues, firstPassword, firstSchema, firstGeneration, &firstProvisioning);
+    const bool secondValid = readSlot(1, secondValues, secondPassword, secondSchema, secondGeneration, &secondProvisioning);
     if (!firstValid && !secondValid) return false;
     if (secondValid && (!firstValid || secondGeneration > firstGeneration)) {
         values = secondValues;
+        password = secondPassword;
         schema = secondSchema;
         generation = secondGeneration;
         provisioningState = secondProvisioning;
     } else {
         values = firstValues;
+        password = firstPassword;
         schema = firstSchema;
         generation = firstGeneration;
         provisioningState = firstProvisioning;
     }
     return true;
-}
-
-bool DeviceFrameworkStorage::readLegacyV1(std::map<String, String>& values) {
-    const uint16_t configuredSize = getConfigEEPROMSize();
-    const uint16_t candidates[] = {
-        getConfigEEPROMStart(),
-        configuredSize >= kLegacyEepromSize
-            ? static_cast<uint16_t>(getConfigEEPROMStart() + configuredSize - kLegacyEepromSize)
-            : getConfigEEPROMStart()
-    };
-    for (uint8_t candidateIndex = 0; candidateIndex < 2; ++candidateIndex) {
-        const uint16_t base = candidates[candidateIndex];
-        if (base + sizeof(kLegacyVersion) >= EEPROM.length()) continue;
-        bool versionMatches = true;
-        for (size_t i = 0; i < sizeof(kLegacyVersion); ++i) {
-            if (EEPROM.read(base + i) != static_cast<uint8_t>(kLegacyVersion[i])) {
-                versionMatches = false;
-                break;
-            }
-        }
-        if (!versionMatches) continue;
-
-        uint16_t address = base + sizeof(kLegacyVersion);
-        const uint16_t legacyCandidateEnd = static_cast<uint16_t>(base + kLegacyEepromSize);
-        const uint16_t legacyEnd = legacyCandidateEnd < EEPROM.length() ? legacyCandidateEnd : EEPROM.length();
-        auto& registry = DeviceFrameworkParameters::getRegistry();
-        const auto ids = registry.getParameterIdsSorted();
-        for (size_t i = 0; i < ids.count; ++i) {
-            const DeviceFrameworkParameterMetadata* metadata = registry.getMetadata(ids.ids[i]);
-            if (!metadata || address >= legacyEnd) return false;
-            String value;
-            bool terminated = false;
-            for (uint16_t length = 0; address < legacyEnd && length <= metadata->maxLength; ++length) {
-                const uint8_t byte = EEPROM.read(address++);
-                if (byte == 0 || byte == 0xff) {
-                    terminated = true;
-                    break;
-                }
-                value += static_cast<char>(byte);
-            }
-            if (!terminated) return false;
-            values[ids.ids[i]] = value;
-        }
-        return true;
-    }
-    return false;
 }
 
 bool DeviceFrameworkStorage::applyValues(const std::map<String, String>& values) {
@@ -341,10 +343,18 @@ bool DeviceFrameworkStorage::applyValues(const std::map<String, String>& values)
 
 DeviceFrameworkStorageLoadResult DeviceFrameworkStorage::load() {
     std::map<String, String> values;
+    String password;
     uint16_t schema = 0;
     uint32_t generation = 0;
-    if (readV2(values, schema, generation)) {
+    if (readV3(values, password, schema, generation)) {
         const auto& application = DeviceFrameworkIdentity::getApplication();
+        // This record already belongs to this application. Restore its valid
+        // shared password before considering schema compatibility so a
+        // downgrade or migration failure does not silently open the device.
+        if (!setConfigDevicePassword(password.c_str())) {
+            lastLoadResult = DeviceFrameworkStorageLoadResult(DeviceFrameworkStorageLoadStatus::Corrupt, false);
+            return lastLoadResult;
+        }
         if (schema > application.configurationSchema) {
             lastLoadResult = DeviceFrameworkStorageLoadResult(DeviceFrameworkStorageLoadStatus::Incompatible, false);
             return lastLoadResult;
@@ -372,9 +382,8 @@ DeviceFrameworkStorageLoadResult DeviceFrameworkStorage::load() {
         return lastLoadResult;
     }
 
-    if (readLegacyV1(values)) {
-        applyValues(values);
-        lastLoadResult = DeviceFrameworkStorageLoadResult(DeviceFrameworkStorageLoadStatus::LegacyImported, true);
+    if (hasUnsupportedLegacyV2Data()) {
+        lastLoadResult = DeviceFrameworkStorageLoadResult(DeviceFrameworkStorageLoadStatus::UnsupportedLegacyFormat, false);
         return lastLoadResult;
     }
 
@@ -386,7 +395,7 @@ DeviceFrameworkStorageLoadResult DeviceFrameworkStorage::load() {
     const bool containsStoredData = hasAnyStoredData();
     lastLoadResult = DeviceFrameworkStorageLoadResult(
         containsStoredData ? DeviceFrameworkStorageLoadStatus::Corrupt : DeviceFrameworkStorageLoadStatus::Empty,
-        !containsStoredData
+        false
     );
     return lastLoadResult;
 }

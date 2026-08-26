@@ -87,7 +87,7 @@ bool DeviceFrameworkWiFi::setup() {
     // Attempt to auto-connect to previously saved network
     LOG_INFOLN(F("Starting WiFiManager..."));
     String apName = registry->getValue(DeviceFrameworkParameters::PARAM_DEVICE_NAME);
-    if (!wm.autoConnect(apName.c_str(), getConfigDevicePassword())) {
+    if (!wm.autoConnect(apName.c_str(), DeviceFramework::getDevicePassword())) {
         LOG_WARNLN(F("Initial WiFi connection failed - entering config mode"));
         isConfigMode = true;
         setupWebInterfaceTemplateEngineLogging();
@@ -105,7 +105,6 @@ void DeviceFrameworkWiFi::preloadWiFi(const char* ssid, const char* password) {
 }
 
 void DeviceFrameworkWiFi::loop() {
-    // Process WiFiManager tasks (may block briefly; shutdownConfigPortal uses delay(1000))
     // Process WiFiManager tasks (may block briefly; shutdownConfigPortal uses delay(1000))
     wm.process();
 

@@ -31,16 +31,25 @@ done
 [[ "$mode" != "hardware" || "$profile_fixture" == "false" || -f "$env_file" ]] || usage
 
 environment="$platform"
+refresh_clean_consumer_dependency() {
+    local target_environment="$1"
+    local cached_library="test/compile-project/.pio/libdeps/${target_environment}/DeviceFramework"
+    [[ -d "$cached_library" || -e "${cached_library}.pio-link" ]] || return 0
+    pio pkg uninstall -d test/compile-project -e "$target_environment" \
+        -l DeviceFramework --no-save --skip-dependencies >/dev/null
+}
+
 [[ "$profile_fixture" == "true" ]] && environment="${platform}_profile"
 if [[ "$mode" == "compile" ]]; then
+    refresh_clean_consumer_dependency "$environment"
     pio run -d test/compile-project -e "$environment"
     if [[ "$profile_fixture" == "false" && "$platform" == "esp8266" ]]; then
         # Prove that callers can omit the optional local web interface.
+        refresh_clean_consumer_dependency esp8266_no_web
         pio run -d test/compile-project -e esp8266_no_web
     fi
     exit 0
 fi
-
 [[ -f "$env_file" ]] || { echo "Missing $env_file; copy test/.env.example first." >&2; exit 1; }
 set -a
 # shellcheck disable=SC1090
@@ -104,6 +113,30 @@ assert_http_endpoint() {
     echo "Direct LAN check passed: $description"
 }
 
+assert_password_endpoint() {
+    local password="$1"
+    local response_file
+    response_file="$(mktemp -p /tmp deviceframework-password.XXXXXX)"
+    local status_code
+    if ! status_code="$(curl --silent --show-error --connect-timeout 3 --max-time 20 \
+        --output "$response_file" --write-out '%{http_code}' \
+        -u "admin:$password" -X POST \
+        --data-urlencode "new_password=$password" \
+        --data-urlencode "confirm_password=$password" \
+        "http://${device_host}/api/device-password")"; then
+        rm -f "$response_file"
+        echo "Direct LAN check failed to update the device password" >&2
+        return 1
+    fi
+    if [[ "$status_code" != "200" ]] || ! rg -Fq '"status":"success"' "$response_file"; then
+        rm -f "$response_file"
+        echo "Device password endpoint did not accept the profiled password (HTTP $status_code)" >&2
+        return 1
+    fi
+    rm -f "$response_file"
+    echo "Direct LAN check passed: persistent device-password endpoint"
+}
+
 verify_web_interface() {
     local default_host
     if [[ "$profile_fixture" == "true" ]]; then
@@ -128,6 +161,7 @@ verify_web_interface() {
         profile_password="$(sed -nE 's/^[[:space:]]*"device_password"[[:space:]]*:[[:space:]]*"([^"]*)"[[:space:]]*,?[[:space:]]*$/\1/p' test/profiles/profile-fixture.json)"
         [[ -n "$profile_password" ]] || { echo "Profile fixture has no device_password" >&2; return 1; }
         assert_http_endpoint "unauthenticated API status" "/api/status" 401 ""
+        assert_password_endpoint "$profile_password"
     fi
 
     assert_http_endpoint "API status" "/api/status" 200 "$profile_password" runtime chip_id version
