@@ -5,7 +5,7 @@
 #include <Storage/DeviceFrameworkStorage.h>
 
 void test_storage_save_load() {
-    Serial.println("[TEST]   Testing V3 storage save/load/reset...");
+    Serial.println("[TEST]   Testing V4 storage save/load/reset...");
     const String originalDeviceName(DeviceFramework::getDeviceName());
     const String originalMqttServer(DeviceFramework::getMqttServer());
     const uint16_t originalMqttPort = DeviceFramework::getMqttPort();
@@ -13,14 +13,14 @@ void test_storage_save_load() {
     DeviceFramework::setDeviceName("StorageTestDevice");
     DeviceFramework::setMqttServer("storage.test.server");
     DeviceFramework::setMqttPort(9999);
-    TEST_ASSERT_TRUE_MESSAGE(DeviceFrameworkStorage::save(), "V3 storage save should succeed");
+    TEST_ASSERT_TRUE_MESSAGE(DeviceFrameworkStorage::save(), "V4 storage save should succeed");
 
     DeviceFramework::setDeviceName("ChangedDevice");
     DeviceFramework::setMqttServer("changed.server");
     DeviceFramework::setMqttPort(8888);
 
     const DeviceFrameworkStorageLoadResult loaded = DeviceFrameworkStorage::load();
-    TEST_ASSERT_TRUE_MESSAGE(loaded.hasUsableConfiguration(), "Saved V3 slot should load");
+    TEST_ASSERT_TRUE_MESSAGE(loaded.hasUsableConfiguration(), "Saved V4 slot should load");
     TEST_ASSERT_EQUAL_STRING_MESSAGE("StorageTestDevice", DeviceFramework::getDeviceName(), "Device name should reload");
     TEST_ASSERT_EQUAL_STRING_MESSAGE("storage.test.server", DeviceFramework::getMqttServer(), "MQTT server should reload");
     TEST_ASSERT_EQUAL_UINT16_MESSAGE(9999, DeviceFramework::getMqttPort(), "MQTT port should reload");
@@ -35,7 +35,7 @@ void test_storage_save_load() {
     DeviceFramework::setMqttServer(originalMqttServer.c_str());
     DeviceFramework::setMqttPort(originalMqttPort);
     TEST_ASSERT_TRUE_MESSAGE(DeviceFrameworkStorage::save(), "Restoring test configuration should save");
-    Serial.println("[TEST]   V3 storage save/load/reset tests completed.");
+    Serial.println("[TEST]   V4 storage save/load/reset tests completed.");
 }
 
 void test_storage_foreign_application_is_distinguished() {
@@ -56,7 +56,7 @@ void test_storage_foreign_application_is_distinguished() {
     TEST_ASSERT_EQUAL_MESSAGE(
         static_cast<int>(DeviceFrameworkStorageLoadStatus::ForeignApplication),
         static_cast<int>(foreign.status),
-        "A valid V3 record for another application must not be reported as corrupt"
+        "A valid V4 record for another application must not be reported as corrupt"
     );
     TEST_ASSERT_FALSE_MESSAGE(foreign.hasUsableConfiguration(), "Foreign application values must not be loaded");
 
@@ -84,7 +84,7 @@ void test_storage_incompatible_schema_retains_device_password() {
     );
     TEST_ASSERT_TRUE_MESSAGE(
         DeviceFramework::setDevicePassword("schema-password"),
-        "A valid password should save in the newer V3 record"
+        "A valid password should save in the newer V4 record"
     );
 
     TEST_ASSERT_TRUE_MESSAGE(
@@ -100,11 +100,11 @@ void test_storage_incompatible_schema_retains_device_password() {
     TEST_ASSERT_EQUAL_MESSAGE(
         static_cast<int>(DeviceFrameworkStorageLoadStatus::Incompatible),
         static_cast<int>(incompatible.status),
-        "A newer V3 schema should remain incompatible"
+        "A newer V4 schema should remain incompatible"
     );
     TEST_ASSERT_EQUAL_STRING_MESSAGE(
         "schema-password", DeviceFramework::getDevicePassword(),
-        "A valid same-application V3 password must survive incompatible schema handling"
+        "A valid same-application V4 password must survive incompatible schema handling"
     );
 
     TEST_ASSERT_TRUE_MESSAGE(DeviceFrameworkStorage::reset(), "Schema-password test cleanup should reset storage");

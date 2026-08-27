@@ -35,8 +35,8 @@ try:
 except (IOError, ValueError) as exc:
     fail("cannot read {}: {}".format(profile_path, exc))
 
-if not isinstance(document, dict) or document.get("format") != 1:
-    fail("profile format must be integer 1")
+if not isinstance(document, dict) or document.get("format") != 2:
+    fail("profile format must be integer 2")
 
 def text(value, name, required=False):
     if value is None and not required:
@@ -59,13 +59,23 @@ policy = text(profile.get("policy"), "profile.policy", True)
 if policy not in ("bootstrap", "reconcile"):
     fail("profile.policy must be bootstrap or reconcile")
 
-wifi = document.get("wifi", {})
+wifi = document.get("wifi")
 if not isinstance(wifi, dict):
     fail("wifi must be an object")
-wifi_ssid = text(wifi.get("ssid"), "wifi.ssid")
-wifi_password = text(wifi.get("password"), "wifi.password")
-if wifi_password and not wifi_ssid:
-    fail("wifi.password requires wifi.ssid")
+wifi_profiles = wifi.get("profiles")
+if not isinstance(wifi_profiles, list) or not 1 <= len(wifi_profiles) <= 2:
+    fail("wifi.profiles must contain one primary profile and an optional fallback")
+wifi_profile_items = []
+for index, entry in enumerate(wifi_profiles):
+    if not isinstance(entry, dict):
+        fail("wifi.profiles[{}] must be an object".format(index))
+    ssid = text(entry.get("ssid"), "wifi.profiles[{}].ssid".format(index), True)
+    password = text(entry.get("password"), "wifi.profiles[{}].password".format(index))
+    if len(ssid) > 32:
+        fail("wifi.profiles[{}].ssid must be at most 32 characters".format(index))
+    if len(password) > 64:
+        fail("wifi.profiles[{}].password must be at most 64 characters".format(index))
+    wifi_profile_items.append((ssid, password))
 
 device_password = text(document.get("device_password"), "device_password")
 if device_password and not 8 <= len(device_password) <= 31:
@@ -106,11 +116,16 @@ lines = [
     "#define DEVICEFRAMEWORK_PROFILE_ID " + literal(profile_id),
     "#define DEVICEFRAMEWORK_PROFILE_REVISION {}UL".format(revision),
     "#define DEVICEFRAMEWORK_PROFILE_POLICY DEVICEFRAMEWORK_PROFILE_{}".format(policy.upper()),
-    "#define DEVICEFRAMEWORK_PROFILE_WIFI_SSID " + literal(wifi_ssid),
-    "#define DEVICEFRAMEWORK_PROFILE_WIFI_PASSWORD " + literal(wifi_password),
     "#define DEVICEFRAMEWORK_PROFILE_DEVICE_PASSWORD " + literal(device_password),
-    "static const DeviceFrameworkProvisionedParameter DEVICEFRAMEWORK_PROFILE_PARAMETERS[] = {",
+    "static const DeviceFrameworkProvisionedWiFiProfile DEVICEFRAMEWORK_PROFILE_WIFI_PROFILES[] = {",
 ]
+for ssid, password in wifi_profile_items:
+    lines.append("    {" + literal(ssid) + ", " + literal(password) + "},")
+lines.extend([
+    "};",
+    "#define DEVICEFRAMEWORK_PROFILE_WIFI_PROFILE_COUNT {}".format(len(wifi_profile_items)),
+])
+lines.append("static const DeviceFrameworkProvisionedParameter DEVICEFRAMEWORK_PROFILE_PARAMETERS[] = {")
 if parameter_items:
     for parameter_id, parameter_value in parameter_items:
         lines.append("    {" + literal(parameter_id) + ", " + literal(parameter_value) + "},")

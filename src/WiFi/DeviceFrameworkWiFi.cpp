@@ -1,9 +1,9 @@
 #include "DeviceFrameworkWiFi.h"
 #include <WiFiManager.h>
-#include "../Utils/TimeUtils.h"
 #include "../Configuration/DeviceFrameworkConfig.h"
 #include "../Configuration/DeviceFrameworkParameters.h"
 #include "../DeviceFramework.h"
+#include "../Provisioning/DeviceFrameworkProvisioning.h"
 #include "../WebInterface/templates/WiFiManagerStyles.h"
 #include "../WebInterface/WebInterfaceTemplateEngineLogger.h"
 #include <DeviceFrameworkPlatform.h>  // Platform abstraction
@@ -31,6 +31,9 @@
 // Static member initialization
 DeviceFrameworkParameterRegistry* DeviceFrameworkWiFi::registry = nullptr;
 WiFiManager DeviceFrameworkWiFi::wm;
+DeviceFrameworkWiFiProfileStore DeviceFrameworkWiFi::profileStore;
+bool DeviceFrameworkWiFi::provisioningCandidatePending = false;
+WiFiManagerStationProfiles DeviceFrameworkWiFi::provisioningCandidate;
 
 // Config mode state
 bool DeviceFrameworkWiFi::isConfigMode = false;
@@ -58,12 +61,13 @@ bool DeviceFrameworkWiFi::setup() {
         wm.portalAddParameter(wifiParams.parameters[i]);
     }
 
-    // Enable auto-reconnect for WiFi
-    #ifdef DF_PLATFORM_ESP8266
-        // ESP8266 supports WiFi.persistent()
-        WiFi.persistent(true);
-    #endif
-    WiFi.setAutoReconnect(true);
+    // Profile mode owns both profile selection and reconnect attempts. ESP
+    // Wi-Fi has one active station configuration, so it must not persist or
+    // auto-reconnect a competing SDK-owned credential.
+    wm.setStationProfileStore(&profileStore);
+    wm.setStationRecoveryInterval(getConfigWiFiReconnectInterval());
+    wm.setEventCallback(stationEventCallbackInternal);
+    wm.setEnableConfigPortal(true);
 
     // Configure WiFiManager (non-blocking mode is default with ESPAsyncWebServer)
     wm.setConfigPortalTimeout(CONFIG_configModeTimeout / 1000);
@@ -84,24 +88,52 @@ bool DeviceFrameworkWiFi::setup() {
     // Apply custom styling to match web interface
     //wm.setCustomHeadElement(wifimanager_custom_css);
 
-    // Attempt to auto-connect to previously saved network
-    LOG_INFOLN(F("Starting WiFiManager..."));
+    // Start the shared non-blocking profile controller. A provisioned profile
+    // remains an in-memory candidate until it has produced a usable IP.
+    LOG_INFOLN(F("Starting WiFi profile controller..."));
     String apName = registry->getValue(DeviceFrameworkParameters::PARAM_DEVICE_NAME);
-    if (!wm.autoConnect(apName.c_str(), DeviceFramework::getDevicePassword())) {
-        LOG_WARNLN(F("Initial WiFi connection failed - entering config mode"));
+    const bool started = provisioningCandidatePending
+        ? wm.startStationCandidate(provisioningCandidate, apName.c_str(), DeviceFramework::getDevicePassword())
+        : wm.startStationConnection(apName.c_str(), DeviceFramework::getDevicePassword());
+    if (!started && wm.getConfigPortalActive()) {
+        LOG_WARNLN(F("No usable WiFi profile - entering config mode"));
         isConfigMode = true;
         setupWebInterfaceTemplateEngineLogging();
-        return false;
-    } else {
-        LOG_INFOLN(F("Connected to WiFi on startup"));
-        isConfigMode = false;
     }
-    return true;
+    return started;
 }
 
 void DeviceFrameworkWiFi::preloadWiFi(const char* ssid, const char* password) {
     if (!ssid || !ssid[0]) return;
-    wm.preloadWiFi(ssid, password ? password : "");
+    WiFiManagerStationProfiles profiles;
+    WiFiManagerStationProfile& profile = profiles.slots[0];
+    profile.enabled = true;
+    profile.hasPassword = password && password[0];
+    strncpy(profile.ssid, ssid, sizeof(profile.ssid) - 1);
+    if (profile.hasPassword) strncpy(profile.password, password, sizeof(profile.password) - 1);
+    setProvisioningCandidate(profiles);
+}
+
+void DeviceFrameworkWiFi::setProvisioningCandidate(const WiFiManagerStationProfiles& profiles) {
+    provisioningCandidate = profiles;
+    provisioningCandidatePending = true;
+}
+
+void DeviceFrameworkWiFi::clearProfiles() {
+    if (wm.isStationProfileMode()) {
+        wm.clearStationProfiles();
+        if (wm.getStationStatus().storageSaveFailed) {
+            LOG_ERRORLN(F("Unable to clear persisted WiFi profiles"));
+            return;
+        }
+    } else {
+        if (!DeviceFrameworkStorage::saveWithStationProfiles(WiFiManagerStationProfiles())) {
+            LOG_ERRORLN(F("Unable to clear persisted WiFi profiles"));
+        }
+        wm.resetSettings();
+    }
+    provisioningCandidate = WiFiManagerStationProfiles();
+    provisioningCandidatePending = false;
 }
 
 void DeviceFrameworkWiFi::loop() {
@@ -148,24 +180,14 @@ void DeviceFrameworkWiFi::loop() {
         #endif
     }
 
-    // Handle WiFi reconnection
-    if (WiFi.status() != WL_CONNECTED) {
+    if (!hasUsableConnection()) {
         // Blink LED rapidly to indicate offline state (if available)
         if ((lastConfigLEDToggle + (CONFIG_configLEDToggleRate / 4)) < currentMillis) {
             configLEDState = !configLEDState;
             LED_SET(configLEDState);
             lastConfigLEDToggle = currentMillis;
         }
-
-        // Periodically attempt reconnection
-        static unsigned long lastReconnectAttempt = 0;
-        if (TimeUtils::hasTimeElapsed(currentMillis, lastReconnectAttempt, CONFIG_wifiReconnectInterval)) {
-            LOG_WARNLN(F("WiFi disconnected - attempting reconnection..."));
-            WiFi.reconnect();
-            lastReconnectAttempt = currentMillis;
-        }
-
-        return; // Skip further processing until WiFi is connected
+        return;
     }
 
     // Ensure the LED is off when WiFi is connected
@@ -184,6 +206,10 @@ bool DeviceFrameworkWiFi::isInConfigMode() {
 
 bool DeviceFrameworkWiFi::getConfigAttempted() {
     return isConfigAttempted;
+}
+
+bool DeviceFrameworkWiFi::hasUsableConnection() {
+    return WiFi.status() == WL_CONNECTED && WiFi.localIP() != IPAddress(0, 0, 0, 0);
 }
 
 void DeviceFrameworkWiFi::setSaveParamsCallback(void (*callback)(WiFiManager::WiFiManagerRequestArgs requestArgs)) {
@@ -237,4 +263,14 @@ void DeviceFrameworkWiFi::configModeCallbackInternal() {
     if (userConfigModeCallback) {
         userConfigModeCallback();
     }
+}
+
+void DeviceFrameworkWiFi::stationEventCallbackInternal(WiFiManager::wm_event_t event) {
+    if (event != WiFiManager::WM_EVENT_STATION_PROFILE_CONNECTED) return;
+
+    const WiFiManager::wm_station_status_t& status = wm.getStationStatus();
+    if (status.lastConnectionWasCandidate && !status.storageSaveFailed) {
+        DeviceFrameworkProvisioning::markConnectionSucceeded();
+    }
+    provisioningCandidatePending = false;
 }

@@ -2,6 +2,43 @@
 #include <Arduino.h>
 #include <DeviceFramework.h>
 #include <WiFiClient.h>
+#include <TemplateEngine.h>
+#include <WebInterface/DeviceFrameworkTemplatePlaceholders.h>
+#include <WebInterface/templates/WebInterfaceHTML.h>
+
+namespace {
+
+void assertTemplateCompletes(const char* templateData, const char* description) {
+    TemplateContext context;
+    context.setRegistry(DeviceFrameworkTemplatePlaceholders::getRegistry());
+    TemplateRenderer::initializeContext(context, templateData);
+
+    uint8_t buffer[128];
+    size_t bytesRendered = 0;
+    for (size_t chunk = 0; chunk < 2048 && !TemplateRenderer::isComplete(context) &&
+         !TemplateRenderer::hasError(context); ++chunk) {
+        bytesRendered += TemplateRenderer::renderNextChunk(context, buffer, sizeof(buffer));
+    }
+
+    if (TemplateRenderer::hasError(context)) {
+        String message = String(description) + "; renderer error after " +
+            String(bytesRendered) + " bytes";
+        TEST_FAIL_MESSAGE(message.c_str());
+        return;
+    }
+    if (!TemplateRenderer::isComplete(context)) {
+        String message = String(description) + "; renderer stalled after " +
+            String(bytesRendered) + " bytes in " + context.getStateString() +
+            " at depth " + String(context.renderingDepth);
+        TEST_FAIL_MESSAGE(message.c_str());
+        return;
+    }
+    TEST_ASSERT_FALSE_MESSAGE(TemplateRenderer::hasError(context), description);
+    TEST_ASSERT_TRUE_MESSAGE(TemplateRenderer::isComplete(context), description);
+    TEST_ASSERT_TRUE_MESSAGE(bytesRendered > 512, description);
+}
+
+} // namespace
 
 // Test WebInterface methods
 void test_web_interface_methods() {
@@ -22,6 +59,11 @@ void test_web_interface_methods() {
         TEST_ASSERT_TRUE_MESSAGE(configMode,
             "WebInterface should be in config mode when WiFi fails");
     }
+
+    assertTemplateCompletes(base_template,
+        "Root web template should finish rendering without an error");
+    assertTemplateCompletes(error404_template,
+        "404 web template should finish rendering without an error");
 
     // Test restart doesn't crash
     DeviceFrameworkWeb::restart();

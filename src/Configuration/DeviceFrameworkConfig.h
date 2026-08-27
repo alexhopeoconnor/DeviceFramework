@@ -37,6 +37,7 @@ extern uint32_t CONFIG_wsCleanupInterval;
 
 // mDNS configuration
 extern uint32_t CONFIG_mdnsMinFreeHeap;
+extern uint32_t CONFIG_mdnsMinLargestBlock;
 extern uint32_t CONFIG_mdnsPacketDrainMinFreeHeap;
 extern uint32_t CONFIG_mdnsPacketDrainInterval;
 
@@ -122,6 +123,8 @@ void setConfigWSCleanupInterval(uint32_t interval);
 // mDNS configuration getters and setters
 uint32_t getConfigMDNSMinFreeHeap();
 void setConfigMDNSMinFreeHeap(uint32_t minFreeHeap);
+uint32_t getConfigMDNSMinLargestBlock();
+void setConfigMDNSMinLargestBlock(uint32_t minLargestBlock);
 uint32_t getConfigMDNSPacketDrainMinFreeHeap();
 void setConfigMDNSPacketDrainMinFreeHeap(uint32_t minFreeHeap);
 uint32_t getConfigMDNSPacketDrainInterval();

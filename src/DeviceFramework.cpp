@@ -95,10 +95,7 @@ void DeviceFramework::setup() {
         DeviceFrameworkStorage::save();
     }
     if (DeviceFrameworkProvisioning::hasPendingWiFi()) {
-        DeviceFrameworkWiFi::preloadWiFi(
-            DeviceFrameworkProvisioning::getPendingWiFiSSID(),
-            DeviceFrameworkProvisioning::getPendingWiFiPassword()
-        );
+        DeviceFrameworkWiFi::setProvisioningCandidate(DeviceFrameworkProvisioning::getPendingWiFiProfiles());
     }
     LOG_MEMORY_AFTER(F("loadParameters()"));
 
@@ -113,18 +110,13 @@ void DeviceFramework::setup() {
     // Setup WiFi
     // WiFi accesses parameters via DeviceFrameworkParameters
     LOG_MEMORY_BEFORE(F("DeviceFrameworkWiFi::setup()"));
-    const bool wifiConnected = DeviceFrameworkWiFi::setup();
-    if (wifiConnected) DeviceFrameworkProvisioning::markConnectionSucceeded();
+    DeviceFrameworkWiFi::setup();
     LOG_MEMORY_AFTER(F("DeviceFrameworkWiFi::setup()"));
 
     arduinoHASetNetworkStatusFn([]() -> int {
-        return static_cast<int>(WiFi.status());
+        return DeviceFrameworkWiFi::hasUsableConnection() ? WL_CONNECTED : WL_DISCONNECTED;
     });
 
-    // Setup mDNS with sanitized hostname
-    LOG_MEMORY_BEFORE(F("DeviceFrameworkMDNS::setup()"));
-    DeviceFrameworkMDNS::setup(getSanitizedHostname());
-    LOG_MEMORY_AFTER(F("DeviceFrameworkMDNS::setup()"));
 
     // Setup OTA
     LOG_MEMORY_BEFORE(F("DeviceFrameworkOTA::setup()"));
@@ -166,11 +158,13 @@ void DeviceFramework::loop() {
 #endif
 
 
-    // If WiFi is not connected, exit early as further tasks depend on WiFi
-    if (WiFi.status() != WL_CONNECTED) {
+    // Network services start only after WiFiManager reports a usable address.
+    if (!DeviceFrameworkWiFi::hasUsableConnection()) {
+        DeviceFrameworkMDNS::onNetworkLost();
         return;
     }
 
+    DeviceFrameworkMDNS::onNetworkReady(getSanitizedHostname());
     // Handle mDNS updates
     DeviceFrameworkMDNS::loop();
 
@@ -232,7 +226,7 @@ void DeviceFramework::setupRTCMemory() {
     if (rtcData.resetCount == 2) {
         // Double reset detected
         LOG_INFOLN(F("Double reset detected! Resetting Wi-Fi credentials."));
-        DeviceFrameworkWiFi::getWiFiManager().resetSettings();  // Reset Wi-Fi settings
+        DeviceFrameworkWiFi::clearProfiles();
     } else if (rtcData.resetCount >= 3) {
         // Triple reset detected
         LOG_INFOLN(F("Triple reset detected! Resetting all configurations."));
@@ -365,18 +359,21 @@ void DeviceFramework::restoreDefaultParameters() {
 
 void DeviceFramework::reset(DeviceFrameworkResetScope scope) {
     if (scope == DeviceFrameworkResetScope::WiFiOnly || scope == DeviceFrameworkResetScope::Factory) {
-        DeviceFrameworkWiFi::getWiFiManager().resetSettings();
+        DeviceFrameworkWiFi::clearProfiles();
     }
     if (scope == DeviceFrameworkResetScope::ParametersOnly || scope == DeviceFrameworkResetScope::Factory) {
         const String existingPassword(getDevicePassword());
+        const WiFiManagerStationProfiles existingProfiles(DeviceFrameworkStorage::getStationProfiles());
         DeviceFrameworkStorage::reset();
         restoreDefaultParameters();
         if (scope == DeviceFrameworkResetScope::ParametersOnly) {
-            // A parameter reset deliberately retains the device password.
+            // A parameter reset deliberately retains network identity as well
+            // as the shared device password.
+            DeviceFrameworkStorage::setStationProfiles(existingProfiles);
             DeviceFrameworkStorage::saveWithDevicePassword(existingPassword.c_str());
         } else {
             // Factory reset is deliberately unseeded. On the next boot a
-            // selected profile may create its initial V3 record; otherwise
+            // selected profile may create its initial V4 record; otherwise
             // normal provisioning determines the new local configuration.
             setConfigDevicePassword("");
         }

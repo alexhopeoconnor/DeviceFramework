@@ -11,13 +11,13 @@ void test_profile_password_is_persistent_without_reprovisioning() {
 #if defined(DEVICEFRAMEWORK_HAS_LOCAL_PROFILE) && DEVICEFRAMEWORK_HAS_LOCAL_PROFILE
     const String originalPassword(DeviceFramework::getDevicePassword());
     TEST_ASSERT_TRUE_MESSAGE(DeviceFramework::setDevicePassword("runtime-rotated-password"),
-        "A runtime password should persist in the V3 transaction");
+        "A runtime password should persist in the V4 transaction");
 
-    // Simulate a process restart: RAM state is lost, then the committed V3
+    // Simulate a process restart: RAM state is lost, then the committed V4
     // record restores it before provisioning evaluates the selected profile.
     setConfigDevicePassword("");
     const DeviceFrameworkStorageLoadResult loaded = DeviceFrameworkStorage::load();
-    TEST_ASSERT_TRUE_MESSAGE(loaded.hasUsableConfiguration(), "The V3 record should reload");
+    TEST_ASSERT_TRUE_MESSAGE(loaded.hasUsableConfiguration(), "The V4 record should reload");
     TEST_ASSERT_EQUAL_STRING_MESSAGE("runtime-rotated-password", DeviceFramework::getDevicePassword(),
         "Storage must restore the runtime-rotated password");
     TEST_ASSERT_FALSE_MESSAGE(

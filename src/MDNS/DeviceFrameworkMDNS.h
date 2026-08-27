@@ -24,6 +24,7 @@ private:
 
     // Non-blocking resolution state
     static IPAddress cachedIP;
+    static String activeHostname;
     static String lastResolvedHostname;
     static unsigned long lastResolutionAttempt;
     static bool isResolving;
@@ -37,6 +38,8 @@ private:
 public:
     // Initialization
     static void setup(const char* hostname);
+    static void onNetworkReady(const char* hostname);
+    static void onNetworkLost();
     static void loop();
 
     // mDNS resolution

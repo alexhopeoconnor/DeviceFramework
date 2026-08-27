@@ -1,26 +1,21 @@
 # DeviceFramework
 
-DeviceFramework is the shared Arduino library for ESP8266 and ESP32 devices. It provides WiFi provisioning, persisted configuration, MQTT and Home Assistant integration, OTA, mDNS, and an optional local web interface.
+DeviceFramework is the ESP8266/ESP32 foundation for devices that need WiFi provisioning, persistent configuration, MQTT and Home Assistant integration, OTA, mDNS, and an optional local web interface.
 
-## Install
+## Why use it
 
-Use a released Git tag. DeviceFramework's manifest installs its pinned
-dependencies, including the platform-specific asynchronous TCP library:
+- **One device lifecycle:** initialise a device once, then let the framework manage provisioning, WiFi, MQTT, OTA, and the web UI.
+- **Configuration that survives real upgrades:** DFC4 records are application-bound and schema-aware, so routine parameter changes do not require erasing devices.
+- **Network resilience without duplicate setup:** a profile can define a primary WiFi network and one fallback; successful portal changes are verified before they persist.
+- **One optional device password:** provisioning, OTA, HTTP Basic authentication, and WebSerial share one persisted password.
+- **Repeatable deployment:** an ignored local profile can seed a new board without placing credentials in source control.
 
-```ini
-[common]
-lib_deps =
-  DeviceFramework=https://github.com/alexhopeoconnor/DeviceFramework.git#v2.1.0
-```
+## Try it
 
-PlatformIO clones that repository and checks out the tag after `#`; it does not download a GitHub Release asset.
-
-## Minimal sketch
+Each firmware declares its own identity, then uses the same compact setup/loop skeleton:
 
 ```cpp
-#include <Arduino.h>
 #include <DeviceFramework.h>
-
 #include "FirmwareIdentity.h"
 
 void setup() {
@@ -33,20 +28,43 @@ void loop() {
 }
 ```
 
-For a protected new device, select an ignored local profile containing `device_password`. It seeds the first V3 configuration record and supplies the same value to PlatformIO's `espota` uploader. That one password protects the provisioning AP, Arduino OTA, HTTP Basic authentication, and WebSerial.
+The consuming firmware registers its parameters and entities in `beforeSetup()`; see the [getting-started guide](docs/GETTING_STARTED.md) for the complete flow.
 
-After setup, the V3 record is the device's source of truth. Use `DeviceFramework::setDevicePassword("new-password")`, or the web interface's **Device Password** control, to rotate it transactionally; a valid stored password is restored on every later boot and is not overwritten by the selected profile. Update the same ignored profile before a later OTA upload, because PlatformIO needs the active password for `espota` authentication. A fresh profile-free build starts open; an existing V3 record retains its saved password.
+## Install
 
-## Local development
+Use a released Git tag. DeviceFramework's manifest resolves the tested WiFiManager, DFTE, ArduinoHA, async-web, and platform-specific TCP dependencies:
 
-Released configuration uses public, pinned Git URLs. To work on sibling library checkouts without changing tracked project files, copy `platformio.local.example.ini` to an ignored file named `platformio.local.ini.<machine>` and adjust its symlink targets. `extra_configs` loads matching local overrides when present.
+```ini
+[common]
+lib_deps =
+  DeviceFramework=https://github.com/alexhopeoconnor/DeviceFramework.git#v2.2.0
+```
 
-## Tests and releases
+The text after `#` is a Git ref. PlatformIO clones the repository and checks out that tag; it does not download a GitHub Release asset.
 
-- `./scripts/run-tests.sh compile --platform esp8266` compiles a real clean consumer without a board (and also checks the web-disabled build).
-- `./scripts/run-tests.sh hardware --platform esp8266 --port /dev/ttyUSB0 --env-file test/.env` runs the optional connected-device direct-LAN integration suite. Copy `test/.env.example`; it is ignored and no credentials are cached.
-- `./scripts/run-tests.sh hardware --platform esp8266 --profile-fixture --port /dev/ttyUSB0 --env-file test/.env` additionally verifies profile password restoration and protected HTTP status, root-page, and 404 routes from the development host.
-- `./scripts/prepare-release.sh v2.1.0 --tag` validates the manifest and creates an annotated tag. Push the branch and tag; GitHub Actions runs package validation and creates the GitHub Release.
+## Start here
 
-See [configuration and migration](docs/CONFIGURATION.md), [compatibility](docs/COMPATIBILITY.md), [test setup](docs/TESTING.md), and the
-[development and release guide](docs/DEVELOPMENT.md).
+| Goal | Guide |
+| --- | --- |
+| Build a first device or understand the setup lifecycle | [Getting started](docs/GETTING_STARTED.md) |
+| Provision with a private profile, migrate V4 data, or rotate a password | [Configuration and profiles](docs/CONFIGURATION.md) |
+| See tested dependency versions and supported targets | [Compatibility](docs/COMPATIBILITY.md) |
+| Run compile or connected-device checks | [Testing](docs/TESTING.md) |
+| Work on the framework or prepare a release | [Development and releases](docs/DEVELOPMENT.md) |
+
+## Local profile in one sentence
+
+For a new protected device, select an ignored local profile containing `device_password`. It seeds the first V4 record and gives PlatformIO the same OTA password. Later password changes persist in V4 storage; update that local JSON before the next OTA upload so `espota` can authenticate.
+
+## Development and releases
+
+```bash
+./scripts/test.sh compile --platform esp8266
+./scripts/test.sh compile --platform esp32
+./scripts/check-docs.sh
+./scripts/prepare-release.sh vMAJOR.MINOR.PATCH --tag
+```
+
+The tag workflow repeats the board-free compile checks, validates a PlatformIO package, and creates a GitHub Release from the matching changelog section. It does not publish to the PlatformIO Registry or deploy firmware.
+
+See the [documentation index](docs/README.md), [release history](CHANGELOG.md), and [MIT licence](LICENSE).

@@ -4,8 +4,8 @@ set -euo pipefail
 usage() {
     cat <<'EOF'
 Usage:
-  ./scripts/run-tests.sh compile  --platform esp8266|esp32 [--profile-fixture]
-  ./scripts/run-tests.sh hardware --platform esp8266|esp32 --port /dev/ttyUSB0 [--env-file test/.env] [--profile-fixture]
+  ./scripts/test.sh compile  --platform esp8266|esp32 [--profile-fixture]
+  ./scripts/test.sh hardware --platform esp8266|esp32 --port /dev/ttyUSB0 [--env-file test/.env] [--profile-fixture]
 EOF
     exit 2
 }
@@ -40,6 +40,12 @@ refresh_clean_consumer_dependency() {
 }
 
 [[ "$profile_fixture" == "true" ]] && environment="${platform}_profile"
+if [[ "$mode" == "hardware" && "$profile_fixture" == "true" ]]; then
+    environment="${platform}_profile_hardware"
+fi
+if [[ "$mode" == "compile" && "$profile_fixture" == "true" ]]; then
+    pio run -d test/compile-project -e "$environment" -t clean >/dev/null
+fi
 if [[ "$mode" == "compile" ]]; then
     refresh_clean_consumer_dependency "$environment"
     pio run -d test/compile-project -e "$environment"
@@ -69,6 +75,27 @@ write_config() {
     printf '#define TEST_MQTT_SERVER "%s"\n' "$(escape_c_string "$DEVICEFRAMEWORK_TEST_MQTT_SERVER")" >> "$config_file"
     printf '#define TEST_MQTT_USER "%s"\n' "$(escape_c_string "$DEVICEFRAMEWORK_TEST_MQTT_USER")" >> "$config_file"
     printf '#define TEST_MQTT_PASSWORD "%s"\n' "$(escape_c_string "$DEVICEFRAMEWORK_TEST_MQTT_PASSWORD")" >> "$config_file"
+    if [[ "$profile_fixture" == "true" ]]; then
+        printf "%s\n" "#define TEST_EXPECT_WIFI_FALLBACK 1" >> "$config_file"
+    fi
+}
+
+hardware_profile=""
+write_hardware_profile() {
+    hardware_profile="$(mktemp -p /tmp deviceframework-profile.XXXXXX)"
+    chmod 600 "$hardware_profile"
+    {
+        printf "%s\n" "{"
+        printf "%s\n" "  \"format\": 2,"
+        printf "%s\n" "  \"application\": \"deviceframework\","
+        printf "%s\n" "  \"profile\": { \"id\": \"hardware-${platform}-fallback\", \"revision\": 1, \"policy\": \"bootstrap\" },"
+        printf "%s\n" "  \"device_password\": \"profile-fixture-password\","
+        printf "%s\n" "  \"wifi\": { \"profiles\": ["
+        printf "%s\n" "    { \"ssid\": \"df-test-primary-unavailable\", \"password\": \"\" },"
+        printf "    { \"ssid\": \"%s\", \"password\": \"%s\" }\n" "$(escape_c_string "$DEVICEFRAMEWORK_TEST_WIFI_SSID")" "$(escape_c_string "$DEVICEFRAMEWORK_TEST_WIFI_PASSWORD")"
+        printf "%s\n" "  ] }"
+        printf "%s\n" "}"
+    } > "$hardware_profile"
 }
 
 assert_http_endpoint() {
@@ -137,6 +164,40 @@ assert_password_endpoint() {
     echo "Direct LAN check passed: persistent device-password endpoint"
 }
 
+wait_for_password_restart() {
+    local password="$1"
+    local status_code=""
+    local attempt
+
+    # A successful password update deliberately schedules a reboot. Observe
+    # both the outage and recovered authentication rather than racing it.
+    for attempt in {1..15}; do
+        status_code="$(curl --silent --connect-timeout 1 --max-time 2 --output /dev/null \
+            --write-out '%{http_code}' -u "admin:$password" \
+            "http://${device_host}/api/status" 2>/dev/null || true)"
+        [[ "$status_code" != "200" ]] && break
+        sleep 1
+    done
+    if [[ "$status_code" == "200" ]]; then
+        echo "Password endpoint did not trigger the expected restart" >&2
+        return 1
+    fi
+
+    for attempt in {1..45}; do
+        status_code="$(curl --silent --connect-timeout 1 --max-time 2 --output /dev/null \
+            --write-out '%{http_code}' -u "admin:$password" \
+            "http://${device_host}/api/status" 2>/dev/null || true)"
+        if [[ "$status_code" == "200" ]]; then
+            echo "Direct LAN check passed: password persists after restart"
+            return 0
+        fi
+        sleep 1
+    done
+
+    echo "Device did not return with its updated password after restart" >&2
+    return 1
+}
+
 verify_web_interface() {
     local default_host
     if [[ "$profile_fixture" == "true" ]]; then
@@ -158,21 +219,32 @@ verify_web_interface() {
     fi
     local profile_password=""
     if [[ "$profile_fixture" == "true" ]]; then
-        profile_password="$(sed -nE 's/^[[:space:]]*"device_password"[[:space:]]*:[[:space:]]*"([^"]*)"[[:space:]]*,?[[:space:]]*$/\1/p' test/profiles/profile-fixture.json)"
+        local profile_source="${hardware_profile:-test/profiles/profile-fixture.json}"
+        profile_password="$(sed -nE 's/^[[:space:]]*"device_password"[[:space:]]*:[[:space:]]*"([^"]*)"[[:space:]]*,?[[:space:]]*$/\1/p' "$profile_source")"
         [[ -n "$profile_password" ]] || { echo "Profile fixture has no device_password" >&2; return 1; }
         assert_http_endpoint "unauthenticated API status" "/api/status" 401 ""
-        assert_password_endpoint "$profile_password"
     fi
 
     assert_http_endpoint "API status" "/api/status" 200 "$profile_password" runtime chip_id version
     assert_http_endpoint "web interface root" "/" 200 "$profile_password" '<!DOCTYPE html>' 'Device Status' 'System Controls' 'refreshStatus()'
     assert_http_endpoint "custom 404 page" "/notfound" 200 "$profile_password" 404 'Page Not Found' 'Return to Home'
+    if [[ "$profile_fixture" == "true" ]]; then
+        assert_password_endpoint "$profile_password"
+        wait_for_password_restart "$profile_password"
+        assert_http_endpoint "post-restart API status" "/api/status" 200 "$profile_password" runtime chip_id version
+    fi
 }
 
 cleanup() {
     rm -f "$config_file"
+    [[ -z "$hardware_profile" ]] || rm -f "$hardware_profile"
 }
 trap cleanup EXIT INT TERM
 write_config
-pio test -e "$environment" --filter test_device_framework --upload-port "$port" --test-port "$port"
+if [[ "$profile_fixture" == "true" ]]; then
+    write_hardware_profile
+    DEVICEFRAMEWORK_HARDWARE_PROFILE="$hardware_profile" pio test -e "$environment" --filter test_device_framework --upload-port "$port" --test-port "$port"
+else
+    pio test -e "$environment" --filter test_device_framework --upload-port "$port" --test-port "$port"
+fi
 verify_web_interface

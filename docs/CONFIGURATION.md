@@ -1,67 +1,101 @@
-# DeviceFramework application configuration and local profiles
+# Application configuration and local profiles
 
-Each consuming firmware declares three independent values in `include/FirmwareIdentity.h`:
+Each consuming firmware declares three separate values in `include/FirmwareIdentity.h`:
 
-- `APPLICATION_ID` identifies the firmware family and prevents loading another app’s configuration.
-- `FIRMWARE_VERSION` is shown by Home Assistant and the device status API.
-- `CONFIGURATION_SCHEMA` changes only when a saved value needs a semantic migration.
+- `APPLICATION_ID` identifies the persistent configuration family. Keep it stable for ordinary firmware releases.
+- `FIRMWARE_VERSION` is reported by the running firmware and Home Assistant.
+- `CONFIGURATION_SCHEMA` changes only when the meaning of an existing saved value changes.
 
-Adding, removing, or reordering parameters does not need a schema bump. DeviceFramework V3 stores
-parameter values by ID, ignores unknown IDs, and leaves new IDs at their registered defaults. Bump
-the schema only for a rename, unit conversion, incompatible interpretation, or another transformation.
+Adding, removing, or reordering parameter IDs does not need a schema bump: V4 storage is keyed by parameter ID. Increase the schema only for a rename, conversion, clamp, or another incompatible interpretation.
 
-## Optional private profile
+## Optional local profile
 
-A profile is an opt-in build input owned by the consuming firmware. Keep a safe template beside that firmware, such as `profiles.example/bootstrap.json`, and keep real values in its ignored `profiles.local/` directory. The ignored `platformio.local.ini.<machine>` beside the firmware only selects a profile, an OTA endpoint, or local sibling libraries. It contains no credentials itself.
+A profile is an opt-in build input owned by the consuming firmware. Keep its safe template beside that firmware and its actual device values in an ignored sibling directory:
 
 ```text
-my-firmware/
-├── platformio.ini                    # tracked release build
+your-firmware/
+├── platformio.ini                    # tracked portable build
 ├── platformio.local.example.ini      # tracked local selector example
 ├── profiles.example/bootstrap.json   # tracked safe template
 └── profiles.local/home.json          # ignored real profile
 ```
 
-The generated C++ header lives only under `.pio`; it is not a source file and is removed with the build directory. The library-owned PlatformIO/SCons hook uses only Python’s standard library. Sketches do not declare `extra_scripts`, manage a Python environment, or parse credentials. With no `custom_device_profile` option, it does nothing.
+The ignored `platformio.local.ini.<machine>` only selects a local profile or OTA endpoint; real values remain in the JSON profile. A consuming project may point DeviceFramework at a local checkout, but PlatformIO still resolves that checkout's manifest Git refs, so coordinated untagged dependency work belongs in the framework root project. DeviceFramework's package hook uses PlatformIO/SCons and Python’s standard library to generate a C++ header only under `.pio`. Sketches do not declare `extra_scripts`, manage Python, or parse credentials. With no `custom_device_profile`, the hook does nothing.
 
-The profile compiler accepts this strict JSON shape:
+## Profile contract
+
+The profile compiler accepts this strict JSON shape. Values must be printable ASCII; `application`, profile ID, and revision must be valid, and `device_password` is optional but must be 8–31 characters when present.
 
 ```json
 {
-  "format": 1,
+  "format": 2,
   "application": "your-firmware",
   "profile": { "id": "home-temperature", "revision": 1, "policy": "bootstrap" },
   "device_password": "8-to-31-character-password",
-  "wifi": { "ssid": "network", "password": "network-password" },
-  "parameters": { "mqttserver": "mqtt.local", "mqttport": "1883" }
+  "wifi": {
+    "profiles": [
+      { "ssid": "network", "password": "network-password" },
+      { "ssid": "fallback-network", "password": "fallback-password" }
+    ]
+  },
+  "parameters": { "device": "Workshop monitor", "mqttserver": "mqtt.local" }
 }
 ```
 
-`bootstrap` is the safe default for a new device. It applies when storage is empty, when a fully valid V3 record belongs to a different `APPLICATION_ID`, or when a recognised DFC2 record needs replacing. An explicit profile can therefore hand a board from one firmware family to another, or move it from 2.0.x storage to V3, without a preliminary erase. It does not overwrite matching-application configuration, unverified/corrupt V3 data, or a compatible schema that requires an explicit migration.
+A profile needs one primary WiFi object in `wifi.profiles`; the second object is an optional fallback. The controller verifies a new candidate before it persists the profile set, then prefers the last successful network on later boots.
 
-`reconcile` applies once for each new profile ID or revision and records the attempt before WiFi connects, so it does not rewrite portal-managed values on every boot. Increase `profile.revision` after deliberately changing a reconciliation profile; a failed initial WiFi attempt also counts as an attempt.
+`bootstrap` is the safe default for a new device. It applies to empty storage, a valid record belonging to another `APPLICATION_ID`, or recognised DFC2 or DFC3 storage; it does not overwrite matching-application configuration or corrupt/unverified V4 data. This allows explicit erase-free handover between applications or from recognised 2.0.x storage.
 
+## Upgrade from DeviceFramework 2.1.x
 
-### Shared device password and OTA
+DeviceFramework 2.1.x records are DFC3. They are deliberately not decoded by 2.2.x. Select the same ignored local profile used for deployment and perform one normal authenticated USB or OTA update: the profile seeds a DFC4 record, verifies its primary/fallback WiFi candidate, and then stores the verified profiles. There is no special erase firmware. A profile-free 2.2.x build treats DFC3 as unsupported and opens provisioning instead of guessing at an incompatible layout.
 
-`device_password` is the profile's **initial seed**, not a second authority. On empty storage, an explicitly selected bootstrap/reconcile profile, or recognised DFC2 data, DeviceFramework applies it before WiFiManager, Arduino OTA, HTTP Basic authentication, and WebSerial start, then writes one CRC-protected V3 record containing both the parameters and active password. A corrupt V3 record receives that password only as a RAM recovery fallback; it is never overwritten automatically.
+`reconcile` deliberately applies changed managed values once per profile ID/revision and records the attempt before Wi-Fi connects. Increase `profile.revision` after changing a reconciliation profile. Use it only when profile values are intended to take precedence over existing portal-managed values.
 
-Once a valid V3 record exists, it restores the active password on every boot and the selected profile does not overwrite it. Rotate it from application code with:
+## One shared device password
+
+`device_password` is an initial seed, not a second authority. When a profile legitimately seeds configuration, DeviceFramework writes the password and parameters together in one CRC-protected V4 record. Once a valid record exists, its active password restores on every boot and a later selected profile does not overwrite it.
+
+Use the public API to rotate it at runtime:
 
 ```cpp
 if (!DeviceFramework::setDevicePassword("new-local-password")) {
-    // The value was invalid or the verified V3 write failed; keep the old password.
+    // Invalid value or verified storage write failed; the old password remains active.
 }
 ```
 
-The optional web interface offers the same operation at **System Controls → Device Password** and restarts only after the write is verified. `setDevicePassword()` accepts empty (to intentionally disable local authentication) or 8–31 printable profile-compatible characters. The password remains one shared value for the provisioning AP, OTA, HTTP Basic authentication, and WebSerial.
+The optional web interface provides the same operation at **System Controls → Device Password**. The one active value protects the provisioning AP, Arduino OTA, HTTP Basic authentication, and WebSerial. For OTA, the build-time profile supplies `espota --auth`; after runtime rotation, update that ignored JSON value before the next OTA upload. Matching the JSON only authenticates the uploader—the verified V4 record remains the device’s runtime source of truth.
 
-For `espota`, PlatformIO still needs the current password before it can deliver new firmware. The profile hook supplies `--auth` from the ignored profile's `device_password`; do not add a second `--auth` option. After a runtime rotation, update that same ignored JSON value before the next OTA upload. The next firmware boot keeps the V3 runtime value—matching the profile only lets the uploader authenticate.
+## ESP8266 mDNS heap guard
+
+The ESP8266 core allocates while parsing multicast mDNS traffic. DeviceFramework therefore calls its parser only when it has both 2 KB free heap and a 2 KB contiguous heap block; this avoids an allocator reset when otherwise-adequate free heap is fragmented. These are conservative defaults. Leave them unchanged unless measurement on the target device shows a different trade-off is required.
+
+```cpp
+setConfigMDNSMinLargestBlock(3072);  // Require a 3 KB contiguous block before mDNS work.
+```
 
 ## Normal builds, migration, and reset
 
-A normal build has no `custom_device_profile`. It generates no private header and never seeds or overwrites saved configuration. A matching V3 record, including its saved password, loads normally; a valid V3 record for another application remains isolated and the new firmware uses defaults until normal provisioning or an explicit profile provides values. A DFC2 record is recognised but neither decoded nor silently erased; select a profile to replace it with fresh V3 data. Use fresh profile-free mode only for an intentionally open local device or interactive provisioning.
+A normal build has no `custom_device_profile`: it never generates private source, seeds, or overwrites stored configuration. It loads a matching V4 record, including its password, or follows normal WiFiManager provisioning. A valid foreign application record remains isolated. Recognised DFC2 or DFC3 is never silently decoded or erased; an explicit profile can replace it.
 
-Adding, removing, or reordering parameter IDs requires no schema change. Bump the application schema only for a semantic conversion and supply a `DeviceFrameworkConfigMigrationCallback`; return `false` when a prior schema cannot be transformed safely. A firmware never loads a stored schema newer than itself.
+Use a migration callback only after increasing `CONFIGURATION_SCHEMA` for a semantic change:
 
-**Reset Configuration** retains WiFi credentials and the active device password while restoring framework parameters to defaults. **Factory Reset** clears WiFi credentials, the device password, and both transactional configuration slots. After the restart, a selected profile can seed a new V3 record; without one, normal provisioning creates the new configuration. DeviceFramework 2.1.0 intentionally has no V1/V2 value decoder, mapper, or implicit migration path.
+```cpp
+inline bool migrate(uint16_t fromSchema, DeviceFrameworkConfigMigration& values) {
+    if (fromSchema != 1) return false;
+    return values.rename("sampleperiod", "sampleinterval") &&
+           values.multiplyUInt("sampleinterval", 60);
+}
+
+inline bool configure() {
+    return DeviceFramework::configureApplication(
+        APPLICATION_ID, FIRMWARE_VERSION, 2, migrate
+    );
+}
+```
+
+Return `false` when a previous schema cannot be transformed safely. Firmware never loads a saved schema newer than it understands.
+
+**Reset Configuration** keeps Wi-Fi credentials and the active device password while restoring framework parameters. **Factory Reset** clears Wi-Fi, password, and both transactional slots. DeviceFramework 2.2.0 writes DFC4. DFC2 and DFC3 are recognised only as unsupported markers so a selected profile can replace them; their values are not decoded or migrated.
+
+Next: [testing](TESTING.md) · [development and releases](DEVELOPMENT.md) · [documentation map](README.md).

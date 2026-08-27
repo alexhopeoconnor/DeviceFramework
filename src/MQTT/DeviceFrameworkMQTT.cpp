@@ -110,7 +110,7 @@ void DeviceFrameworkMQTT::addResetCommand(const char* suffix) {
 
             // Perform reset operations
             LOG_INFOLN(F("Resetting Wi-Fi and device configuration..."));
-            DeviceFrameworkWiFi::getWiFiManager().resetSettings();
+            DeviceFrameworkWiFi::clearProfiles();
             // Note: EEPROM clearing and parameter restoration would be handled by the main framework
             // This is a simplified version for the module
 

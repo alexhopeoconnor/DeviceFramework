@@ -38,8 +38,7 @@ bool isProfileEnabled() {
 uint32_t DeviceFrameworkProvisioning::activeProfileHash = 0;
 uint32_t DeviceFrameworkProvisioning::activeProfileRevision = 0;
 bool DeviceFrameworkProvisioning::pendingWiFi = false;
-const char* DeviceFrameworkProvisioning::pendingWiFiSSID = "";
-const char* DeviceFrameworkProvisioning::pendingWiFiPassword = "";
+WiFiManagerStationProfiles DeviceFrameworkProvisioning::pendingWiFiProfiles;
 
 bool DeviceFrameworkProvisioning::apply(const DeviceFrameworkStorageLoadResult& storageResult) {
     if (!isProfileEnabled()) return false;
@@ -62,14 +61,14 @@ bool DeviceFrameworkProvisioning::apply(const DeviceFrameworkStorageLoadResult& 
         storageResult.status == DeviceFrameworkStorageLoadStatus::Corrupt;
 
     // A local profile is an initial seed and recovery fallback, not the source
-    // of truth after a V3 record has been committed. This preserves a password
+    // of truth after a V4 record has been committed. This preserves a password
     // changed at runtime across every later boot and OTA update.
     if (passwordFallback && !setConfigDevicePassword(DEVICEFRAMEWORK_PROFILE_DEVICE_PASSWORD)) {
         LOG_WARNLN(F("DeviceFramework profile: rejected device password (must be empty or 8-31 characters)"));
         return false;
     }
 
-    // Corrupt or schema-incompatible V3 data must not be overwritten by an
+    // Corrupt or schema-incompatible V4 data must not be overwritten by an
     // automatic profile reconcile. Corrupt data still receives the RAM-only
     // profile fallback so the local recovery surfaces remain usable.
     if (!initialConfiguration && !storageResult.hasUsableConfiguration()) return false;
@@ -94,10 +93,19 @@ bool DeviceFrameworkProvisioning::apply(const DeviceFrameworkStorageLoadResult& 
         }
     }
 
-    if (DEVICEFRAMEWORK_PROFILE_WIFI_SSID[0]) {
+    pendingWiFiProfiles = WiFiManagerStationProfiles();
+    for (size_t index = 0; index < DEVICEFRAMEWORK_PROFILE_WIFI_PROFILE_COUNT; ++index) {
+        const DeviceFrameworkProvisionedWiFiProfile& source = DEVICEFRAMEWORK_PROFILE_WIFI_PROFILES[index];
+        WiFiManagerStationProfile& target = pendingWiFiProfiles.slots[index];
+        target.enabled = true;
+        target.hasPassword = source.password[0] != 0;
+        strncpy(target.ssid, source.ssid, sizeof(target.ssid) - 1);
+        if (target.hasPassword) {
+            strncpy(target.password, source.password, sizeof(target.password) - 1);
+        }
+    }
+    if (DEVICEFRAMEWORK_PROFILE_WIFI_PROFILE_COUNT > 0) {
         pendingWiFi = true;
-        pendingWiFiSSID = DEVICEFRAMEWORK_PROFILE_WIFI_SSID;
-        pendingWiFiPassword = DEVICEFRAMEWORK_PROFILE_WIFI_PASSWORD;
     }
     LOG_INFOLN(F("DeviceFramework profile applied"));
     return true;
@@ -113,7 +121,10 @@ void DeviceFrameworkProvisioning::markConnectionSucceeded() {
     state.profileHash = activeProfileHash;
     state.appliedRevision = activeProfileRevision;
     DeviceFrameworkStorage::setProvisioningState(state);
-    DeviceFrameworkStorage::save();
+    if (!DeviceFrameworkStorage::save()) {
+        LOG_ERRORLN(F("DeviceFramework profile: unable to mark WiFi candidate applied"));
+        return;
+    }
     pendingWiFi = false;
 }
 
@@ -121,10 +132,6 @@ bool DeviceFrameworkProvisioning::hasPendingWiFi() {
     return pendingWiFi;
 }
 
-const char* DeviceFrameworkProvisioning::getPendingWiFiSSID() {
-    return pendingWiFiSSID;
-}
-
-const char* DeviceFrameworkProvisioning::getPendingWiFiPassword() {
-    return pendingWiFiPassword;
+const WiFiManagerStationProfiles& DeviceFrameworkProvisioning::getPendingWiFiProfiles() {
+    return pendingWiFiProfiles;
 }

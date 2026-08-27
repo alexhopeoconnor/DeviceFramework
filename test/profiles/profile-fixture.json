@@ -1,10 +1,15 @@
 {
-  "format": 1,
+  "format": 2,
   "application": "deviceframework",
   "profile": {
     "id": "deviceframework-profile-fixture",
     "revision": 1,
     "policy": "bootstrap"
+  },
+  "wifi": {
+    "profiles": [
+      { "ssid": "profile-fixture-network", "password": "fixture-password" }
+    ]
   },
   "device_password": "profile-fixture-password"
 }

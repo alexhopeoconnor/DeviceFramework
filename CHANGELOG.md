@@ -1,5 +1,10 @@
 # Changelog
 
+## 2.2.0
+
+- Add an optional primary/fallback WiFi profile set, persisted in the transactional DFC4 record through WiFiManager 3.1.0. New portal profiles are committed only after a usable station connection.
+- Treat prior DFC2 and DFC3 magic values as explicit profile-rebootstrap cases. Their payloads are not decoded; a normal profiled OTA can install DFC4 without a separate erase firmware.
+
 ## 2.1.0
 
 - Replace V2/V1 storage readers with V3 transactional records that bind the active shared device password to the same CRC-validated configuration write as parameters and provisioning state.

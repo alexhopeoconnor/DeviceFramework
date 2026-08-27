@@ -7,6 +7,7 @@
 #include <Arduino.h>
 #include "../Configuration/DeviceFrameworkConfig.h"
 #include "../Configuration/DeviceFrameworkParameterRegistry.h"
+#include "DeviceFrameworkWiFiProfileStore.h"
 #include "../DeviceFrameworkDebug.h"
 
 // Forward declarations
@@ -17,6 +18,9 @@ class DeviceFrameworkWiFi {
 private:
     static DeviceFrameworkParameterRegistry* registry;
     static WiFiManager wm;
+    static DeviceFrameworkWiFiProfileStore profileStore;
+    static bool provisioningCandidatePending;
+    static WiFiManagerStationProfiles provisioningCandidate;
 
     // State for config mode
     static bool isConfigMode;
@@ -33,15 +37,19 @@ private:
     static void saveParamsCallbackInternal(WiFiManager::WiFiManagerRequestArgs requestArgs);
     static void saveConfigCallbackInternal();
     static void configModeCallbackInternal();
+    static void stationEventCallbackInternal(WiFiManager::wm_event_t event);
 
 public:
     static bool setup();
     static void preloadWiFi(const char* ssid, const char* password);
+    static void setProvisioningCandidate(const WiFiManagerStationProfiles& profiles);
+    static void clearProfiles();
     static void loop();
 
     // State management
     static bool isInConfigMode();
     static bool getConfigAttempted();
+    static bool hasUsableConnection();
 
     // Callback management
     static void setSaveParamsCallback(void (*callback)(WiFiManager::WiFiManagerRequestArgs requestArgs));

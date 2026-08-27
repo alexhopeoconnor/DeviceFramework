@@ -15,11 +15,29 @@ bool DeviceFrameworkMDNS::initialized = false;
 // Non-blocking resolution state
 IPAddress DeviceFrameworkMDNS::cachedIP = INADDR_NONE;
 String DeviceFrameworkMDNS::lastResolvedHostname = "";
+String DeviceFrameworkMDNS::activeHostname = "";
 unsigned long DeviceFrameworkMDNS::lastResolutionAttempt = 0;
 bool DeviceFrameworkMDNS::isResolving = false;
 
 // Packet draining state
 unsigned long DeviceFrameworkMDNS::lastPacketDrainTime = 0;
+
+namespace {
+
+bool hasMDNSHeapHeadroom(uint32_t minimumFreeHeap) {
+#ifdef DF_PLATFORM_ESP8266
+    uint32_t freeHeap = 0;
+    uint32_t largestFreeBlock = 0;
+    uint8_t fragmentation = 0;
+    DF_GET_HEAP_STATS(freeHeap, largestFreeBlock, fragmentation);
+    return freeHeap >= minimumFreeHeap &&
+           largestFreeBlock >= getConfigMDNSMinLargestBlock();
+#else
+    return ESP.getFreeHeap() >= minimumFreeHeap;
+#endif
+}
+
+} // namespace
 
 void DeviceFrameworkMDNS::setup(const char* hostname) {
     if (initialized) {
@@ -51,8 +69,43 @@ void DeviceFrameworkMDNS::setup(const char* hostname) {
         resolver.setLocalIP(currentResolverIP);
     #endif
 
+    activeHostname = hostname;
     initialized = true;
     LOG_INFOLN(F("MDNSManager initialized successfully"));
+}
+
+void DeviceFrameworkMDNS::onNetworkReady(const char* hostname) {
+    if (!hostname || hostname[0] == 0 || WiFi.status() != WL_CONNECTED ||
+        WiFi.localIP() == IPAddress(0, 0, 0, 0)) {
+        return;
+    }
+
+    if (initialized && currentResolverIP == WiFi.localIP() && activeHostname == hostname) {
+        return;
+    }
+    if (initialized) onNetworkLost();
+    setup(hostname);
+}
+
+void DeviceFrameworkMDNS::onNetworkLost() {
+    if (!initialized && currentResolverIP == INADDR_NONE) return;
+
+    if (initialized) {
+        #ifdef DF_PLATFORM_ESP8266
+            MDNS.close();
+        #elif defined(DF_PLATFORM_ESP32)
+            MDNS.end();
+        #endif
+    }
+
+    initialized = false;
+    currentResolverIP = INADDR_NONE;
+    cachedIP = INADDR_NONE;
+    activeHostname = "";
+    lastResolvedHostname = "";
+    lastResolutionAttempt = 0;
+    lastPacketDrainTime = 0;
+    isResolving = false;
 }
 
 void DeviceFrameworkMDNS::loop() {
@@ -68,9 +121,9 @@ void DeviceFrameworkMDNS::loop() {
 
     // Process MDNS (responds to queries, processes announcements)
     #ifdef DF_PLATFORM_ESP8266
-        // ESP8266: MDNS.update() allocates memory dynamically when parsing response objects
-        // Check memory before calling to avoid OOM crashes during heavy operations
-        if (ESP.getFreeHeap() >= getConfigMDNSMinFreeHeap()) {
+        // ESP8266: MDNS.update() parses multicast responses using dynamic allocations
+        // Require total and contiguous heap headroom before entering the core parser
+        if (hasMDNSHeapHeadroom(getConfigMDNSMinFreeHeap())) {
             MDNS.update();
         }
         // If memory is low, skip MDNS processing - packets will stay in UDP buffer temporarily
@@ -84,8 +137,8 @@ void DeviceFrameworkMDNS::loop() {
     // every loop is wasteful. We only need to drain packets occasionally to prevent
     // UDP buffer buildup, not every single loop iteration.
     if (TimeUtils::hasTimeElapsed(millis(), lastPacketDrainTime, getConfigMDNSPacketDrainInterval())) {
-        // Only drain if we have enough free memory (resolver.loop() allocates dynamically)
-        if (ESP.getFreeHeap() >= getConfigMDNSPacketDrainMinFreeHeap()) {
+        // Only drain when heap is sufficient and contiguous (resolver.loop() allocates dynamically)
+        if (hasMDNSHeapHeadroom(getConfigMDNSPacketDrainMinFreeHeap())) {
             #ifdef DF_PLATFORM_ESP32
                 // On ESP32, skip resolver.loop() - it causes UDP socket binding conflicts
                 // ESP32's MDNS handles resolution automatically without needing resolver packet draining

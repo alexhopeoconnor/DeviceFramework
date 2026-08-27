@@ -36,12 +36,14 @@ TestCase tests[] = {
     TEST_ENTRY(test_device_framework_basic_methods),
     TEST_ENTRY(test_device_framework_setup_verification),
     TEST_ENTRY(test_eeprom_storage_methods),
+    TEST_ENTRY(test_storage_legacy_markers_allow_profile_cutover),
 
     // Group 3: Configuration & Storage
     TEST_ENTRY(test_device_framework_configuration),
     TEST_ENTRY(test_storage_save_load),
     TEST_ENTRY(test_storage_foreign_application_is_distinguished),
     TEST_ENTRY(test_storage_incompatible_schema_retains_device_password),
+    TEST_ENTRY(test_storage_station_profiles_round_trip),
     TEST_ENTRY(test_profile_password_is_persistent_without_reprovisioning),
 
     // Group 4: Network-Dependent
@@ -192,12 +194,10 @@ void setup() {
         Serial.println("[TEST]     Custom HA parameter registered: testhaswitch");
     });
 
-    // In testing mode, set up WiFi credentials and persist them
-    Serial.println("[TEST]   Setting up WiFi credentials...");
-    #ifdef DF_PLATFORM_ESP8266
-        WiFi.persistent(true);  // ESP8266 only - ESP32 doesn't support this
-    #endif
-    WiFi.begin(TEST_WIFI_SSID, TEST_WIFI_PASSWORD);
+    // DeviceFramework 2.2 owns station connection through the profile controller.
+    // Seed its candidate instead of relying on the ESP SDK's legacy credential slot.
+    Serial.println("[TEST]   Preloading WiFi profile candidate...");
+    DeviceFrameworkWiFi::preloadWiFi(TEST_WIFI_SSID, TEST_WIFI_PASSWORD);
 
     // Setup DeviceFramework (now with proper sketch-like configuration)
     Serial.println("[TEST]   Setting up DeviceFramework...");

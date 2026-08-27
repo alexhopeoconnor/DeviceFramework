@@ -3,6 +3,7 @@
 
 #include <Arduino.h>
 #include <EEPROM.h>
+#include <WiFiManager.h>
 
 #include <map>
 
@@ -12,12 +13,12 @@ enum class DeviceFrameworkStorageLoadStatus {
     Loaded,
     Migrated,
     Empty,
-    // A valid V3 record belongs to a different APPLICATION_ID. Its values are
+    // A valid V4 record belongs to a different APPLICATION_ID. Its values are
     // deliberately not loaded into this firmware, but an explicit local
     // bootstrap profile may safely seed this application without an erase.
     ForeignApplication,
-    // DFC2 is recognised only so a selected bootstrap profile can write fresh
-    // DFC3 data. DeviceFramework 2.1.0 does not decode or migrate V1/V2 data.
+    // DFC2/DFC3 are recognised only so a selected bootstrap profile can write fresh
+    // DFC4 data. DeviceFramework does not decode or migrate them.
     UnsupportedLegacyFormat,
     Corrupt,
     Incompatible
@@ -47,23 +48,27 @@ struct DeviceFrameworkStorageLoadResult {
 
 class DeviceFrameworkStorage {
 public:
-    static constexpr uint16_t STORAGE_FORMAT_VERSION = 3;
+    static constexpr uint16_t STORAGE_FORMAT_VERSION = 4;
 
     static void setup();
     static bool save();
-    // Writes a complete V3 record using a candidate password, but does not
+    // Writes a complete current record using a candidate password, but does not
     // mutate runtime state. Callers activate it only after verification.
     static bool saveWithDevicePassword(const char* password);
+    static bool saveWithStationProfiles(const WiFiManagerStationProfiles& profiles);
     static DeviceFrameworkStorageLoadResult load();
     static bool reset();
     static const DeviceFrameworkProvisioningState& getProvisioningState();
     static void setProvisioningState(const DeviceFrameworkProvisioningState& state);
+    static const WiFiManagerStationProfiles& getStationProfiles();
+    static void setStationProfiles(const WiFiManagerStationProfiles& profiles);
     static const DeviceFrameworkStorageLoadResult& getLastLoadResult();
 
 private:
     static DeviceFrameworkStorageLoadResult lastLoadResult;
     static DeviceFrameworkProvisioningState provisioningState;
-    static bool readV3(std::map<String, String>& values, String& password,
+    static WiFiManagerStationProfiles stationProfiles;
+    static bool readCurrent(std::map<String, String>& values, String& password,
                        uint16_t& schema, uint32_t& generation);
     static bool applyValues(const std::map<String, String>& values);
 };
