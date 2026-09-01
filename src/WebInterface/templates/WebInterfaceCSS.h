@@ -1125,6 +1125,30 @@ body {
     animation: glow 2s infinite;
 }
 
+/* Built-in product attribution. Content is fixed framework markup assembled
+ * from setup-time escaped text; consumers cannot supply arbitrary HTML. */
+.about-card {
+    scroll-margin-top: 120px;
+}
+
+.about-summary {
+    margin: 0;
+    color: var(--df-muted);
+    line-height: 1.6;
+}
+
+.about-links {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.7rem;
+    margin: 1rem 0 0;
+    font-weight: 600;
+}
+
+.about-links a {
+    color: var(--df-accent);
+}
+
 /* Footer */
 .footer {
     background: rgba(255, 255, 255, 0.9);

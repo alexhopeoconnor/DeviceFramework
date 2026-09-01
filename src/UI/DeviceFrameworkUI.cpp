@@ -63,13 +63,13 @@ WiFiManagerPortalText mapPortalText(const DeviceFrameworkText& value) {
         : WiFiManagerPortalStorage::Ram};
 }
 
-const char kDefaultLogoAltText[] PROGMEM = "Elixir";
+const char kDefaultLogoAltText[] PROGMEM = "DeviceFramework";
 
 }  // namespace
 
 DeviceFrameworkUIConfig DeviceFrameworkUI::config;
 #ifdef ENABLE_WEB_INTERFACE
-DeviceFrameworkWebLogo DeviceFrameworkUI::defaultWebLogo = {logo_base64, "image/png", true};
+DeviceFrameworkWebLogo DeviceFrameworkUI::defaultWebLogo = {logo_base64, "image/svg+xml", true};
 #else
 DeviceFrameworkWebLogo DeviceFrameworkUI::defaultWebLogo;
 #endif
@@ -78,6 +78,8 @@ String DeviceFrameworkUI::webThemeStyle;
 String DeviceFrameworkUI::escapedBrandName;
 String DeviceFrameworkUI::escapedWebTitle;
 String DeviceFrameworkUI::escapedLogoAltText;
+String DeviceFrameworkUI::aboutNavigation;
+String DeviceFrameworkUI::aboutSection;
 bool DeviceFrameworkUI::configured = false;
 bool DeviceFrameworkUI::locked = false;
 
@@ -99,12 +101,46 @@ bool DeviceFrameworkUI::isTextValid(const DeviceFrameworkText& text) {
     return true;
 }
 
+bool DeviceFrameworkUI::isExternalLinkValid(const DeviceFrameworkExternalLink& link) {
+    if (!isTextValid(link.label) || !isTextValid(link.url)) return false;
+    const bool hasLabel = !link.label.empty();
+    const bool hasUrl = !link.url.empty();
+    if (hasLabel != hasUrl) return false;
+    if (!hasUrl) return true;
+
+    constexpr char kHttpsPrefix[] = "https://";
+    if (link.url.length() > 192 || link.url.length() <= sizeof(kHttpsPrefix) - 1) return false;
+    for (size_t index = 0; index < sizeof(kHttpsPrefix) - 1; ++index) {
+        if (link.url.at(index) != kHttpsPrefix[index]) return false;
+    }
+    if (link.url.at(sizeof(kHttpsPrefix) - 1) == '/' ||
+        link.url.at(sizeof(kHttpsPrefix) - 1) == '?' ||
+        link.url.at(sizeof(kHttpsPrefix) - 1) == '#') return false;
+
+    // Permit the ASCII URL subset used by normal HTTPS web links, rejecting
+    // whitespace and HTML-attribute characters before templates are rendered.
+    for (size_t index = sizeof(kHttpsPrefix) - 1; index < link.url.length(); ++index) {
+        const char c = link.url.at(index);
+        if (!(isAlphaNumeric(c) || c == '-' || c == '.' || c == '_' || c == '~' ||
+              c == ':' || c == '/' || c == '?' || c == '#' || c == '[' || c == ']' ||
+              c == '@' || c == '!' || c == '$' || c == '&' || c == 39 || c == '(' ||
+              c == ')' || c == '*' || c == '+' || c == ',' || c == ';' || c == '=' ||
+              c == '%')) {
+            return false;
+        }
+    }
+    return true;
+}
+
 bool DeviceFrameworkUI::setConfig(const DeviceFrameworkUIConfig& candidate) {
     const DeviceFrameworkBranding& branding = candidate.branding;
     if (locked || !isThemeValid(candidate.theme) ||
         !isTextValid(branding.brandName) || !isTextValid(branding.productName) ||
         !isTextValid(branding.webTitle) || !isTextValid(branding.provisioningTitle) ||
-        !isTextValid(branding.provisioningIntro) || !isTextValid(branding.logoAltText)) {
+        !isTextValid(branding.provisioningIntro) || !isTextValid(branding.logoAltText) ||
+        !isTextValid(candidate.about.summary) ||
+        !isExternalLinkValid(candidate.about.primaryLink) ||
+        !isExternalLinkValid(candidate.about.creditLink)) {
         return false;
     }
 
@@ -114,6 +150,7 @@ bool DeviceFrameworkUI::setConfig(const DeviceFrameworkUIConfig& candidate) {
     // start. This avoids fragmenting the ESP8266 heap during a page response.
     rebuildWebThemeStyle();
     rebuildEscapedText();
+    rebuildAboutContent();
     return true;
 }
 
@@ -220,6 +257,46 @@ void DeviceFrameworkUI::rebuildEscapedText() {
     appendHtmlEscaped(escapedLogoAltText, getLogoAltText());
 }
 
+void DeviceFrameworkUI::rebuildAboutContent() {
+    aboutNavigation = "";
+    aboutSection = "";
+    const DeviceFrameworkAbout& about = config.about;
+    const bool hasPrimary = !about.primaryLink.url.empty();
+    const bool hasCredit = !about.creditLink.url.empty();
+    if (about.summary.empty() && !hasPrimary && !hasCredit) return;
+
+    // These small strings are built before WiFi and the web server start,
+    // alongside the configured theme, so rendering does not fragment ESP8266
+    // heap during a request.
+    aboutNavigation = F("<a href=\"#about\" class=\"nav-link\">About</a>");
+    aboutSection = F("<section class=\"card about-card\" id=\"about\"><h2>About</h2>");
+    if (!about.summary.empty()) {
+        aboutSection += F("<p class=\"about-summary\">");
+        appendHtmlEscaped(aboutSection, about.summary);
+        aboutSection += F("</p>");
+    }
+    if (hasPrimary || hasCredit) {
+        aboutSection += F("<p class=\"about-links\">");
+        if (hasPrimary) {
+            aboutSection += F("<a href=\"");
+            appendHtmlEscaped(aboutSection, about.primaryLink.url);
+            aboutSection += F("\" target=\"_blank\" rel=\"noopener noreferrer\">");
+            appendHtmlEscaped(aboutSection, about.primaryLink.label);
+            aboutSection += F("</a>");
+        }
+        if (hasPrimary && hasCredit) aboutSection += F("<span aria-hidden=\"true\">&middot;</span>");
+        if (hasCredit) {
+            aboutSection += F("<a href=\"");
+            appendHtmlEscaped(aboutSection, about.creditLink.url);
+            aboutSection += F("\" target=\"_blank\" rel=\"noopener noreferrer\">");
+            appendHtmlEscaped(aboutSection, about.creditLink.label);
+            aboutSection += F("</a>");
+        }
+        aboutSection += F("</p>");
+    }
+    aboutSection += F("</section>");
+}
+
 
 
 const DeviceFrameworkText& DeviceFrameworkUI::getBrandName() {
@@ -259,4 +336,12 @@ const char* DeviceFrameworkUI::getEscapedLogoAltText() {
 
 const DeviceFrameworkWebLogo& DeviceFrameworkUI::getWebLogo() {
     return config.branding.webLogo.base64Data ? config.branding.webLogo : defaultWebLogo;
+}
+
+const char* DeviceFrameworkUI::getAboutNavigation() {
+    return aboutNavigation.c_str();
+}
+
+const char* DeviceFrameworkUI::getAboutSection() {
+    return aboutSection.c_str();
 }

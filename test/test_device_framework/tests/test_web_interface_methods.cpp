@@ -62,8 +62,9 @@ void assertTemplateCompletesWithAsyncSizedChunks(const char* templateData,
 void assertTemplateContainsMarkers(const char* templateData, const char* description,
                                    const char* const* markers, size_t markerCount) {
     constexpr size_t kWindowCapacity = 256;
-    bool found[8] = {};
-    TEST_ASSERT_LESS_OR_EQUAL_UINT32(8, markerCount);
+    constexpr size_t kMaxMarkers = 16;
+    bool found[kMaxMarkers] = {};
+    TEST_ASSERT_LESS_OR_EQUAL_UINT32(kMaxMarkers, markerCount);
 
     TemplateContext context(6, 128);
     TEST_ASSERT_TRUE_MESSAGE(context.isReady(), "Constrained web context should allocate");
@@ -212,6 +213,10 @@ void test_web_interface_methods() {
         "href=\"/assets/deviceframework.css\"",
         "src=\"/assets/deviceframework.js\"",
         "src=\"/assets/deviceframework-logo\"",
+        "href=\"#about\"",
+        "id=\"about\"",
+        "https://example.test",
+        "noopener noreferrer",
     };
     assertTemplateContainsMarkers(base_template,
         "Root web template should contain configured UI markers",

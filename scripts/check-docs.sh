@@ -42,6 +42,8 @@ for required in README.md CHANGELOG.md docs/README.md docs/GETTING_STARTED.md do
     fi
 done
 
+"$root/tools/check-web-assets.sh"
+
 if [[ "$failed" -ne 0 ]]; then
     exit 1
 fi

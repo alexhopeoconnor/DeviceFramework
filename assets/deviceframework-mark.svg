@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" role="img" aria-labelledby="title">
+  <title id="title">DeviceFramework</title>
+  <defs>
+    <linearGradient id="violet" x1="20" y1="12" x2="108" y2="116" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#6B4BC2"/>
+      <stop offset="1" stop-color="#3F2A8A"/>
+    </linearGradient>
+  </defs>
+  <path fill="url(#violet)" d="M64 6 114 35v58l-50 29L14 93V35L64 6Z"/>
+  <path fill="none" stroke="#fff" stroke-linecap="round" stroke-linejoin="round" stroke-width="8" d="M42 47v-8h44v8m-44 34v8h44v-8M39 51h50v26H39z"/>
+  <circle cx="51" cy="64" r="5" fill="#fff"/><circle cx="77" cy="64" r="5" fill="#fff"/>
+</svg>

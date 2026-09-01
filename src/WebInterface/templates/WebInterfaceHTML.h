@@ -48,6 +48,7 @@ const char PROGMEM nav_template[] = R"rawliteral(
         <a href="#device-status" class="nav-link active">Device Status</a>
         <a href="#serial-output" class="nav-link">Serial Output</a>
         <a href="#controls" class="nav-link">Controls</a>
+        %ABOUT_NAV%
     </div>
 </nav>
 )rawliteral";
@@ -55,7 +56,7 @@ const char PROGMEM nav_template[] = R"rawliteral(
 // Footer template
 const char PROGMEM footer_template[] = R"rawliteral(
 <footer class="footer">
-    <p>&copy; 2024 Elixir DeviceFramework. All rights reserved.</p>
+    <p>Powered by DeviceFramework.</p>
 </footer>
 )rawliteral";
 
@@ -230,6 +231,8 @@ const char PROGMEM spa_content_template[] = R"rawliteral(
         </div>
     </div>
 </div>
+
+%ABOUT_SECTION%
 )rawliteral";
 
 // 404 Content template
@@ -268,7 +271,7 @@ const char PROGMEM base_template[] = R"rawliteral(
     <div id="page-loader" class="page-loader">
         <div class="page-loader-content">
             <div class="page-loader-spinner"></div>
-            <div class="page-loader-text">Loading Device Framework...</div>
+            <div class="page-loader-text">Loading device interface...</div>
         </div>
     </div>
     %HEADER%

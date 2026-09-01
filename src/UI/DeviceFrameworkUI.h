@@ -56,6 +56,25 @@ struct DeviceFrameworkBranding {
     DeviceFrameworkWebLogo webLogo;
 };
 
+/** A static external link rendered in DeviceFramework's built-in About area. */
+struct DeviceFrameworkExternalLink {
+    DeviceFrameworkText label;
+    DeviceFrameworkText url;
+};
+
+/**
+ * Optional, bounded product attribution for the existing web-admin interface.
+ *
+ * DeviceFramework renders this as its own fixed About section. It is not a
+ * general HTML, route, or navigation extension mechanism. Both links must be
+ * complete HTTPS label/URL pairs and remain static for the firmware lifetime.
+ */
+struct DeviceFrameworkAbout {
+    DeviceFrameworkText summary;
+    DeviceFrameworkExternalLink primaryLink;
+    DeviceFrameworkExternalLink creditLink;
+};
+
 /** Semantic colour and shape values for DeviceFramework's web admin UI. */
 struct DeviceFrameworkTheme {
     DeviceFrameworkText pageStart;
@@ -82,6 +101,7 @@ struct DeviceFrameworkTheme {
 struct DeviceFrameworkUIConfig {
     DeviceFrameworkBranding branding;
     DeviceFrameworkTheme theme;
+    DeviceFrameworkAbout about;
 };
 
 class WiFiManager;
@@ -105,6 +125,8 @@ public:
     static const char* getEscapedWebTitle();
     static const char* getEscapedLogoAltText();
     static const DeviceFrameworkWebLogo& getWebLogo();
+    static const char* getAboutNavigation();
+    static const char* getAboutSection();
 
 private:
     static DeviceFrameworkUIConfig config;
@@ -114,13 +136,17 @@ private:
     static String escapedBrandName;
     static String escapedWebTitle;
     static String escapedLogoAltText;
+    static String aboutNavigation;
+    static String aboutSection;
     static bool configured;
     static bool locked;
 
     static bool isThemeValid(const DeviceFrameworkTheme& theme);
     static bool isTextValid(const DeviceFrameworkText& text);
+    static bool isExternalLinkValid(const DeviceFrameworkExternalLink& link);
     static void rebuildWebThemeStyle();
     static void rebuildEscapedText();
+    static void rebuildAboutContent();
 };
 
 #endif  // DEVICEFRAMEWORK_UI_H

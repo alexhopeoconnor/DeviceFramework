@@ -35,7 +35,7 @@ The consuming firmware registers its parameters and entities in `beforeSetup()`;
 To give both existing interfaces a product name and semantic theme, set `DeviceFrameworkUIConfig` once before setup:
 
 ```cpp
-const char kBrand[] PROGMEM = "Tree";
+const char kBrand[] PROGMEM = "Example Devices";
 const char kProduct[] PROGMEM = "Temperature Monitor";
 const char kAccent[] PROGMEM = "#347a45";
 
@@ -55,7 +55,7 @@ Use a released Git tag. DeviceFramework's manifest resolves the tested WiFiManag
 ```ini
 [common]
 lib_deps =
-  DeviceFramework=https://github.com/alexhopeoconnor/DeviceFramework.git#v2.2.2
+  DeviceFramework=https://github.com/alexhopeoconnor/DeviceFramework.git#v2.3.0
 ```
 
 The text after `#` is a Git ref. PlatformIO clones the repository and checks out that tag; it does not download a GitHub Release asset.

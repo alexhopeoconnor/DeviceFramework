@@ -186,6 +186,11 @@ void setup() {
     ui.branding.provisioningTitle = DeviceFrameworkText::ram("Set up DeviceFramework UI Test");
     ui.branding.provisioningIntro = DeviceFrameworkText::ram("Connected-device portal and web UI verification.");
     ui.branding.logoAltText = DeviceFrameworkText::ram("Test Lab");
+    ui.about.summary = DeviceFrameworkText::ram("Test firmware validates the fixed product About area.");
+    ui.about.primaryLink = {DeviceFrameworkText::ram("Test Lab"),
+                            DeviceFrameworkText::ram("https://example.test")};
+    ui.about.creditLink = {DeviceFrameworkText::ram("Credits"),
+                           DeviceFrameworkText::ram("https://example.test/credits")};
     ui.theme.pageStart = DeviceFrameworkText::ram("#14532d");
     ui.theme.pageEnd = DeviceFrameworkText::ram("#166534");
     ui.theme.surface = DeviceFrameworkText::ram("#f0fdf4");

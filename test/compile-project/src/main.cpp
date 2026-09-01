@@ -34,6 +34,9 @@ void setup() {
     ui.branding.provisioningIntro = text("This verifies the shared portal and web UI configuration.");
     ui.branding.logoAltText = text("Compile Fixture");
 #endif
+    ui.about.summary = text("A fixed product attribution area in the existing web interface.");
+    ui.about.primaryLink = {text("Example Devices"), text("https://example.test")};
+    ui.about.creditLink = {text("Framework credits"), text("https://example.test/credits")};
     ui.theme.pageStart = text("#14532d");
     ui.theme.pageEnd = text("#166534");
     ui.theme.surface = text("#f0fdf4");

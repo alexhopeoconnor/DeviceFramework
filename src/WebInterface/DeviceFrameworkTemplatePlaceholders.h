@@ -46,6 +46,8 @@ private:
     static const char* getUiTheme();
     static const char* getBrandName();
     static const char* getLogoAltText();
+    static const char* getAboutNavigation();
+    static const char* getAboutSection();
 
     // Internal method to register all placeholders
     static void registerAllPlaceholders();

@@ -10,7 +10,7 @@ DeviceFrameworkUIConfig
 
 DeviceFramework owns product identity, the existing web header, and web-theme tokens. WiFiManager owns provisioning routes, forms, navigation, captive behavior, and its portal API. DeviceFramework uses only WiFiManager public `setPortalConfig()`; WiFiManager never depends on DeviceFramework.
 
-This is presentation-only source configuration. It creates no routes, pages, arbitrary HTML surfaces, stored fields, profile values, or schema migrations.
+This is presentation-only source configuration. It creates no routes, consumer-defined pages, arbitrary HTML surfaces, stored fields, profile values, or schema migrations. A firmware may opt into one fixed framework-owned **About** section with a short summary and up to two static HTTPS links.
 
 ## Configure once before setup
 
@@ -20,7 +20,7 @@ UI values are non-owning static data in RAM or PROGMEM. Configure them before `b
 #include <DeviceFramework.h>
 
 namespace {
-const char kBrand[] PROGMEM = "Tree";
+const char kBrand[] PROGMEM = "Example Devices";
 const char kProduct[] PROGMEM = "Temperature Monitor";
 const char kSetupTitle[] PROGMEM = "Set up Temperature Monitor";
 const char kIntro[] PROGMEM = "Connect this device to Wi-Fi.";
@@ -64,12 +64,35 @@ The small `ui` object may be local because the fields it refers to are static. T
 | `provisioningTitle`, `provisioningIntro` | — | Portal heading and home introduction |
 | `portalLogoSvg` | — | Optional trusted inline SVG |
 | `webLogo` | Optional base64 header image | — |
+| `about.summary`, `about.primaryLink`, `about.creditLink` | Optional fixed About navigation and section | — |
 | `pageStart`, `pageEnd`, `surface`, `text`, `mutedText`, `border` | Existing admin UI surfaces | Shared values supported by WiFiManager |
 | `accent`, `accentHover`, `accentText`, `success`, `danger`, `cornerRadiusPx` | Existing controls | Corresponding WiFiManager semantic tokens |
 
 `productName` supplies the existing web heading and title unless `webTitle` is set. `webLogo.base64Data` is non-owning static base64 data. Mark a PROGMEM asset with `progmem = true`; the built-in DeviceFramework logo remains the default. DeviceFramework decodes it into the authenticated `/assets/deviceframework-logo` response instead of embedding it in every page. `portalLogoSvg` is a trusted compiled asset, never form, MQTT, or network input.
 
 The generated web-theme block contains only CSS custom-property values. Existing status, parameter controls, restart behavior, WebSocket handling, endpoint structure, and firmware/version rendering remain unchanged.
+
+## Optional product About section
+
+The framework owns the markup, navigation, spacing, and safe link attributes. A product only supplies plain static text and at most two complete label/HTTPS URL pairs:
+
+```cpp
+const char kAbout[] PROGMEM = "A compact connected controller for the workshop.";
+const char kWebsiteLabel[] PROGMEM = "Example Devices";
+const char kWebsiteUrl[] PROGMEM = "https://example.test";
+
+ui.about.summary = DeviceFrameworkText::progmem(kAbout);
+ui.about.primaryLink = {
+    DeviceFrameworkText::progmem(kWebsiteLabel),
+    DeviceFrameworkText::progmem(kWebsiteUrl),
+};
+```
+
+Links are optional, but a label and URL must be provided together. URLs must use `https://` and are validated before setup; labels and summary are HTML-escaped once before WiFi and web services begin. The resulting anchors always use `target="_blank" rel="noopener noreferrer"`. This deliberately is not a custom-page or arbitrary-markup API.
+
+## Editable default logo
+
+`assets/deviceframework-mark.svg` is the neutral DeviceFramework source mark. `src/WebInterface/templates/WebInterfaceLogo.h` is generated from it for PROGMEM streaming. After changing the source asset, run `./tools/generate-web-assets.sh`; `./tools/check-web-assets.sh` verifies the checked-in generated header and is part of the normal framework validation commands.
 
 ## Firmware source versus local profiles
 

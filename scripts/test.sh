@@ -10,6 +10,8 @@ EOF
     exit 2
 }
 
+"$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/tools/check-web-assets.sh"
+
 mode="${1:-}"
 [[ "$mode" == "compile" || "$mode" == "hardware" ]] || usage
 shift

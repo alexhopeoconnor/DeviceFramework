@@ -1,5 +1,12 @@
 # Changelog
 
+## 2.3.0
+
+- Add a bounded, framework-owned About section to `DeviceFrameworkUIConfig`: optional plain summary plus two validated static HTTPS links, rendered once at startup with escaped text and safe link attributes.
+- Make DeviceFramework presentation neutral: replace the accidental Elixir default wording and opaque PNG with an editable source SVG plus deterministic Bash generation and validation tooling.
+- Keep WiFiManager standalone-neutral while giving the Elixir firmware collection one shared consumer helper, canonical web logo, compact portal mark, and product About attribution.
+- Extend compile and rendered-template regressions for the new fixed UI surface and generated assets.
+
 ## 2.2.2
 
 - Correct the runtime library-version values so PlatformIO, Arduino IDE, and the package manifest all report 2.2.2.

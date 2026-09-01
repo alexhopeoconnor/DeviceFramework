@@ -77,6 +77,14 @@ const char* DeviceFrameworkTemplatePlaceholders::getLogoAltText() {
     return DeviceFrameworkUI::getEscapedLogoAltText();
 }
 
+const char* DeviceFrameworkTemplatePlaceholders::getAboutNavigation() {
+    return DeviceFrameworkUI::getAboutNavigation();
+}
+
+const char* DeviceFrameworkTemplatePlaceholders::getAboutSection() {
+    return DeviceFrameworkUI::getAboutSection();
+}
+
 void DeviceFrameworkTemplatePlaceholders::setup() {
     if (isSetup) {
         LOG_DEBUGLN(F("Template placeholders already initialized"));
@@ -114,6 +122,8 @@ void DeviceFrameworkTemplatePlaceholders::registerAllPlaceholders() {
     registry->registerRamData("%UI_THEME%", getUiTheme);
     registry->registerRamData("%BRAND_NAME%", getBrandName);
     registry->registerRamData("%LOGO_ALT_TEXT%", getLogoAltText);
+    registry->registerRamData("%ABOUT_NAV%", getAboutNavigation);
+    registry->registerRamData("%ABOUT_SECTION%", getAboutSection);
 
     // Register PROGMEM templates (nested templates)
     registry->registerProgmemTemplate("%HEADER%", (const char*)header_template);
