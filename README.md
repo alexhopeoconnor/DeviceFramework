@@ -4,7 +4,7 @@ DeviceFramework is the ESP8266/ESP32 foundation for devices that need WiFi provi
 
 ## Why use it
 
-- **One device lifecycle:** initialise a device once, then let the framework manage provisioning, WiFi, MQTT, OTA, and the web UI.
+- **One device lifecycle:** initialise a device once, then let the framework manage provisioning, WiFi, MQTT, OTA, and the web UI. After the broker address is resolved, it configures ArduinoHA once; ArduinoHA's loop owns MQTT reconnects.
 - **Configuration that survives real upgrades:** DFC4 records are application-bound and schema-aware, so routine parameter changes do not require erasing devices.
 - **Network resilience without duplicate setup:** a profile can define a primary WiFi network and one fallback; successful portal changes are verified before they persist.
 - **One optional device password:** provisioning, OTA, HTTP Basic authentication, and WebSerial share one persisted password.
@@ -55,7 +55,7 @@ Use a released Git tag. DeviceFramework's manifest resolves the tested WiFiManag
 ```ini
 [common]
 lib_deps =
-  DeviceFramework=https://github.com/alexhopeoconnor/DeviceFramework.git#v2.3.0
+  DeviceFramework=https://github.com/alexhopeoconnor/DeviceFramework.git#v2.4.0
 ```
 
 The text after `#` is a Git ref. PlatformIO clones the repository and checks out that tag; it does not download a GitHub Release asset.

@@ -1,11 +1,11 @@
 {
   "$schema": "https://raw.githubusercontent.com/platformio/platformio-core/develop/platformio/assets/schema/library.json",
   "name": "DeviceFramework",
-  "version": "2.3.0",
+  "version": "2.4.0",
   "build": {
     "extraScript": "tools/platformio/profile.py",
     "flags": [
-      "-DDEVICEFRAMEWORK_LIBRARY_VERSION=\\\"2.3.0\\\""
+      "-DDEVICEFRAMEWORK_LIBRARY_VERSION=\\\"2.4.0\\\""
     ]
   },
   "description": "Reusable ESP8266 and ESP32 device framework with WiFi provisioning, MQTT, OTA, local web UI, and Home Assistant integration.",
@@ -49,7 +49,7 @@
     },
     {
       "name": "home-assistant-integration",
-      "version": "https://github.com/alexhopeoconnor/arduino-home-assistant.git#v3.0.2"
+      "version": "https://github.com/alexhopeoconnor/arduino-home-assistant.git#v3.1.0"
     },
     { "owner": "madpilot", "name": "mDNSResolver", "version": "^0.3.0" },
     { "owner": "knolleary", "name": "PubSubClient", "version": "2.8.0" },

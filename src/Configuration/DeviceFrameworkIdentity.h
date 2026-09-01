@@ -6,7 +6,7 @@
 
 // This value is verified against library.json by scripts/prepare-release.sh.
 #ifndef DEVICEFRAMEWORK_LIBRARY_VERSION
-#define DEVICEFRAMEWORK_LIBRARY_VERSION "2.3.0"
+#define DEVICEFRAMEWORK_LIBRARY_VERSION "2.4.0"
 #endif
 
 class DeviceFrameworkConfigMigration {

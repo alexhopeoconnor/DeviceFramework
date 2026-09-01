@@ -25,8 +25,10 @@ private:
     static WiFiClient espClient;
     static std::map<String, CommandHandler> commandHandlers;
 
-    // MQTT reconnection rate limiting
-    static unsigned long lastReconnectAttempt;
+    // HAMqtt is configured once after the broker address has been resolved.
+    // Its loop then owns the connection and reconnection lifecycle.
+    static bool mqttBegun;
+    static bool mqttReconfigurationRequested;
 
     // MQTT connection state tracking
     static bool wasConnected;
@@ -37,11 +39,18 @@ private:
 
     // Internal methods
     static void onMqttMessageHandler(const char* topic, const uint8_t* payload, const uint16_t length);
+    static bool beginMqtt();
 
 public:
     static void setup();
     static void loop();
-    static void reconnect();
+
+    /**
+     * Safely reapplies broker settings on the next framework loop. This is
+     * deliberately deferred because a parameter can be changed by an inbound
+     * Home Assistant command while HAMqtt is dispatching that command.
+     */
+    static void requestMqttReconfiguration();
 
     // Topic generation
     static String generateDeviceSpecificTopic(const HABaseDeviceType* device, const char* suffix, size_t bufferSize = 128);

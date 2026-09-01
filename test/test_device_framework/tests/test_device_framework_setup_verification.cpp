@@ -31,6 +31,12 @@ void test_device_framework_setup_verification() {
     const DeviceFrameworkStorageLoadResult storage = DeviceFrameworkStorage::getLastLoadResult();
     TEST_ASSERT_TRUE_MESSAGE(storage.hasUsableConfiguration(), "Storage should load a V4 configuration after setup");
 
+    HAMqtt& mqtt = DeviceFramework::getHAMqtt();
+    TEST_ASSERT_EQUAL_UINT8_MESSAGE(3, mqtt.getRegisteredDeviceTypeCount(),
+        "ArduinoHA should automatically register static entities and the HA parameter entity");
+    TEST_ASSERT_EQUAL_UINT16_MESSAGE(0, mqtt.getDeviceTypeRegistrationFailures(),
+        "Automatic registration should not hit ArduinoHA's entity limit");
+
 
     // Verify ParameterRegistry has core parameters registered
     DeviceFrameworkParameterRegistry& registry = DeviceFramework::getParameterRegistry();

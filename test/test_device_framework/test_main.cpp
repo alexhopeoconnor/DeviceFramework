@@ -283,12 +283,7 @@ void setup() {
     testSwitch.setName("Test Switch");
     testSwitch.setIcon("mdi:toggle-switch");
 
-    // Add dummy device types to MQTT (typical consuming sketch pattern)
-    auto& haMqtt = DeviceFramework::getHAMqtt();
-    haMqtt.addDeviceType(&testSensor);
-    haMqtt.addDeviceType(&testSwitch);
-
-    Serial.println("[TEST]   Test framework configured with typical consuming sketch patterns");
+    Serial.println("[TEST]   Test framework configured with automatic ArduinoHA entity registration");
 
     UNITY_BEGIN(); // Start Unity test framework
     begun = true; // Start tests immediately

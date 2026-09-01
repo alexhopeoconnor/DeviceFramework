@@ -11,7 +11,7 @@ board = d1_mini
 framework = arduino
 lib_ldf_mode = deep+
 lib_deps =
-    DeviceFramework=https://github.com/alexhopeoconnor/DeviceFramework.git#v2.3.0
+    DeviceFramework=https://github.com/alexhopeoconnor/DeviceFramework.git#v2.4.0
 ```
 
 Use `#vMAJOR.MINOR.PATCH` for released firmware. PlatformIO checks out that Git tag; it does not download a GitHub Release asset.
@@ -58,7 +58,9 @@ void loop() {
 }
 ```
 
-Register custom framework parameters and Home Assistant entities alongside `beforeSetup()` before calling `DeviceFramework::setup()`.
+Register custom framework parameters and construct long-lived Home Assistant entities before calling `DeviceFramework::setup()`. ArduinoHA registers those entities automatically; do not call `DeviceFramework::getHAMqtt().addDeviceType()` in a DeviceFramework sketch. Keep `DeviceFramework::registerDeviceCommandHandler()` or `registerSharedCommandHandler()` for custom non-discovery command topics.
+
+ArduinoHA's [entity lifecycle](https://github.com/alexhopeoconnor/arduino-home-assistant/blob/main/docs/device-and-discovery.md#discovery) explains the underlying registration and capacity rules.
 
 Next: [configuration and profiles](CONFIGURATION.md) or [testing](TESTING.md).
 

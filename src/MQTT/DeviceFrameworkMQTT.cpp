@@ -1,6 +1,5 @@
 #include "DeviceFrameworkMQTT.h"
 #include "../Configuration/DeviceFrameworkIdentity.h"
-#include "../Utils/TimeUtils.h"
 #include "../Configuration/DeviceFrameworkConfig.h"
 #include "../Configuration/DeviceFrameworkParameters.h"
 #include "../WiFi/DeviceFrameworkWiFi.h"
@@ -14,8 +13,10 @@ WiFiClient DeviceFrameworkMQTT::espClient;
 // MQTT command handlers
 std::map<String, CommandHandler> DeviceFrameworkMQTT::commandHandlers;
 
-// MQTT reconnection rate limiting
-unsigned long DeviceFrameworkMQTT::lastReconnectAttempt = 0;
+// HAMqtt::begin() is a one-time configuration call. HAMqtt::loop() owns all
+// connection attempts after that point.
+bool DeviceFrameworkMQTT::mqttBegun = false;
+bool DeviceFrameworkMQTT::mqttReconfigurationRequested = false;
 
 // MQTT connection state tracking
 bool DeviceFrameworkMQTT::wasConnected = false;
@@ -257,8 +258,72 @@ void DeviceFrameworkMQTT::setup() {
     DeviceFrameworkParameters::getRegistry().createHADevices(*mqttClient);
 }
 
+bool DeviceFrameworkMQTT::beginMqtt() {
+    if (mqttBegun) {
+        return true;
+    }
+
+    if (!DeviceFrameworkWiFi::hasUsableConnection()) {
+        return false;
+    }
+
+    const char* configuredServer = DeviceFrameworkParameters::getMqttServer();
+    if (!configuredServer || configuredServer[0] == '\0') {
+        return false;
+    }
+
+    String mqttServer(configuredServer);
+    if (mqttServer.startsWith("http://")) {
+        mqttServer.remove(0, 7);
+    }
+
+    IPAddress brokerIP;
+    if (!DeviceFrameworkMDNS::resolveCached(mqttServer.c_str(), brokerIP)) {
+        return false;
+    }
+
+    const uint32_t configuredReconnectInterval = getConfigMQTTReconnectRateLimit();
+    if (configuredReconnectInterval > 0) {
+        const uint16_t hamqttReconnectInterval = configuredReconnectInterval > 65535UL
+            ? 65535U
+            : static_cast<uint16_t>(configuredReconnectInterval);
+        mqttClient->setReconnectInterval(hamqttReconnectInterval);
+    }
+
+    LOG_INFOLN(
+        String(F("DF mqtt initialize server=")) + brokerIP.toString() +
+            F(" port=") + String(DeviceFrameworkParameters::getMqttPort())
+    );
+
+    if (!mqttClient->begin(brokerIP, DeviceFrameworkParameters::getMqttPort(),
+                           DeviceFrameworkParameters::getMqttUser(),
+                           DeviceFrameworkParameters::getMqttPass())) {
+        LOG_ERRORLN(F("MQTT initialization failed; HAMqtt begin was rejected."));
+        return false;
+    }
+
+    mqttBegun = true;
+    return true;
+}
+
 void DeviceFrameworkMQTT::loop() {
     if (!mqttClient) {
+        return;
+    }
+
+    if (mqttReconfigurationRequested) {
+        mqttReconfigurationRequested = false;
+        if (mqttBegun) {
+            LOG_INFOLN(F("MQTT broker configuration changed; reconnecting."));
+            mqttClient->disconnect();
+        }
+        mqttBegun = false;
+        wasConnected = false;
+        return;
+    }
+
+    // Defer the one-time setup until WiFi and broker resolution are ready.
+    if (!beginMqtt()) {
         return;
     }
 
@@ -294,9 +359,8 @@ void DeviceFrameworkMQTT::loop() {
         wasConnected = false;
     }
 
-    // Handle reconnection logic
+    // HAMqtt::loop() handles reconnects after beginMqtt() has configured it.
     if (!currentlyConnected) {
-        reconnect();
         return;
     }
 
@@ -306,40 +370,8 @@ void DeviceFrameworkMQTT::loop() {
     }
 }
 
-void DeviceFrameworkMQTT::reconnect() {
-    if (!WiFi.isConnected()) {
-        return; // Skip reconnection if WiFi is not connected
-    }
-
-    if (mqttClient && !mqttClient->isConnected()) {
-        // Rate limiting: don't attempt reconnection too frequently
-        if (!TimeUtils::hasTimeElapsed(millis(), lastReconnectAttempt, getConfigMQTTReconnectRateLimit())) {
-            return;
-        }
-        lastReconnectAttempt = millis();
-
-        String mqttServer = DeviceFrameworkParameters::getMqttServer();
-        if (mqttServer.startsWith("http://")) {
-            mqttServer = mqttServer.substring(7); // Remove "http://"
-        }
-
-        // Use cached DNS resolution from MDNSManager
-        IPAddress brokerIP;
-        if (!DeviceFrameworkMDNS::resolveCached(mqttServer.c_str(), brokerIP)) {
-            LOG_DEBUGLN(F("DNS resolution in progress or failed, will retry later"));
-            return;
-        }
-
-        LOG_INFOLN(
-            String(F("DF mqtt reconnect attempt server=")) + brokerIP.toString() +
-                F(" port=") + String(DeviceFrameworkParameters::getMqttPort()) +
-                F(" pubsub=") + String(mqttClient->getPubSubState()) +
-                F(" wifi=") + String(WiFi.status())
-        );
-        mqttClient->begin(brokerIP, DeviceFrameworkParameters::getMqttPort(),
-                         DeviceFrameworkParameters::getMqttUser(),
-                         DeviceFrameworkParameters::getMqttPass());
-    }
+void DeviceFrameworkMQTT::requestMqttReconfiguration() {
+    mqttReconfigurationRequested = true;
 }
 
 void DeviceFrameworkMQTT::onMqttMessageHandler(const char* topic, const uint8_t* payload, const uint16_t length) {

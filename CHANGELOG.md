@@ -1,5 +1,11 @@
 # Changelog
 
+## 2.4.0
+
+- Integrate ArduinoHA 3.1's automatic entity lifecycle: framework and sketch entities register without repeated `addDeviceType()` calls, while custom command handlers remain explicit.
+- Hand broker connection ownership to `HAMqtt::loop()` after safe one-time initialization, and defer runtime broker reconfiguration until an inbound MQTT callback has completed.
+- Pin ArduinoHA 3.1.0 and document the tested library stack.
+
 ## 2.3.0
 
 - Add a bounded, framework-owned About section to `DeviceFrameworkUIConfig`: optional plain summary plus two validated static HTTPS links, rendered once at startup with escaped text and safe link attributes.

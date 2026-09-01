@@ -870,9 +870,6 @@ void DeviceFrameworkParameterRegistry::createHADevices(HAMqtt& mqtt) {
                 // Set up callback to update registry when HA changes value
                 number->onCommand(onHANumberCommand);
 
-                // Register with MQTT
-                mqtt.addDeviceType(number);
-
                 haDeviceRefs[deviceIndex].device = number;
                 break;
             }
@@ -914,9 +911,6 @@ void DeviceFrameworkParameterRegistry::createHADevices(HAMqtt& mqtt) {
                 // Set up callback to update registry when HA changes value
                 switchDevice->onCommand(onHASwitchCommand);
 
-                // Register with MQTT
-                mqtt.addDeviceType(switchDevice);
-
                 haDeviceRefs[deviceIndex].device = switchDevice;
                 break;
             }
@@ -954,9 +948,6 @@ void DeviceFrameworkParameterRegistry::createHADevices(HAMqtt& mqtt) {
 
                 // Set up callback to update registry when HA changes value
                 select->onCommand(onHASelectCommand);
-
-                // Register with MQTT
-                mqtt.addDeviceType(select);
 
                 haDeviceRefs[deviceIndex].device = select;
                 break;
@@ -997,9 +988,6 @@ void DeviceFrameworkParameterRegistry::createHADevices(HAMqtt& mqtt) {
 
                 // Set up callback to update registry when HA changes value
                 text->onCommand(onHATextCommand);
-
-                // Register with MQTT
-                mqtt.addDeviceType(text);
 
                 haDeviceRefs[deviceIndex].device = text;
                 break;
@@ -1246,6 +1234,13 @@ void DeviceFrameworkParameterRegistry::notifyValueChanged(const String& id, cons
         LOG_DEBUG_SP(oldValue, false);
         LOG_DEBUG_SP(F(" -> "), false);
         LOG_DEBUGLN_SP(newValue, false);
+    }
+
+    if (id == DeviceFrameworkParameters::PARAM_MQTT_SERVER ||
+        id == DeviceFrameworkParameters::PARAM_MQTT_PORT ||
+        id == DeviceFrameworkParameters::PARAM_MQTT_USER ||
+        id == DeviceFrameworkParameters::PARAM_MQTT_PASS) {
+        DeviceFrameworkMQTT::requestMqttReconfiguration();
     }
 
     // Sync to WiFiManager if this parameter has one
