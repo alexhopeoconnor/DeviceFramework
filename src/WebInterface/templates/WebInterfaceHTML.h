@@ -13,8 +13,11 @@
 const char PROGMEM header_template[] = R"rawliteral(
 <header class="header">
     <div class="header-content">
-        <img src="data:image/webp;base64,%LOGO_BASE64%" alt="Elixir" class="logo">
-        <h1>%PAGE_TITLE%</h1>
+        <img src="/assets/deviceframework-logo" alt="%LOGO_ALT_TEXT%" class="logo">
+        <div class="header-titles">
+            <p class="brand-name">%BRAND_NAME%</p>
+            <h1>%PAGE_TITLE%</h1>
+        </div>
     </div>
     %NAV%
 </header>
@@ -24,8 +27,11 @@ const char PROGMEM header_template[] = R"rawliteral(
 const char PROGMEM header_404_template[] = R"rawliteral(
 <header class="header">
     <div class="header-content">
-        <img src="data:image/webp;base64,%LOGO_BASE64%" alt="Elixir" class="logo">
-        <h1>%PAGE_TITLE_404%</h1>
+        <img src="/assets/deviceframework-logo" alt="%LOGO_ALT_TEXT%" class="logo">
+        <div class="header-titles">
+            <p class="brand-name">%BRAND_NAME%</p>
+            <h1>%PAGE_TITLE_404%</h1>
+        </div>
     </div>
 </header>
 )rawliteral";
@@ -202,15 +208,18 @@ const char PROGMEM spa_content_template[] = R"rawliteral(
             <div class="control-group">
                 <h3>Device Password</h3>
                 <p>One optional password protects the provisioning AP, OTA, this web interface, and WebSerial.</p>
-                <div class="control-item">
-                    <label for="device-password">New password (8–31 characters):</label>
-                    <input id="device-password" type="password" autocomplete="new-password" maxlength="31">
-                </div>
-                <div class="control-item">
-                    <label for="device-password-confirm">Confirm new password:</label>
-                    <input id="device-password-confirm" type="password" autocomplete="new-password" maxlength="31">
-                </div>
-                <button onclick="updateDevicePassword()" class="btn">Save Password and Restart</button>
+                <form id="device-password-form" onsubmit="updateDevicePassword(event)">
+                    <input type="text" name="username" value="admin" autocomplete="username" hidden>
+                    <div class="control-item">
+                        <label for="device-password">New password (8–31 characters):</label>
+                        <input id="device-password" type="password" autocomplete="new-password" maxlength="31">
+                    </div>
+                    <div class="control-item">
+                        <label for="device-password-confirm">Confirm new password:</label>
+                        <input id="device-password-confirm" type="password" autocomplete="new-password" maxlength="31">
+                    </div>
+                    <button type="submit" class="btn">Save Password and Restart</button>
+                </form>
             </div>
 
             <div class="control-group">
@@ -252,7 +261,8 @@ const char PROGMEM base_template[] = R"rawliteral(
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>%PAGE_TITLE%</title>
     <link rel="icon" type="image/png" href="data:image/x-icon;base64,%FAVICON_BASE64%">
-    <style>%STYLES%</style>
+    <link rel="stylesheet" href="/assets/deviceframework.css">
+    %UI_THEME%
 </head>
 <body>
     <div id="page-loader" class="page-loader">
@@ -266,7 +276,7 @@ const char PROGMEM base_template[] = R"rawliteral(
         %CONTENT%
     </main>
     %FOOTER%
-    <script>%SCRIPTS%</script>
+    <script src="/assets/deviceframework.js" defer></script>
 </body>
 </html>
 )rawliteral";
@@ -280,7 +290,8 @@ const char PROGMEM error404_template[] = R"rawliteral(
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>%PAGE_TITLE_404%</title>
     <link rel="icon" type="image/png" href="data:image/x-icon;base64,%FAVICON_BASE64%">
-    <style>%STYLES%</style>
+    <link rel="stylesheet" href="/assets/deviceframework.css">
+    %UI_THEME%
 </head>
 <body>
     %HEADER_404%

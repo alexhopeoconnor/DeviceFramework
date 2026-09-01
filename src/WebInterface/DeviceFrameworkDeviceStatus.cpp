@@ -2,7 +2,6 @@
 #include "DeviceFrameworkDeviceStatus.h"
 #include "../Configuration/DeviceFrameworkParameters.h"
 #include "../Configuration/DeviceFrameworkIdentity.h"
-#include "../WiFi/DeviceFrameworkWiFi.h"
 #include "../MQTT/DeviceFrameworkMQTT.h"
 #include "../Utils/TimeUtils.h"
 #include "../Utils/PrintAdapters.h"
@@ -11,139 +10,103 @@
 
 namespace {
 
-bool prepareNextJSONFragment(DeviceStatusManager::JSONStreamState& state, const DeviceStatus& status) {
-    switch (state.fragmentIndex) {
-        case 0:
-            state.pendingFragment = F("{");
-            break;
-        case 1:
-            state.pendingFragment =
-                String(F("\"hardware\":{")) +
-                F("\"max_memory\":") + String(status.hardware.maxMemory) +
-                F(",\"chip_id\":\"") + status.hardware.chipId +
-                F("\",\"flash_size\":") + String(status.hardware.flashSize) +
-                F(",\"flash_speed\":") + String(status.hardware.flashSpeed) +
-                F(",\"cpu_freq\":") + String(status.hardware.cpuFreq) +
-                F(",\"sketch_size\":") + String(status.hardware.sketchSize) +
-                F(",\"free_sketch_space\":") + String(status.hardware.freeSketchSpace) +
-                F(",\"version\":\"") + status.hardware.version +
-                F("\"},");
-            break;
-        case 2:
-            state.pendingFragment = F("\"runtime\":{");
-            break;
-        case 3:
-            state.pendingFragment =
-                String(F("\"wifi\":{")) +
-                F("\"connected\":") + String(status.runtime.wifi.connected ? F("true") : F("false")) +
-                F(",\"ssid\":\"") + status.runtime.wifi.ssid +
-                F("\",\"ip\":\"") + status.runtime.wifi.ip +
-                F("\",\"gateway\":\"") + status.runtime.wifi.gateway +
-                F("\",\"subnet\":\"") + status.runtime.wifi.subnet +
-                F("\",\"dns\":\"") + status.runtime.wifi.dns +
-                F("\",\"mac\":\"") + status.runtime.wifi.mac +
-                F("\",\"rssi\":") + String(status.runtime.wifi.rssi) +
-                F(",\"channel\":") + String(status.runtime.wifi.channel) +
-                F(",\"bssid\":\"") + status.runtime.wifi.bssid +
-                F("\",\"connection_duration\":") + String(status.runtime.wifi.connectionDuration) +
-                F(",\"total_disconnections\":") + String(status.runtime.wifi.totalDisconnections) +
-                F(",\"last_disconnection_time\":") + String(status.runtime.wifi.lastDisconnectionTime) +
-                F(",\"is_stable\":") + String(status.runtime.wifi.isStable ? F("true") : F("false")) +
-                F("},");
-            break;
-        case 4:
-            state.pendingFragment =
-                String(F("\"mqtt\":{")) +
-                F("\"connected\":") + String(status.runtime.mqtt.connected ? F("true") : F("false")) +
-                F(",\"broker\":\"") + status.runtime.mqtt.broker +
-                F("\",\"port\":") + String(status.runtime.mqtt.port) +
-                F(",\"user\":\"") + status.runtime.mqtt.user +
-                F("\",\"connection_duration\":") + String(status.runtime.mqtt.connectionDuration) +
-                F(",\"total_disconnections\":") + String(status.runtime.mqtt.totalDisconnections) +
-                F(",\"last_disconnection_time\":") + String(status.runtime.mqtt.lastDisconnectionTime) +
-                F(",\"is_stable\":") + String(status.runtime.mqtt.isStable ? F("true") : F("false")) +
-                F("},");
-            break;
-        case 5:
-            state.pendingFragment =
-                String(F("\"device\":{")) +
-                F("\"name\":\"") + status.runtime.device.deviceName +
-                F("\",\"uptime\":") + String(status.runtime.device.uptime) +
-                F("},");
-            break;
-        case 6:
-            state.pendingFragment =
-                String(F("\"memory\":{")) +
-                F("\"free\":") + String(status.runtime.memory.freeMemory) +
-                F(",\"max_block\":") + String(status.runtime.memory.maxBlockSize) +
-                F(",\"fragmentation\":") + String(status.runtime.memory.fragmentation) +
-                F(",\"delta\":") + String(status.runtime.memory.memoryDelta) +
-                F(",\"peak_usage\":") + String(status.runtime.memory.peakMemoryUsage) +
-                F(",\"lowest_usage\":") + String(status.runtime.memory.lowestMemoryUsage) +
-                F("},");
-            break;
-        case 7:
-            state.pendingFragment =
-                String(F("\"stability\":{")) +
-                F("\"reset_count\":") + String(status.runtime.stability.resetCount) +
-                F(",\"time_since_reset\":") + String(status.runtime.stability.timeSinceLastReset) +
-                F(",\"is_stable\":") + String(status.runtime.stability.isStable ? F("true") : F("false")) +
-                F(",\"total_uptime\":") + String(status.runtime.stability.totalUptime) +
-                F("},");
-            break;
-        case 8:
-            state.pendingFragment =
-                String(F("\"logging\":{")) +
-                F("\"serial_enabled\":") + String(status.runtime.logging.serialEnabled ? F("true") : F("false")) +
-                F(",\"log_level\":\"") + status.runtime.logging.currentLogLevel +
-                F("\",\"web_serial_enabled\":") + String(status.runtime.logging.webSerialEnabled ? F("true") : F("false")) +
-                F("},");
-            break;
-        case 9:
-            state.pendingFragment =
-                String(F("\"health\":{")) +
-                F("\"loop_count\":") + String(status.runtime.health.loopCount) +
-                F(",\"last_loop_time\":") + String(status.runtime.health.lastLoopTime) +
-                F(",\"system_healthy\":") + String(status.runtime.health.systemHealthy ? F("true") : F("false")) +
-                F(",\"free_heap_trend\":") + String(status.runtime.health.freeHeapTrend) +
-                F("}");
-            break;
-        case 10:
-            state.pendingFragment = F("}");
-            break;
-        case 11:
-            state.pendingFragment = F("}");
-            break;
-        default:
-            state.complete = true;
-            state.pendingFragment = "";
-            state.pendingOffset = 0;
-            return false;
+class JSONChunkPrint final : public Print {
+public:
+    JSONChunkPrint(uint8_t* buffer, size_t capacity, size_t skip)
+        : buffer(buffer), capacity(capacity), skip(skip), total(0), written(0) {}
+
+    size_t write(uint8_t byte) override {
+        if (total >= skip && written < capacity) {
+            buffer[written++] = byte;
+        }
+        ++total;
+        return 1;
     }
 
-    state.pendingOffset = 0;
-    state.fragmentIndex++;
-    return true;
+    size_t write(const uint8_t* data, size_t length) override {
+        if (total + length > skip && written < capacity) {
+            const size_t sourceOffset = total < skip ? skip - total : 0;
+            const size_t available = length - sourceOffset;
+            const size_t toCopy = min(available, capacity - written);
+            if (toCopy > 0) {
+                memcpy(buffer + written, data + sourceOffset, toCopy);
+                written += toCopy;
+            }
+        }
+        total += length;
+        return length;
+    }
+
+    size_t bytesWritten() const { return written; }
+    size_t totalBytes() const { return total; }
+
+private:
+    uint8_t* buffer;
+    size_t capacity;
+    size_t skip;
+    size_t total;
+    size_t written;
+};
+
+template <size_t Size>
+void copyText(char (&destination)[Size], const char* source) {
+    if (!source) {
+        destination[0] = '\0';
+        return;
+    }
+
+    size_t index = 0;
+    while (index + 1 < Size && source[index] != '\0') {
+        destination[index] = source[index];
+        ++index;
+    }
+    destination[index] = '\0';
 }
 
-size_t copyPendingJSONFragment(DeviceStatusManager::JSONStreamState& state, uint8_t* buffer, size_t maxLen, size_t offset) {
-    size_t available = state.pendingFragment.length() - state.pendingOffset;
-    size_t remaining = maxLen - offset;
-    size_t toWrite = (available < remaining) ? available : remaining;
+template <size_t Size>
+void formatIPAddress(char (&destination)[Size], const IPAddress& address) {
+    snprintf(destination, Size, "%u.%u.%u.%u", address[0], address[1], address[2], address[3]);
+}
 
-    if (toWrite == 0) {
-        return offset;
+template <size_t Size>
+void formatMacAddress(char (&destination)[Size], const uint8_t* address) {
+    if (!address) {
+        destination[0] = '\0';
+        return;
+    }
+    snprintf(destination, Size, "%02X:%02X:%02X:%02X:%02X:%02X",
+        address[0], address[1], address[2], address[3], address[4], address[5]);
+}
+
+void writeJSONString(Print& output, const char* value) {
+    output.write(static_cast<uint8_t>('"'));
+    if (!value) {
+        value = "";
     }
 
-    memcpy(buffer + offset, state.pendingFragment.c_str() + state.pendingOffset, toWrite);
-    state.pendingOffset += toWrite;
-
-    if (state.pendingOffset >= state.pendingFragment.length()) {
-        state.pendingFragment = "";
-        state.pendingOffset = 0;
+    while (*value != '\0') {
+        const unsigned char character = static_cast<unsigned char>(*value++);
+        switch (character) {
+            case '"': output.print(F("\\\"")); break;
+            case '\\': output.print(F("\\\\")); break;
+            case '\b': output.print(F("\\b")); break;
+            case '\f': output.print(F("\\f")); break;
+            case '\n': output.print(F("\\n")); break;
+            case '\r': output.print(F("\\r")); break;
+            case '\t': output.print(F("\\t")); break;
+            default:
+                if (character < 0x20) {
+                    static const char hex[] = "0123456789ABCDEF";
+                    output.print(F("\\u00"));
+                    output.write(hex[(character >> 4) & 0x0F]);
+                    output.write(hex[character & 0x0F]);
+                } else {
+                    output.write(character);
+                }
+                break;
+        }
     }
-
-    return offset + toWrite;
+    output.write(static_cast<uint8_t>('"'));
 }
 
 } // namespace
@@ -164,11 +127,15 @@ unsigned long DeviceStatusManager::lastWifiDisconnectionTime = 0;
 unsigned long DeviceStatusManager::lastMqttDisconnectionTime = 0;
 
 // Runtime performance tracking (RAM only)
-unsigned long DeviceStatusManager::lastLoopTime = 0;
-uint32_t DeviceStatusManager::loopCount = 0;
-int32_t DeviceStatusManager::freeHeapTrend = 0;
-uint32_t DeviceStatusManager::peakMemoryUsage = 0;
-uint32_t DeviceStatusManager::lowestMemoryUsage = 0;
+unsigned long DeviceStatusManager::lastStatusUpdateTime = 0;
+uint32_t DeviceStatusManager::statusUpdateCount = 0;
+int32_t DeviceStatusManager::freeHeapTrendPerMinute = 0;
+uint32_t DeviceStatusManager::highestFreeHeap = 0;
+uint32_t DeviceStatusManager::lowestFreeHeap = 0;
+unsigned long DeviceStatusManager::lastHeapSampleTime = 0;
+DeviceStatusManager::HeapSample DeviceStatusManager::heapHistory[DeviceStatusManager::heapSampleCount] = {};
+uint8_t DeviceStatusManager::heapHistoryLength = 0;
+uint8_t DeviceStatusManager::heapHistoryNext = 0;
 unsigned long DeviceStatusManager::bootTime = 0;
 
 // Cached estimation data
@@ -211,12 +178,16 @@ void DeviceStatusManager::initializeHardwareInfo() {
 
 void DeviceStatusManager::initializeRuntimeTracking() {
     bootTime = millis();
-    lastLoopTime = millis();
-    loopCount = 0;
+    lastStatusUpdateTime = 0;
+    statusUpdateCount = 0;
+    freeHeapTrendPerMinute = 0;
+    highestFreeHeap = 0;
+    lowestFreeHeap = 0;
+    lastHeapSampleTime = 0;
+    heapHistoryLength = 0;
+    heapHistoryNext = 0;
     wifiDisconnectionCount = 0;
     mqttDisconnectionCount = 0;
-    peakMemoryUsage = 0;
-    lowestMemoryUsage = 0;
 
     // Initialize connection tracking
     lastWiFiConnected = WiFi.isConnected();
@@ -261,30 +232,53 @@ void DeviceStatusManager::trackConnectionChanges() {
 void DeviceStatusManager::updateRuntimeMetrics() {
     unsigned long currentTime = millis();
 
-    loopCount++;
-    lastLoopTime = currentTime;
-
-    // Simple heap trend calculation (last 10 measurements)
-    static uint32_t heapHistory[10];
-    static uint8_t heapIndex = 0;
-
+    statusUpdateCount++;
+    lastStatusUpdateTime = currentTime;
     uint32_t currentHeap = ESP.getFreeHeap();
-    heapHistory[heapIndex] = currentHeap;
-    heapIndex = (heapIndex + 1) % 10;
 
-    // Calculate trend (positive = increasing, negative = decreasing)
-    int32_t trend = 0;
-    for (int i = 1; i < 10; i++) {
-        trend += (int32_t)heapHistory[i] - (int32_t)heapHistory[i-1];
+    if (highestFreeHeap == 0 || currentHeap > highestFreeHeap) {
+        highestFreeHeap = currentHeap;
     }
-    freeHeapTrend = trend / 10;
+    if (lowestFreeHeap == 0 || currentHeap < lowestFreeHeap) {
+        lowestFreeHeap = currentHeap;
+    }
 
-    // Track peak/lowest memory usage
-    if (currentHeap > peakMemoryUsage) {
-        peakMemoryUsage = currentHeap;
+    if (lastHeapSampleTime != 0 &&
+        !TimeUtils::hasTimeElapsed(currentTime, lastHeapSampleTime, heapSampleInterval)) {
+        return;
     }
-    if (currentHeap < lowestMemoryUsage || lowestMemoryUsage == 0) {
-        lowestMemoryUsage = currentHeap;
+
+    lastHeapSampleTime = currentTime;
+    heapHistory[heapHistoryNext].freeHeap = currentHeap;
+    heapHistory[heapHistoryNext].timestamp = currentTime;
+    if (heapHistoryLength < heapSampleCount) {
+        ++heapHistoryLength;
+    }
+    heapHistoryNext = (heapHistoryNext + 1) % heapSampleCount;
+
+    // Startup allocates framework services lazily. Do not diagnose that normal
+    // settling period as a leak until the full, fixed sampling window exists.
+    if (heapHistoryLength < heapSampleCount) {
+        freeHeapTrendPerMinute = 0;
+        return;
+    }
+
+    const uint8_t oldestIndex = heapHistoryLength == heapSampleCount ? heapHistoryNext : 0;
+    const HeapSample& oldestSample = heapHistory[oldestIndex];
+    const unsigned long elapsed = TimeUtils::safeTimeDifference(currentTime, oldestSample.timestamp);
+    if (elapsed == 0) {
+        freeHeapTrendPerMinute = 0;
+        return;
+    }
+
+    const int64_t difference = static_cast<int64_t>(currentHeap) - oldestSample.freeHeap;
+    const int64_t trend = (difference * 60000LL) / elapsed;
+    if (trend > 2147483647LL) {
+        freeHeapTrendPerMinute = 2147483647;
+    } else if (trend < -2147483648LL) {
+        freeHeapTrendPerMinute = -2147483647 - 1;
+    } else {
+        freeHeapTrendPerMinute = static_cast<int32_t>(trend);
     }
 }
 
@@ -309,15 +303,18 @@ void DeviceStatusManager::updateRuntimeInfo() {
 
         // WiFi stability
         deviceStatus.runtime.wifi.connected = WiFi.isConnected();
-        deviceStatus.runtime.wifi.ssid = WiFi.SSID();
-        deviceStatus.runtime.wifi.ip = WiFi.localIP().toString();
-        deviceStatus.runtime.wifi.gateway = WiFi.gatewayIP().toString();
-        deviceStatus.runtime.wifi.subnet = WiFi.subnetMask().toString();
-        deviceStatus.runtime.wifi.dns = WiFi.dnsIP().toString();
-        deviceStatus.runtime.wifi.mac = WiFi.macAddress();
+        const String ssid = WiFi.SSID();
+        copyText(deviceStatus.runtime.wifi.ssid, ssid.c_str());
+        formatIPAddress(deviceStatus.runtime.wifi.ip, WiFi.localIP());
+        formatIPAddress(deviceStatus.runtime.wifi.gateway, WiFi.gatewayIP());
+        formatIPAddress(deviceStatus.runtime.wifi.subnet, WiFi.subnetMask());
+        formatIPAddress(deviceStatus.runtime.wifi.dns, WiFi.dnsIP());
+        uint8_t mac[6];
+        WiFi.macAddress(mac);
+        formatMacAddress(deviceStatus.runtime.wifi.mac, mac);
         deviceStatus.runtime.wifi.rssi = WiFi.RSSI();
         deviceStatus.runtime.wifi.channel = WiFi.channel();
-        deviceStatus.runtime.wifi.bssid = WiFi.BSSIDstr();
+        formatMacAddress(deviceStatus.runtime.wifi.bssid, WiFi.BSSID());
 
     // Calculate connection duration using TimeUtils
     if (deviceStatus.runtime.wifi.connected && wifiConnectionStartTime > 0) {
@@ -333,9 +330,9 @@ void DeviceStatusManager::updateRuntimeInfo() {
 
         // MQTT stability
         deviceStatus.runtime.mqtt.connected = DeviceFrameworkMQTT::isConnected();
-        deviceStatus.runtime.mqtt.broker = String(DeviceFrameworkParameters::getMqttServer());
+        copyText(deviceStatus.runtime.mqtt.broker, DeviceFrameworkParameters::getMqttServer());
         deviceStatus.runtime.mqtt.port = DeviceFrameworkParameters::getMqttPort();
-        deviceStatus.runtime.mqtt.user = String(DeviceFrameworkParameters::getMqttUser());
+        copyText(deviceStatus.runtime.mqtt.user, DeviceFrameworkParameters::getMqttUser());
 
         // Calculate MQTT connection duration using TimeUtils
         if (deviceStatus.runtime.mqtt.connected && mqttConnectionStartTime > 0) {
@@ -360,9 +357,8 @@ void DeviceStatusManager::updateRuntimeInfo() {
     }
 
     // Always update lightweight device info
-    deviceStatus.runtime.device.deviceName = String(DeviceFrameworkParameters::getDeviceName());
+    copyText(deviceStatus.runtime.device.deviceName, DeviceFrameworkParameters::getDeviceName());
     deviceStatus.runtime.device.uptime = TimeUtils::safeTimeDifference(now, bootTime) / 1000;
-    deviceStatus.runtime.device.configMode = DeviceFrameworkWiFi::isInConfigMode();
 
     // Enhanced memory info
     MemoryStats currentStats = getMemoryStats();
@@ -372,25 +368,25 @@ void DeviceStatusManager::updateRuntimeInfo() {
 
     // Calculate memory delta using TimeUtils
     if (deviceStatus.lastMemoryCheck > 0) {
-        deviceStatus.runtime.memory.memoryDelta = (int32_t)currentStats.freeHeap - (int32_t)lastMemoryStats.freeHeap;
+        deviceStatus.runtime.memory.freeHeapDelta = static_cast<int32_t>(currentStats.freeHeap) - static_cast<int32_t>(lastMemoryStats.freeHeap);
     }
     lastMemoryStats = currentStats;
     deviceStatus.lastMemoryCheck = now;
 
     // Runtime memory tracking (RAM only)
-    deviceStatus.runtime.memory.peakMemoryUsage = peakMemoryUsage;
-    deviceStatus.runtime.memory.lowestMemoryUsage = lowestMemoryUsage;
+    deviceStatus.runtime.memory.highestFreeHeap = highestFreeHeap;
+    deviceStatus.runtime.memory.lowestFreeHeap = lowestFreeHeap;
 
     // Logging info
     deviceStatus.runtime.logging.serialEnabled = isSerialActive();
-    deviceStatus.runtime.logging.currentLogLevel = logLevelToString(currentLogLevel);
+    copyText(deviceStatus.runtime.logging.currentLogLevel, logLevelToString(currentLogLevel));
     deviceStatus.runtime.logging.webSerialEnabled = true; // Will be updated by web interface
 
     // System health
-    deviceStatus.runtime.health.loopCount = loopCount;
-    deviceStatus.runtime.health.lastLoopTime = lastLoopTime;
-    deviceStatus.runtime.health.freeHeapTrend = freeHeapTrend;
-    deviceStatus.runtime.health.systemHealthy = (freeHeapTrend > -1000 && // Not losing more than 1KB per loop
+    deviceStatus.runtime.health.statusUpdateCount = statusUpdateCount;
+    deviceStatus.runtime.health.lastStatusUpdateTime = lastStatusUpdateTime;
+    deviceStatus.runtime.health.freeHeapTrendPerMinute = freeHeapTrendPerMinute;
+    deviceStatus.runtime.health.systemHealthy = (freeHeapTrendPerMinute > -1024 && // Not losing more than 1 KiB/minute
                                                  deviceStatus.runtime.memory.fragmentation < 50); // Less than 50% fragmentation
 
     deviceStatus.lastUpdate = now;
@@ -414,9 +410,9 @@ void DeviceStatusManager::buildJSONResponse(Print& output, const DeviceStatus& s
     output.print(F("\"hardware\":{"));
     output.print(F("\"max_memory\":"));
     output.print(status.hardware.maxMemory);
-    output.print(F(",\"chip_id\":\""));
-    output.print(status.hardware.chipId);
-    output.print(F("\",\"flash_size\":"));
+    output.print(F(",\"chip_id\":"));
+    writeJSONString(output, status.hardware.chipId.c_str());
+    output.print(F(",\"flash_size\":"));
     output.print(status.hardware.flashSize);
     output.print(F(",\"flash_speed\":"));
     output.print(status.hardware.flashSpeed);
@@ -426,9 +422,9 @@ void DeviceStatusManager::buildJSONResponse(Print& output, const DeviceStatus& s
     output.print(status.hardware.sketchSize);
     output.print(F(",\"free_sketch_space\":"));
     output.print(status.hardware.freeSketchSpace);
-    output.print(F(",\"version\":\""));
-    output.print(status.hardware.version);
-    output.print(F("\"},"));
+    output.print(F(",\"version\":"));
+    writeJSONString(output, status.hardware.version.c_str());
+    output.print(F("},"));
 
     // Runtime info (dynamic)
     output.print(F("\"runtime\":{"));
@@ -437,25 +433,25 @@ void DeviceStatusManager::buildJSONResponse(Print& output, const DeviceStatus& s
     output.print(F("\"wifi\":{"));
     output.print(F("\"connected\":"));
     output.print(status.runtime.wifi.connected ? F("true") : F("false"));
-    output.print(F(",\"ssid\":\""));
-    output.print(status.runtime.wifi.ssid);
-    output.print(F("\",\"ip\":\""));
-    output.print(status.runtime.wifi.ip);
-    output.print(F("\",\"gateway\":\""));
-    output.print(status.runtime.wifi.gateway);
-    output.print(F("\",\"subnet\":\""));
-    output.print(status.runtime.wifi.subnet);
-    output.print(F("\",\"dns\":\""));
-    output.print(status.runtime.wifi.dns);
-    output.print(F("\",\"mac\":\""));
-    output.print(status.runtime.wifi.mac);
-    output.print(F("\",\"rssi\":"));
+    output.print(F(",\"ssid\":"));
+    writeJSONString(output, status.runtime.wifi.ssid);
+    output.print(F(",\"ip\":"));
+    writeJSONString(output, status.runtime.wifi.ip);
+    output.print(F(",\"gateway\":"));
+    writeJSONString(output, status.runtime.wifi.gateway);
+    output.print(F(",\"subnet\":"));
+    writeJSONString(output, status.runtime.wifi.subnet);
+    output.print(F(",\"dns\":"));
+    writeJSONString(output, status.runtime.wifi.dns);
+    output.print(F(",\"mac\":"));
+    writeJSONString(output, status.runtime.wifi.mac);
+    output.print(F(",\"rssi\":"));
     output.print(status.runtime.wifi.rssi);
     output.print(F(",\"channel\":"));
     output.print(status.runtime.wifi.channel);
-    output.print(F(",\"bssid\":\""));
-    output.print(status.runtime.wifi.bssid);
-    output.print(F("\",\"connection_duration\":"));
+    output.print(F(",\"bssid\":"));
+    writeJSONString(output, status.runtime.wifi.bssid);
+    output.print(F(",\"connection_duration\":"));
     output.print(status.runtime.wifi.connectionDuration);
     output.print(F(",\"total_disconnections\":"));
     output.print(status.runtime.wifi.totalDisconnections);
@@ -469,13 +465,13 @@ void DeviceStatusManager::buildJSONResponse(Print& output, const DeviceStatus& s
     output.print(F("\"mqtt\":{"));
     output.print(F("\"connected\":"));
     output.print(status.runtime.mqtt.connected ? F("true") : F("false"));
-    output.print(F(",\"broker\":\""));
-    output.print(status.runtime.mqtt.broker);
-    output.print(F("\",\"port\":"));
+    output.print(F(",\"broker\":"));
+    writeJSONString(output, status.runtime.mqtt.broker);
+    output.print(F(",\"port\":"));
     output.print(status.runtime.mqtt.port);
-    output.print(F(",\"user\":\""));
-    output.print(status.runtime.mqtt.user);
-    output.print(F("\",\"connection_duration\":"));
+    output.print(F(",\"user\":"));
+    writeJSONString(output, status.runtime.mqtt.user);
+    output.print(F(",\"connection_duration\":"));
     output.print(status.runtime.mqtt.connectionDuration);
     output.print(F(",\"total_disconnections\":"));
     output.print(status.runtime.mqtt.totalDisconnections);
@@ -487,9 +483,9 @@ void DeviceStatusManager::buildJSONResponse(Print& output, const DeviceStatus& s
 
     // Device section
     output.print(F("\"device\":{"));
-    output.print(F("\"name\":\""));
-    output.print(status.runtime.device.deviceName);
-    output.print(F("\",\"uptime\":"));
+    output.print(F("\"name\":"));
+    writeJSONString(output, status.runtime.device.deviceName);
+    output.print(F(",\"uptime\":"));
     output.print(status.runtime.device.uptime);
     output.print(F("},"));
 
@@ -501,12 +497,12 @@ void DeviceStatusManager::buildJSONResponse(Print& output, const DeviceStatus& s
     output.print(status.runtime.memory.maxBlockSize);
     output.print(F(",\"fragmentation\":"));
     output.print(status.runtime.memory.fragmentation);
-    output.print(F(",\"delta\":"));
-    output.print(status.runtime.memory.memoryDelta);
-    output.print(F(",\"peak_usage\":"));
-    output.print(status.runtime.memory.peakMemoryUsage);
-    output.print(F(",\"lowest_usage\":"));
-    output.print(status.runtime.memory.lowestMemoryUsage);
+    output.print(F(",\"free_heap_delta\":"));
+    output.print(status.runtime.memory.freeHeapDelta);
+    output.print(F(",\"highest_free\":"));
+    output.print(status.runtime.memory.highestFreeHeap);
+    output.print(F(",\"lowest_free\":"));
+    output.print(status.runtime.memory.lowestFreeHeap);
     output.print(F("},"));
 
     // Stability section
@@ -525,22 +521,22 @@ void DeviceStatusManager::buildJSONResponse(Print& output, const DeviceStatus& s
     output.print(F("\"logging\":{"));
     output.print(F("\"serial_enabled\":"));
     output.print(status.runtime.logging.serialEnabled ? F("true") : F("false"));
-    output.print(F(",\"log_level\":\""));
-    output.print(status.runtime.logging.currentLogLevel);
-    output.print(F("\",\"web_serial_enabled\":"));
+    output.print(F(",\"log_level\":"));
+    writeJSONString(output, status.runtime.logging.currentLogLevel);
+    output.print(F(",\"web_serial_enabled\":"));
     output.print(status.runtime.logging.webSerialEnabled ? F("true") : F("false"));
     output.print(F("},"));
 
     // System health section
     output.print(F("\"health\":{"));
-    output.print(F("\"loop_count\":"));
-    output.print(status.runtime.health.loopCount);
-    output.print(F(",\"last_loop_time\":"));
-    output.print(status.runtime.health.lastLoopTime);
+    output.print(F("\"status_update_count\":"));
+    output.print(status.runtime.health.statusUpdateCount);
+    output.print(F(",\"last_status_update_ms\":"));
+    output.print(status.runtime.health.lastStatusUpdateTime);
     output.print(F(",\"system_healthy\":"));
     output.print(status.runtime.health.systemHealthy ? F("true") : F("false"));
-    output.print(F(",\"free_heap_trend\":"));
-    output.print(status.runtime.health.freeHeapTrend);
+    output.print(F(",\"free_heap_trend_bytes_per_minute\":"));
+    output.print(status.runtime.health.freeHeapTrendPerMinute);
     output.print(F("}"));
 
     output.print(F("}"));
@@ -588,9 +584,7 @@ bool DeviceStatusManager::isJSONSizeEstimationInitialized() {
 }
 
 void DeviceStatusManager::resetJSONStreamState(JSONStreamState& state) {
-    state.fragmentIndex = 0;
-    state.pendingFragment = "";
-    state.pendingOffset = 0;
+    state.bytesEmitted = 0;
     state.complete = false;
 }
 
@@ -599,19 +593,11 @@ size_t DeviceStatusManager::renderJSONChunk(JSONStreamState& state, uint8_t* buf
         return 0;
     }
 
-    size_t written = 0;
-
-    while (written < maxLen && !state.complete) {
-        if (state.pendingFragment.length() == 0) {
-            if (!prepareNextJSONFragment(state, status)) {
-                break;
-            }
-        }
-
-        written = copyPendingJSONFragment(state, buffer, maxLen, written);
-    }
-
-    return written;
+    JSONChunkPrint output(buffer, maxLen, state.bytesEmitted);
+    buildJSONResponse(output, status);
+    state.bytesEmitted += output.bytesWritten();
+    state.complete = state.bytesEmitted >= output.totalBytes();
+    return output.bytesWritten();
 }
 
 #endif // ENABLE_WEB_INTERFACE

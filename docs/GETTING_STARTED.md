@@ -16,6 +16,7 @@ lib_deps =
 
 Use `#vMAJOR.MINOR.PATCH` for released firmware. PlatformIO checks out that Git tag; it does not download a GitHub Release asset.
 
+
 ## 2. Give the firmware an identity
 
 Create `include/FirmwareIdentity.h`:

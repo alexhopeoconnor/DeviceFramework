@@ -10,6 +10,9 @@ public:
     // HTTP request handlers
     static void handleWebRoot(AsyncWebServerRequest *request);
     static void handleWebNotFound(AsyncWebServerRequest *request);
+    static void handleWebStyles(AsyncWebServerRequest *request);
+    static void handleWebScripts(AsyncWebServerRequest *request);
+    static void handleWebLogo(AsyncWebServerRequest *request);
     static void handleAPIStatus(AsyncWebServerRequest *request);
     static void handleAPIControl(AsyncWebServerRequest *request);
     static void handleAPIDevicePassword(AsyncWebServerRequest *request);

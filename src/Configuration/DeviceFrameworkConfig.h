@@ -38,6 +38,7 @@ extern uint32_t CONFIG_wsCleanupInterval;
 // mDNS configuration
 extern uint32_t CONFIG_mdnsMinFreeHeap;
 extern uint32_t CONFIG_mdnsMinLargestBlock;
+extern uint32_t CONFIG_mdnsUpdateInterval;
 extern uint32_t CONFIG_mdnsPacketDrainMinFreeHeap;
 extern uint32_t CONFIG_mdnsPacketDrainInterval;
 
@@ -51,7 +52,7 @@ extern uint16_t CONFIG_templateProgmemChunkSize;
 extern uint16_t CONFIG_templateRamChunkSize;
 // Template engine configuration defaults
 #define CONFIG_templatePlaceholderNameSize_default 24   // Allows %X% style (min 3)
-#define CONFIG_maxTemplatePlaceholders_default 16       // Current usage is 13
+#define CONFIG_maxTemplatePlaceholders_default 20       // Current usage is 17
 #define CONFIG_templateStackDepth_default 16            // Max nested template depth
 #define CONFIG_templateBufferSize_default 512          // Template read buffer size
 #define CONFIG_templateMaxIterations_default 50         // Max iterations per render chunk (safety limit)
@@ -125,6 +126,8 @@ uint32_t getConfigMDNSMinFreeHeap();
 void setConfigMDNSMinFreeHeap(uint32_t minFreeHeap);
 uint32_t getConfigMDNSMinLargestBlock();
 void setConfigMDNSMinLargestBlock(uint32_t minLargestBlock);
+uint32_t getConfigMDNSUpdateInterval();
+void setConfigMDNSUpdateInterval(uint32_t interval);
 uint32_t getConfigMDNSPacketDrainMinFreeHeap();
 void setConfigMDNSPacketDrainMinFreeHeap(uint32_t minFreeHeap);
 uint32_t getConfigMDNSPacketDrainInterval();

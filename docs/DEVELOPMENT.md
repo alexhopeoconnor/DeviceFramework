@@ -28,6 +28,30 @@ CI runs these normal and profile-fixture checks for every push and pull request,
 
 The normal ESP8266 command also checks the web-interface-free configuration.
 
+## ESP32 framework pin
+
+The maintained ESP32 environments use the PlatformIO-compatible
+`pioarduino/platform-espressif32` 51.03.05 package. It packages Espressif's
+official Arduino-ESP32 3.0.5 framework and its matching ESP-IDF 5.1 libraries;
+it is not a GitHub Release asset used by application firmware. The URL in each
+`platformio.ini` is the pinned PlatformIO platform package that downloads those
+framework inputs.
+
+This pin is deliberate. PlatformIO official `espressif32` packages available
+to this stack still provide Arduino-ESP32 2.0.17. On the affected board that
+version starts an asynchronous WiFi scan and reports `WIFI_SCAN_FAILED` after
+exactly six seconds. The current framework initializes the native scan
+configuration correctly. The AP+STA probe and portal-like scan complete in
+about four seconds on the connected ESP32.
+
+Core 3 separates the `Network` library from `WiFi`. Projects using LDF `deep+`
+therefore need `-DSOC_WIFI_SUPPORTED=1` and the documented `Network/src`
+include path so PlatformIO finds conditional WiFi sources and the new AsyncTCP
+header. ESP32 environments also ignore `ESPAsyncTCP`, which is the ESP8266-only
+transport; `AsyncTCP` is selected instead. The maintained PlatformIO files
+already carry these settings—copy them when creating another ESP32 consuming
+sketch.
+
 ## Run the connected-device suite
 
 The optional hardware suite exercises WiFi, MQTT, V4 storage, password
@@ -44,18 +68,36 @@ cp test/.env.example test/.env
 
 Use `--env-file path/to/file` when the credentials live outside the repository.
 The runner creates its generated test header only for the run and removes it on
-exit. Profile-fixture builds advertise a unique mDNS name; after Unity completes,
-the host verifies authenticated status, root-page, and 404 responses directly. Set
-`DEVICEFRAMEWORK_TEST_DEVICE_HOST` in the ignored env file when Avahi or mDNS is unavailable.
+exit. It runs the Unity image with a bootstrap profile, observes the selected
+board’s esptool upload, and sends the same RTS-only hard reset esptool normally
+uses after upload. It requires a non-empty zero-failure Unity result before
+proceeding.
+
+For a profile fixture, it then flashes the minimal consuming sketch with a
+separate reconcile-profile identity. That makes the WiFi seed apply after the
+Unity run has left a valid V4 record, exercising the intended non-erased-device
+path. The runner waits for its unique mDNS name before it verifies authenticated
+status, pages, CSS/JavaScript/logo assets, and password persistence through a
+reboot. Set `DEVICEFRAMEWORK_TEST_DEVICE_HOST` in the ignored env file when
+Avahi or mDNS is unavailable.
 
 ## Work against sibling checkouts
 
-Released builds use public Git tags. For local library development, copy
+The consumer compile fixture is intentionally a separate PlatformIO project. If
+you are working before the dependent library tags exist, copy its local template
+as well so it resolves the sibling checkouts rather than remote release tags:
+
+```bash
+cp test/compile-project/platformio.local.example.ini test/compile-project/platformio.local.ini.<machine>
+```
+
+Released builds use public Git tags. For coordinated local library development, copy
 [`platformio.local.example.ini`](../platformio.local.example.ini) to a file such
-as `platformio.local.ini.alex`, update the `symlink://` paths, and leave that
-file untracked. `platformio.ini` loads matching `platformio.local.ini.*` files
-when present, so no tracked configuration or application dependency needs to
-change.
+as `platformio.local.ini.alex`, update its `lib_extra_dirs` path, and leave that
+file untracked. It discovers sibling source trees while the explicit `lib_deps`
+list supplies only their third-party dependencies. `platformio.ini` loads matching
+`platformio.local.ini.*` files when present, so no tracked configuration or
+application dependency needs to change.
 
 ## Publish a release
 

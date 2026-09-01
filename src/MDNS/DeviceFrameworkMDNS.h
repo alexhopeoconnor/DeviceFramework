@@ -32,6 +32,11 @@ private:
     // Packet draining state (to avoid calling resolver.loop() every iteration)
     static unsigned long lastPacketDrainTime;
 
+    // ESP8266 mDNS heap-stat scans are deliberately rate-limited.
+    static unsigned long lastMDNSUpdateAttemptTime;
+    static uint32_t mdnsUpdateCount;
+    static uint32_t mdnsUpdateSkippedForHeapCount;
+
     // Internal methods
     static void updateResolverIP();
 
@@ -53,6 +58,8 @@ public:
 
     // Status
     static bool isInitialized();
+    static uint32_t getUpdateCount();
+    static uint32_t getUpdateSkippedForHeapCount();
 };
 
 #endif // MDNS_MANAGER_H

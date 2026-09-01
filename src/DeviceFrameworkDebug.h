@@ -13,10 +13,12 @@ class DeviceFrameworkWebSerial;
 
 // Function to send debug output to WebSocket (called from WebInterface)
 void sendDebugToWebSocket(const String& message);
+bool shouldSendDebugToWebSocket();
 constexpr bool DEVICEFRAMEWORK_WEB_LOGGING_ENABLED = true;
 #else
 // Keep the logging API link-safe when the optional web interface is omitted.
 inline void sendDebugToWebSocket(const String&) {}
+inline bool shouldSendDebugToWebSocket() { return false; }
 constexpr bool DEVICEFRAMEWORK_WEB_LOGGING_ENABLED = false;
 #endif
 
@@ -148,7 +150,7 @@ namespace DeviceFrameworkDebug {
             Serial.print(F("[ERROR] ")); \
         } \
         Serial.print(x); \
-        if (DEVICEFRAMEWORK_WEB_LOGGING_ENABLED) { \
+        if (shouldSendDebugToWebSocket()) { \
             String msg = DeviceFrameworkDebug::buildDebugMessageBuffer(F("[ERROR] "), x, includePrefix, false); \
             sendDebugToWebSocket(msg); \
         } \
@@ -161,7 +163,7 @@ namespace DeviceFrameworkDebug {
             Serial.print(F("[ERROR] ")); \
         } \
         Serial.println(x); \
-        if (DEVICEFRAMEWORK_WEB_LOGGING_ENABLED) { \
+        if (shouldSendDebugToWebSocket()) { \
             String msg = DeviceFrameworkDebug::buildDebugMessageBuffer(F("[ERROR] "), x, includePrefix, true); \
             sendDebugToWebSocket(msg); \
         } \
@@ -174,7 +176,7 @@ namespace DeviceFrameworkDebug {
             Serial.print(F("[WARN] ")); \
         } \
         Serial.print(x); \
-        if (DEVICEFRAMEWORK_WEB_LOGGING_ENABLED) { \
+        if (shouldSendDebugToWebSocket()) { \
             String msg = DeviceFrameworkDebug::buildDebugMessageBuffer(F("[WARN] "), x, includePrefix, false); \
             sendDebugToWebSocket(msg); \
         } \
@@ -187,7 +189,7 @@ namespace DeviceFrameworkDebug {
             Serial.print(F("[WARN] ")); \
         } \
         Serial.println(x); \
-        if (DEVICEFRAMEWORK_WEB_LOGGING_ENABLED) { \
+        if (shouldSendDebugToWebSocket()) { \
             String msg = DeviceFrameworkDebug::buildDebugMessageBuffer(F("[WARN] "), x, includePrefix, true); \
             sendDebugToWebSocket(msg); \
         } \
@@ -200,7 +202,7 @@ namespace DeviceFrameworkDebug {
             Serial.print(F("[INFO] ")); \
         } \
         Serial.print(x); \
-        if (DEVICEFRAMEWORK_WEB_LOGGING_ENABLED) { \
+        if (shouldSendDebugToWebSocket()) { \
             String msg = DeviceFrameworkDebug::buildDebugMessageBuffer(F("[INFO] "), x, includePrefix, false); \
             sendDebugToWebSocket(msg); \
         } \
@@ -213,7 +215,7 @@ namespace DeviceFrameworkDebug {
             Serial.print(F("[INFO] ")); \
         } \
         Serial.println(x); \
-        if (DEVICEFRAMEWORK_WEB_LOGGING_ENABLED) { \
+        if (shouldSendDebugToWebSocket()) { \
             String msg = DeviceFrameworkDebug::buildDebugMessageBuffer(F("[INFO] "), x, includePrefix, true); \
             sendDebugToWebSocket(msg); \
         } \
@@ -226,7 +228,7 @@ namespace DeviceFrameworkDebug {
             Serial.print(F("[DEBUG] ")); \
         } \
         Serial.print(x); \
-        if (DEVICEFRAMEWORK_WEB_LOGGING_ENABLED) { \
+        if (shouldSendDebugToWebSocket()) { \
             String msg = DeviceFrameworkDebug::buildDebugMessageBuffer(F("[DEBUG] "), x, includePrefix, false); \
             sendDebugToWebSocket(msg); \
         } \
@@ -239,7 +241,7 @@ namespace DeviceFrameworkDebug {
             Serial.print(F("[DEBUG] ")); \
         } \
         Serial.println(x); \
-        if (DEVICEFRAMEWORK_WEB_LOGGING_ENABLED) { \
+        if (shouldSendDebugToWebSocket()) { \
             String msg = DeviceFrameworkDebug::buildDebugMessageBuffer(F("[DEBUG] "), x, includePrefix, true); \
             sendDebugToWebSocket(msg); \
         } \
@@ -296,7 +298,7 @@ void logMemoryStats(const char* context = nullptr, LogLevel level = LogLevel::IN
         Serial.print(F(" bytes, Fragmentation: ")); \
         Serial.print(fragmentation); \
         Serial.println(F("%")); \
-        if (DEVICEFRAMEWORK_WEB_LOGGING_ENABLED) { \
+        if (shouldSendDebugToWebSocket()) { \
             char buffer[128]; \
             char* ptr = buffer; \
             ptr = DeviceFrameworkFlashStringUtils::appendFlashString(ptr, F("[MEMORY BEFORE] ")); \
@@ -325,7 +327,7 @@ void logMemoryStats(const char* context = nullptr, LogLevel level = LogLevel::IN
         Serial.print(F(" bytes, Fragmentation: ")); \
         Serial.print(fragmentation); \
         Serial.println(F("%")); \
-        if (DEVICEFRAMEWORK_WEB_LOGGING_ENABLED) { \
+        if (shouldSendDebugToWebSocket()) { \
             char buffer[128]; \
             char* ptr = buffer; \
             ptr = DeviceFrameworkFlashStringUtils::appendFlashString(ptr, F("[MEMORY AFTER] ")); \
@@ -356,7 +358,7 @@ void logMemoryStats(const char* context = nullptr, LogLevel level = LogLevel::IN
         Serial.print(F(" bytes, Fragmentation: ")); \
         Serial.print(deltaFragmentation); \
         Serial.println(F("%")); \
-        if (DEVICEFRAMEWORK_WEB_LOGGING_ENABLED) { \
+        if (shouldSendDebugToWebSocket()) { \
             char buffer[128]; \
             char* ptr = buffer; \
             ptr = DeviceFrameworkFlashStringUtils::appendFlashString(ptr, F("[MEMORY DELTA] ")); \

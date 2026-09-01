@@ -40,7 +40,9 @@ TestCase tests[] = {
 
     // Group 3: Configuration & Storage
     TEST_ENTRY(test_device_framework_configuration),
+    TEST_ENTRY(test_device_framework_ui_configuration),
     TEST_ENTRY(test_storage_save_load),
+    TEST_ENTRY(test_storage_falls_back_to_prior_valid_slot),
     TEST_ENTRY(test_storage_foreign_application_is_distinguished),
     TEST_ENTRY(test_storage_incompatible_schema_retains_device_password),
     TEST_ENTRY(test_storage_station_profiles_round_trip),
@@ -67,6 +69,8 @@ bool begun = false;
 bool frameworkSetup = false;
 bool wifiConnected = false;
 bool mqttConnected = false;
+unsigned long connectionWaitStartedAt = 0;
+constexpr unsigned long CONNECTION_READY_TIMEOUT_MS = 120000UL;
 
 // Dummy test device entities (simulating typical consuming sketch)
 HASensorNumber testSensor("test_sensor", HASensorNumber::PrecisionP1);
@@ -156,8 +160,13 @@ void setup() {
     EEPROM.begin(eepromSize);
     for (size_t i = 0; i < eepromSize; i++) {
         EEPROM.write(i, 0xFF);
+        if ((i & 0x7fU) == 0) {
+            yield();
+        }
     }
+    yield();
     EEPROM.commit();
+    yield();
     #ifdef DF_PLATFORM_ESP8266
         EEPROM.end();
     #endif
@@ -165,11 +174,33 @@ void setup() {
         delay(100);
     #endif
     Serial.println("[TEST]   EEPROM cleared");
+    Serial.println("[TEST]     Configuring shared UI...");
 
     // Simulate a real sketch setup and register custom parameters.
     Serial.println("[TEST]   Configuring test parameters...");
 
     Serial.println("[TEST]     Calling DeviceFramework::beforeSetup()...");
+    DeviceFrameworkUIConfig ui;
+    ui.branding.brandName = DeviceFrameworkText::ram("Test Lab");
+    ui.branding.productName = DeviceFrameworkText::ram("DeviceFramework UI Test");
+    ui.branding.provisioningTitle = DeviceFrameworkText::ram("Set up DeviceFramework UI Test");
+    ui.branding.provisioningIntro = DeviceFrameworkText::ram("Connected-device portal and web UI verification.");
+    ui.branding.logoAltText = DeviceFrameworkText::ram("Test Lab");
+    ui.theme.pageStart = DeviceFrameworkText::ram("#14532d");
+    ui.theme.pageEnd = DeviceFrameworkText::ram("#166534");
+    ui.theme.surface = DeviceFrameworkText::ram("#f0fdf4");
+    ui.theme.text = DeviceFrameworkText::ram("#052e16");
+    ui.theme.mutedText = DeviceFrameworkText::ram("#166534");
+    ui.theme.border = DeviceFrameworkText::ram("#bbf7d0");
+    ui.theme.accent = DeviceFrameworkText::ram("#15803d");
+    ui.theme.accentHover = DeviceFrameworkText::ram("#166534");
+    ui.theme.accentText = DeviceFrameworkText::ram("#ffffff");
+    ui.theme.success = DeviceFrameworkText::ram("#16a34a");
+    ui.theme.danger = DeviceFrameworkText::ram("#dc2626");
+    DeviceFramework::setUIConfig(ui);
+    Serial.println("[TEST]     Shared UI configured");
+
+    Serial.println("[TEST]     Registering parameters...");
     DeviceFramework::beforeSetup([]() {
         auto& paramRegistry = DeviceFrameworkParameters::getRegistry();
         DeviceFrameworkParameterMetadata testParamMeta;
@@ -228,10 +259,6 @@ void setup() {
     Serial.println("[HIDDEN]");
     DeviceFramework::setMqttPass(TEST_MQTT_PASSWORD);
 
-    // Save parameters to EEPROM so they persist
-    Serial.println("[TEST]     Saving parameters to EEPROM...");
-    DeviceFramework::saveParameters();
-
     // Register harmless command handlers for live MQTT coverage.
 
     // Add custom MQTT command handlers for testing
@@ -260,6 +287,7 @@ void setup() {
 
     UNITY_BEGIN(); // Start Unity test framework
     begun = true; // Start tests immediately
+    connectionWaitStartedAt = millis();
 }
 
 void loop() {
@@ -298,6 +326,12 @@ void loop() {
             mqttConnected = true; // Mark as "ready" to start tests
             Serial.println("[TEST] --- Config mode active - Starting tests ---\n");
         } else {
+            if (millis() - connectionWaitStartedAt >= CONNECTION_READY_TIMEOUT_MS) {
+                Serial.println("[TEST] Connection readiness timeout; ending suite");
+                UNITY_END();
+                begun = false;
+                return;
+            }
             // Print status every 5 seconds
             static unsigned long lastStatusPrint = 0;
             if (millis() - lastStatusPrint > 5000) {

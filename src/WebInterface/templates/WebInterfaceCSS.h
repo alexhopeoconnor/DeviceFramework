@@ -1333,6 +1333,80 @@ body {
     border-color: #3b82f6;
     box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
 }
+
+/* Product theme layer. DeviceFrameworkUI emits only these semantic tokens. */
+:root {
+    --df-page-start: #667eea;
+    --df-page-end: #764ba2;
+    --df-surface: rgba(255, 255, 255, 0.95);
+    --df-text: #2d3748;
+    --df-muted: #4a5568;
+    --df-border: rgba(255, 255, 255, 0.2);
+    --df-accent: #4299e1;
+    --df-accent-hover: #3182ce;
+    --df-accent-text: #ffffff;
+    --df-success: #38a169;
+    --df-danger: #e53e3e;
+    --df-radius: 12px;
+    --df-radius-sm: 8px;
+    --df-card-radius: 24px;
+}
+
+body {
+    color: var(--df-text);
+    background: linear-gradient(135deg, var(--df-page-start) 0%, var(--df-page-end) 100%);
+}
+
+.header, .card {
+    background: var(--df-surface);
+    border-color: var(--df-border);
+}
+
+.card {
+    border-radius: var(--df-card-radius);
+}
+
+.logo, .nav-toggle, .nav-link {
+    border-radius: var(--df-radius-sm);
+}
+
+.nav, .btn {
+    border-radius: var(--df-radius);
+}
+
+.header h1, .nav-link {
+    color: var(--df-text);
+}
+
+.brand-name:empty {
+    display: none;
+}
+
+.brand-name {
+    margin: 0 0 0.15rem;
+    color: var(--df-muted);
+    font-size: 0.78rem;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+}
+
+.nav-toggle span {
+    background: var(--df-muted);
+}
+
+.btn {
+    background: linear-gradient(135deg, var(--df-accent), var(--df-accent-hover));
+    color: var(--df-accent-text);
+}
+
+.btn-success {
+    background: linear-gradient(135deg, var(--df-success), var(--df-success));
+}
+
+.btn-danger {
+    background: linear-gradient(135deg, var(--df-danger), var(--df-danger));
+}
 )rawliteral";
 
 #endif // WEBINTERFACE_CSS_H

@@ -18,8 +18,10 @@ void test_storage_legacy_markers_allow_profile_cutover();
 
 // Group 3: Configuration & Storage
 void test_device_framework_configuration();
+void test_device_framework_ui_configuration();
 void test_storage_incompatible_schema_retains_device_password();
 void test_storage_save_load();
+void test_storage_falls_back_to_prior_valid_slot();
 void test_storage_station_profiles_round_trip();
 void test_storage_foreign_application_is_distinguished();
 void test_profile_password_is_persistent_without_reprovisioning();

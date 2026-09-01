@@ -43,6 +43,9 @@ private:
     // Getter functions for dynamic data
     static const char* getPageTitle();
     static const char* getPageTitle404();
+    static const char* getUiTheme();
+    static const char* getBrandName();
+    static const char* getLogoAltText();
 
     // Internal method to register all placeholders
     static void registerAllPlaceholders();

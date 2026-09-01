@@ -4,7 +4,7 @@
 #include "../Configuration/DeviceFrameworkParameters.h"
 #include "../DeviceFramework.h"
 #include "../Provisioning/DeviceFrameworkProvisioning.h"
-#include "../WebInterface/templates/WiFiManagerStyles.h"
+#include "../UI/DeviceFrameworkUI.h"
 #include "../WebInterface/WebInterfaceTemplateEngineLogger.h"
 #include <DeviceFrameworkPlatform.h>  // Platform abstraction
 
@@ -53,6 +53,11 @@ bool DeviceFrameworkWiFi::setup() {
     // Initialize onboard LED for config mode indication (if available)
     LED_INIT();
 
+
+    // The framework owns product-level UI settings and maps them to
+    // WiFiManager's independent portal API before the portal can start.
+    DeviceFrameworkUI::applyPortalConfig(wm);
+    DeviceFrameworkUI::lock();
     // Create WiFiManagerParameters from registry
     auto wifiParams = registry->createWiFiManagerParameters();
 
@@ -78,15 +83,12 @@ bool DeviceFrameworkWiFi::setup() {
     // Set WiFi save callback - called after WiFi connects successfully
     wm.setSaveConfigCallback(saveConfigCallbackInternal);
 
-    // Use lambda wrapper to adapt WiFiManager's callback signature (requires WiFiManager*)
-    // to our internal callback that doesn't need it (we use our static wm instance)
-    wm.setAPCallback([](WiFiManager* wm) {
-        (void)wm; // Unused - we use our static instance instead
+    // Use a lambda wrapper to adapt WiFiManager's callback signature.
+    wm.setAPCallback([](WiFiManager* wifiManager) {
+        (void)wifiManager;
         DeviceFrameworkWiFi::configModeCallbackInternal();
     });
 
-    // Apply custom styling to match web interface
-    //wm.setCustomHeadElement(wifimanager_custom_css);
 
     // Start the shared non-blocking profile controller. A provisioned profile
     // remains an in-memory candidate until it has produced a usable IP.

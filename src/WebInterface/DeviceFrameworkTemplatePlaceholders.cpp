@@ -4,38 +4,77 @@
 #include "../Configuration/DeviceFrameworkConfig.h"
 #include "DeviceFrameworkTemplatePlaceholders.h"
 #include "templates/WebInterfaceFavicon.h"
-#include "templates/WebInterfaceLogo.h"
-#include "templates/WebInterfaceCSS.h"
-#include "templates/WebInterfaceJS.h"
 #include "templates/WebInterfaceHTML.h"
 #include "../DeviceFrameworkDebug.h"
 #include "../Configuration/DeviceFrameworkParameters.h"
+#include "../UI/DeviceFrameworkUI.h"
 
 // Static member definitions
 PlaceholderRegistry* DeviceFrameworkTemplatePlaceholders::registry = nullptr;
 bool DeviceFrameworkTemplatePlaceholders::isSetup = false;
 
+namespace {
+
+String htmlEscape(const char* value) {
+    String escaped;
+    if (value == nullptr) return escaped;
+    for (const char* p = value; *p; ++p) {
+        switch (*p) {
+            case '&': escaped += F("&amp;"); break;
+            case '<': escaped += F("&lt;"); break;
+            case '>': escaped += F("&gt;"); break;
+            case '"': escaped += F("&quot;"); break;
+            case '\'': escaped += F("&#39;"); break;
+            default: escaped += *p; break;
+        }
+    }
+    return escaped;
+}
+
+}  // namespace
+
 // Getter functions for dynamic data
 const char* DeviceFrameworkTemplatePlaceholders::getPageTitle() {
     static String title;
-    String deviceName = DeviceFrameworkParameters::getDeviceName();
-    if (deviceName.length() > 0) {
-        title = deviceName + " - Control Panel";
-    } else {
-        title = "DeviceFramework Control Panel";
+    const DeviceFrameworkText& configuredTitle = DeviceFrameworkUI::getWebTitle();
+    if (!configuredTitle.empty()) {
+        return DeviceFrameworkUI::getEscapedWebTitle();
     }
+
+    String deviceName = DeviceFrameworkParameters::getDeviceName();
+    const String rawTitle = deviceName.length() > 0
+        ? deviceName + " - Control Panel"
+        : String("DeviceFramework Control Panel");
+    title = htmlEscape(rawTitle.c_str());
     return title.c_str();
 }
 
 const char* DeviceFrameworkTemplatePlaceholders::getPageTitle404() {
     static String title;
-    String deviceName = DeviceFrameworkParameters::getDeviceName();
-    if (deviceName.length() > 0) {
-        title = deviceName + " - 404 Not Found";
-    } else {
-        title = "404 - Page Not Found";
+    const DeviceFrameworkText& configuredTitle = DeviceFrameworkUI::getWebTitle();
+    if (!configuredTitle.empty()) {
+        title = String(DeviceFrameworkUI::getEscapedWebTitle()) + F(" - 404 Not Found");
+        return title.c_str();
     }
+
+    String deviceName = DeviceFrameworkParameters::getDeviceName();
+    const String rawTitle = deviceName.length() > 0
+        ? deviceName + " - 404 Not Found"
+        : String("404 - Page Not Found");
+    title = htmlEscape(rawTitle.c_str());
     return title.c_str();
+}
+
+const char* DeviceFrameworkTemplatePlaceholders::getUiTheme() {
+    return DeviceFrameworkUI::getWebThemeStyle();
+}
+
+const char* DeviceFrameworkTemplatePlaceholders::getBrandName() {
+    return DeviceFrameworkUI::getEscapedBrandName();
+}
+
+const char* DeviceFrameworkTemplatePlaceholders::getLogoAltText() {
+    return DeviceFrameworkUI::getEscapedLogoAltText();
 }
 
 void DeviceFrameworkTemplatePlaceholders::setup() {
@@ -64,15 +103,17 @@ void DeviceFrameworkTemplatePlaceholders::registerAllPlaceholders() {
 
     registry->clear();
 
-    // Register PROGMEM data (large assets)
+    // Stream large assets directly from their declared storage. A product logo
+    // is optional; the library-owned PROGMEM logo remains the default.
     registry->registerProgmemData("%FAVICON_BASE64%", (const char*)favicon_base64);
-    registry->registerProgmemData("%STYLES%", (const char*)css_styles);
-    registry->registerProgmemData("%LOGO_BASE64%", (const char*)logo_base64);
-    registry->registerProgmemData("%SCRIPTS%", (const char*)js_scripts);
 
-    // Register dynamic data (RAM with getters)
+    // Only page-specific dynamic values are rendered through getters; the
+    // large stylesheet and script are served separately from PROGMEM.
     registry->registerRamData("%PAGE_TITLE%", getPageTitle);
     registry->registerRamData("%PAGE_TITLE_404%", getPageTitle404);
+    registry->registerRamData("%UI_THEME%", getUiTheme);
+    registry->registerRamData("%BRAND_NAME%", getBrandName);
+    registry->registerRamData("%LOGO_ALT_TEXT%", getLogoAltText);
 
     // Register PROGMEM templates (nested templates)
     registry->registerProgmemTemplate("%HEADER%", (const char*)header_template);

@@ -68,11 +68,17 @@ The optional web interface provides the same operation at **System Controls → 
 
 ## ESP8266 mDNS heap guard
 
-The ESP8266 core allocates while parsing multicast mDNS traffic. DeviceFramework therefore calls its parser only when it has both 2 KB free heap and a 2 KB contiguous heap block; this avoids an allocator reset when otherwise-adequate free heap is fragmented. These are conservative defaults. Leave them unchanged unless measurement on the target device shows a different trade-off is required.
+The ESP8266 core allocates while parsing multicast mDNS traffic. DeviceFramework therefore calls its parser only when it has both 2 KB free heap and a 2 KB contiguous heap block; this avoids an allocator reset when otherwise-adequate free heap is fragmented. The guard is sampled at most every 25 ms, rather than every application-loop iteration, because the ESP8266 heap-stat query itself scans allocator state. These are conservative defaults. Leave them unchanged unless measurement on the target device shows a different trade-off is required.
 
 ```cpp
 setConfigMDNSMinLargestBlock(3072);  // Require a 3 KB contiguous block before mDNS work.
+setConfigMDNSUpdateInterval(50);     // Check and process mDNS at most 20 times per second.
 ```
+
+`DeviceFrameworkMDNS::getUpdateCount()` and
+`DeviceFrameworkMDNS::getUpdateSkippedForHeapCount()` expose lightweight uptime
+diagnostics without logging every loop. A rising skip count during a memory-heavy
+operation is expected; it should stop rising once the contiguous heap recovers.
 
 ## Normal builds, migration, and reset
 

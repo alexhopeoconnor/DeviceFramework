@@ -6,7 +6,9 @@
 #include "../Configuration/DeviceFrameworkConfig.h"
 #include "../DeviceFrameworkDebug.h"
 
-// Enhanced DeviceStatus structure
+// Web-dashboard telemetry cache. This is an internal implementation detail of
+// the built-in web interface, not a consumer-sketch extension API. A future
+// composition API should expose intentional value/callback types instead.
 struct DeviceStatus {
     // Hardware info (truly static)
     struct HardwareInfo {
@@ -25,15 +27,15 @@ struct DeviceStatus {
         // WiFi connection stability (not just connected status)
         struct WiFiStability {
             bool connected;
-            String ssid;
-            String ip;
-            String gateway;
-            String subnet;
-            String dns;
-            String mac;
+            char ssid[33]; // IEEE 802.11 SSID: 32 characters plus NUL
+            char ip[16];
+            char gateway[16];
+            char subnet[16];
+            char dns[16];
+            char mac[18]; // AA:BB:CC:DD:EE:FF
             int32_t rssi;
             uint8_t channel;
-            String bssid;
+            char bssid[18];
             uint32_t connectionDuration; // How long connected (seconds)
             uint32_t totalDisconnections; // Total disconnections since boot
             uint32_t lastDisconnectionTime; // When last disconnected
@@ -43,9 +45,9 @@ struct DeviceStatus {
         // MQTT connection stability
         struct MQTTStability {
             bool connected;
-            String broker;
+            char broker[41]; // Matches the mqttserver parameter limit
             uint16_t port;
-            String user;
+            char user[21]; // Matches the mqttuser parameter limit
             uint32_t connectionDuration; // How long connected (seconds)
             uint32_t totalDisconnections; // Total disconnections since boot
             uint32_t lastDisconnectionTime; // When last disconnected
@@ -54,9 +56,8 @@ struct DeviceStatus {
 
         // Device information
         struct DeviceInfo {
-            String deviceName;
+            char deviceName[25]; // Matches the device parameter limit
             uint32_t uptime;
-            bool configMode;
         } device;
 
         // Enhanced memory info
@@ -64,9 +65,9 @@ struct DeviceStatus {
             uint32_t freeMemory;
             uint32_t maxBlockSize;
             uint8_t fragmentation;
-            uint32_t memoryDelta; // Change since last check
-            uint32_t peakMemoryUsage; // Highest memory usage since boot
-            uint32_t lowestMemoryUsage; // Lowest memory usage since boot
+            int32_t freeHeapDelta; // Signed free-heap change since the last status update
+            uint32_t highestFreeHeap; // Highest observed free heap since boot
+            uint32_t lowestFreeHeap; // Lowest observed free heap since boot
         } memory;
 
         // Stability info
@@ -80,16 +81,16 @@ struct DeviceStatus {
         // Serial/Logging info
         struct LoggingInfo {
             bool serialEnabled;
-            String currentLogLevel;
+            char currentLogLevel[8]; // "Verbose" plus NUL
             bool webSerialEnabled;
         } logging;
 
         // System health
         struct SystemHealth {
-            uint32_t loopCount;
-            uint32_t lastLoopTime;
+            uint32_t statusUpdateCount;
+            uint32_t lastStatusUpdateTime;
             bool systemHealthy;
-            uint32_t freeHeapTrend; // Trend over time
+            int32_t freeHeapTrendPerMinute; // Signed, sampled free-heap trend
         } health;
     } runtime;
 
@@ -119,11 +120,22 @@ private:
     static unsigned long lastMqttDisconnectionTime;
 
     // Runtime performance tracking (RAM only)
-    static unsigned long lastLoopTime;
-    static uint32_t loopCount;
-    static int32_t freeHeapTrend;
-    static uint32_t peakMemoryUsage;
-    static uint32_t lowestMemoryUsage;
+    struct HeapSample {
+        uint32_t freeHeap;
+        unsigned long timestamp;
+    };
+
+    static const uint8_t heapSampleCount = 10;
+    static const unsigned long heapSampleInterval = 30000;
+    static unsigned long lastStatusUpdateTime;
+    static uint32_t statusUpdateCount;
+    static int32_t freeHeapTrendPerMinute;
+    static uint32_t highestFreeHeap;
+    static uint32_t lowestFreeHeap;
+    static unsigned long lastHeapSampleTime;
+    static HeapSample heapHistory[heapSampleCount];
+    static uint8_t heapHistoryLength;
+    static uint8_t heapHistoryNext;
     static unsigned long bootTime;
 
     // Cached estimation data
@@ -141,9 +153,7 @@ private:
 
 public:
     struct JSONStreamState {
-        uint8_t fragmentIndex = 0;
-        String pendingFragment;
-        size_t pendingOffset = 0;
+        size_t bytesEmitted = 0;
         bool complete = false;
     };
 

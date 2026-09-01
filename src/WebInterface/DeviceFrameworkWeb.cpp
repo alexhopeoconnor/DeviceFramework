@@ -30,16 +30,17 @@ void DeviceFrameworkWeb::setup() {
 
     webServer = new AsyncWebServer(80);
 
-    // Initialize JSON size estimation with real data before setting up routes
+    // Initialize runtime tracking before the first status snapshot.
     DeviceStatusManager::initializeHardwareInfo();
+    DeviceStatusManager::initializeRuntimeTracking();
     DeviceStatusManager::updateRuntimeInfo();
     DeviceStatusManager::initializeJSONSizeEstimation();
 
-    // Initialize runtime tracking after all systems are up
-    DeviceStatusManager::initializeRuntimeTracking();
-
     // Set up routes
     webServer->on("/", HTTP_GET, DeviceFrameworkWebHandlers::handleWebRoot);
+    webServer->on("/assets/deviceframework.css", HTTP_GET, DeviceFrameworkWebHandlers::handleWebStyles);
+    webServer->on("/assets/deviceframework.js", HTTP_GET, DeviceFrameworkWebHandlers::handleWebScripts);
+    webServer->on("/assets/deviceframework-logo", HTTP_GET, DeviceFrameworkWebHandlers::handleWebLogo);
     // Browsers request this immediately after "/"; avoid streaming a full 404 HTML page (heap + TCP load).
     webServer->on("/favicon.ico", HTTP_GET, [](AsyncWebServerRequest* request) {
         request->send(204);
@@ -84,23 +85,19 @@ void DeviceFrameworkWeb::cleanup() {
 void DeviceFrameworkWeb::restart() {
     LOG_DEBUGLN(F("Restarting web interface..."));
 
-    // Destroying an active AsyncWebServer can leave ESP8266 TCP callbacks
-    // pointing at freed handlers. Keep routes and WebSerial ownership stable;
-    // restart only the listening socket. Dynamic route authentication reads the
-    // current shared device password for each request.
     if (DeviceFrameworkWiFi::isInConfigMode()) {
         shutdown();
         return;
     }
+
     if (!webServer) {
         setup();
         return;
     }
 
-    webServer->end();
-    // Give ESPAsyncTCP one scheduler turn to release the previous listener.
-    delay(50);
-    webServer->begin();
+    // On ESP8266, AsyncWebServer::end() followed by begin() on the same
+    // instance can leave port 80 unreachable. Routes and HTTP authentication
+    // already read their live state, so an existing listener needs no rebind.
     webInterfaceEnabled = true;
 }
 

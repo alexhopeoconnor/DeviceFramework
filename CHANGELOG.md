@@ -4,6 +4,8 @@
 
 - Add an optional primary/fallback WiFi profile set, persisted in the transactional DFC4 record through WiFiManager 3.1.0. New portal profiles are committed only after a usable station connection.
 - Treat prior DFC2 and DFC3 magic values as explicit profile-rebootstrap cases. Their payloads are not decoded; a normal profiled OTA can install DFC4 without a separate erase firmware.
+- Add composable built-in web branding, correct streamed status JSON, and bounded runtime telemetry that distinguishes heap settling from a sustained leak trend.
+- Pin Arduino-ESP32 3-compatible tooling and its dependent WiFi scan behaviour for reproducible ESP32 builds.
 
 ## 2.1.0
 

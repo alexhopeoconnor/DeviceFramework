@@ -35,7 +35,7 @@ while IFS= read -r file; do
     done < "$file"
 done < <(find "$root" -path "$root/.git" -prune -o -path '*/.pio' -prune -o -type f -name '*.md' -print)
 
-for required in README.md CHANGELOG.md docs/README.md docs/GETTING_STARTED.md docs/CONFIGURATION.md docs/TESTING.md docs/DEVELOPMENT.md docs/COMPATIBILITY.md; do
+for required in README.md CHANGELOG.md docs/README.md docs/GETTING_STARTED.md docs/CONFIGURATION.md docs/WEB_UI.md docs/TESTING.md docs/DEVELOPMENT.md docs/COMPATIBILITY.md; do
     if [[ ! -f "$root/$required" ]]; then
         printf 'Missing required documentation file: %s\n' "$required" >&2
         failed=1

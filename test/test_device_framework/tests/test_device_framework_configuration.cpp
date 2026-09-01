@@ -22,6 +22,7 @@ void test_device_framework_configuration() {
     String originalMqttPassword = DeviceFramework::getMqttPass() ? String(DeviceFramework::getMqttPass()) : String("");
     String originalDevicePassword = DeviceFramework::getDevicePassword();
     const uint32_t originalMDNSMinLargestBlock = getConfigMDNSMinLargestBlock();
+    const uint32_t originalMDNSUpdateInterval = getConfigMDNSUpdateInterval();
 
     // Set test parameters
     DeviceFramework::setDeviceName("TestDevice");
@@ -83,6 +84,10 @@ void test_device_framework_configuration() {
     TEST_ASSERT_EQUAL_UINT32_MESSAGE(3072, getConfigMDNSMinLargestBlock(),
         "mDNS contiguous-heap guard should be configurable");
     setConfigMDNSMinLargestBlock(originalMDNSMinLargestBlock);
+    setConfigMDNSUpdateInterval(50);
+    TEST_ASSERT_EQUAL_UINT32_MESSAGE(50, getConfigMDNSUpdateInterval(),
+        "mDNS parser attempt interval should be configurable");
+    setConfigMDNSUpdateInterval(originalMDNSUpdateInterval);
 
     // Restore original values
     DeviceFramework::setDeviceName(originalDeviceName.c_str());

@@ -28,6 +28,9 @@ public:
     // Check if buffer is getting full
     bool isNearFull() const;
 
+    // True when backing storage was allocated successfully.
+    bool isReady() const;
+
     // Clear buffer
     void clear();
 
@@ -92,6 +95,7 @@ private:
 
     // Helper methods
     static void updateClientStates();
+    static bool ensureBuffer();
     static bool canAnyClientAccept();
     static bool shouldFlushImmediately();
     static void flushBuffer();

@@ -21,6 +21,9 @@ bool DeviceFrameworkMDNS::isResolving = false;
 
 // Packet draining state
 unsigned long DeviceFrameworkMDNS::lastPacketDrainTime = 0;
+unsigned long DeviceFrameworkMDNS::lastMDNSUpdateAttemptTime = 0;
+uint32_t DeviceFrameworkMDNS::mdnsUpdateCount = 0;
+uint32_t DeviceFrameworkMDNS::mdnsUpdateSkippedForHeapCount = 0;
 
 namespace {
 
@@ -121,12 +124,20 @@ void DeviceFrameworkMDNS::loop() {
 
     // Process MDNS (responds to queries, processes announcements)
     #ifdef DF_PLATFORM_ESP8266
-        // ESP8266: MDNS.update() parses multicast responses using dynamic allocations
-        // Require total and contiguous heap headroom before entering the core parser
-        if (hasMDNSHeapHeadroom(getConfigMDNSMinFreeHeap())) {
-            MDNS.update();
+        // ESP8266: MDNS.update() parses multicast responses using dynamic allocations.
+        // Heap metrics scan allocator state with interrupts disabled, so sample and
+        // enter the parser at a bounded rate rather than on every application loop.
+        if (TimeUtils::hasTimeElapsed(millis(), lastMDNSUpdateAttemptTime,
+                                      getConfigMDNSUpdateInterval())) {
+            lastMDNSUpdateAttemptTime = millis();
+            if (hasMDNSHeapHeadroom(getConfigMDNSMinFreeHeap())) {
+                MDNS.update();
+                ++mdnsUpdateCount;
+            } else {
+                ++mdnsUpdateSkippedForHeapCount;
+            }
         }
-        // If memory is low, skip MDNS processing - packets will stay in UDP buffer temporarily
+        // If memory is low, skip mDNS processing until the next bounded attempt.
     #elif defined(DF_PLATFORM_ESP32)
         // ESP32: MDNS is handled automatically, no update() call needed
         // MDNS updates happen automatically in the background
@@ -383,6 +394,14 @@ void DeviceFrameworkMDNS::removeService(const char* service, const char* protoco
 
 bool DeviceFrameworkMDNS::isInitialized() {
     return initialized;
+}
+
+uint32_t DeviceFrameworkMDNS::getUpdateCount() {
+    return mdnsUpdateCount;
+}
+
+uint32_t DeviceFrameworkMDNS::getUpdateSkippedForHeapCount() {
+    return mdnsUpdateSkippedForHeapCount;
 }
 
 void DeviceFrameworkMDNS::updateResolverIP() {

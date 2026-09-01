@@ -49,6 +49,10 @@ fi
 if [[ "$mode" == "compile" ]]; then
     refresh_clean_consumer_dependency "$environment"
     pio run -d test/compile-project -e "$environment"
+    if [[ "$profile_fixture" == "false" ]]; then
+        refresh_clean_consumer_dependency "${platform}_default_ui"
+        pio run -d test/compile-project -e "${platform}_default_ui"
+    fi
     if [[ "$profile_fixture" == "false" && "$platform" == "esp8266" ]]; then
         # Prove that callers can omit the optional local web interface.
         refresh_clean_consumer_dependency esp8266_no_web
@@ -81,21 +85,70 @@ write_config() {
 }
 
 hardware_profile=""
-write_hardware_profile() {
-    hardware_profile="$(mktemp -p /tmp deviceframework-profile.XXXXXX)"
-    chmod 600 "$hardware_profile"
+hardware_smoke_profile=""
+write_profile() {
+    local target="$1"
+    local profile_id="$2"
+    local policy="$3"
+
     {
         printf "%s\n" "{"
         printf "%s\n" "  \"format\": 2,"
         printf "%s\n" "  \"application\": \"deviceframework\","
-        printf "%s\n" "  \"profile\": { \"id\": \"hardware-${platform}-fallback\", \"revision\": 1, \"policy\": \"bootstrap\" },"
+        printf "  \"profile\": { \"id\": \"%s\", \"revision\": 1, \"policy\": \"%s\" },\n" "$profile_id" "$policy"
         printf "%s\n" "  \"device_password\": \"profile-fixture-password\","
         printf "%s\n" "  \"wifi\": { \"profiles\": ["
         printf "%s\n" "    { \"ssid\": \"df-test-primary-unavailable\", \"password\": \"\" },"
         printf "    { \"ssid\": \"%s\", \"password\": \"%s\" }\n" "$(escape_c_string "$DEVICEFRAMEWORK_TEST_WIFI_SSID")" "$(escape_c_string "$DEVICEFRAMEWORK_TEST_WIFI_PASSWORD")"
         printf "%s\n" "  ] }"
         printf "%s\n" "}"
-    } > "$hardware_profile"
+    } > "$target"
+}
+
+write_hardware_profile() {
+    hardware_profile="$(mktemp -p /tmp deviceframework-profile.XXXXXX)"
+    hardware_smoke_profile="$(mktemp -p /tmp deviceframework-smoke-profile.XXXXXX)"
+    chmod 600 "$hardware_profile" "$hardware_smoke_profile"
+    write_profile "$hardware_profile" "hardware-${platform}-bootstrap" "bootstrap"
+    write_profile "$hardware_smoke_profile" "hardware-${platform}-smoke" "reconcile"
+}
+
+reset_test_board() {
+    # ESP8266 D1 Mini: keep IO0 high (DTR false) and pulse EN through RTS.
+    # This matches esptool post-upload hard reset.
+    python3 -c "import serial, sys, time; serial_port = serial.Serial(sys.argv[1], 115200, timeout=0.1); serial_port.dtr = False; serial_port.rts = False; time.sleep(0.05); serial_port.rts = True; time.sleep(0.1); serial_port.rts = False; serial_port.close()" "$port"
+}
+
+run_unity_hardware_test() {
+    local output_file
+    output_file="$(mktemp -p /tmp deviceframework-unity.XXXXXX)"
+
+    if [[ "$profile_fixture" == "true" ]]; then
+        DEVICEFRAMEWORK_HARDWARE_PROFILE="$hardware_profile" pio test -e "$environment" --filter test_device_framework --upload-port "$port" --test-port "$port" >"$output_file" 2>&1 &
+    else
+        pio test -e "$environment" --filter test_device_framework --upload-port "$port" --test-port "$port" >"$output_file" 2>&1 &
+    fi
+    local pio_pid=$!
+    local upload_seen=false
+    local reset_sent=false
+    while kill -0 "$pio_pid" 2>/dev/null; do
+        if [[ "$upload_seen" == "false" ]]; then
+            if pgrep -f -- "esptool.py.*--port $port" >/dev/null; then
+                upload_seen=true
+            fi
+        elif [[ "$reset_sent" == "false" ]] && ! pgrep -f -- "esptool.py.*--port $port" >/dev/null; then
+            sleep 0.5
+            reset_test_board
+            reset_sent=true
+        fi
+        sleep 0.1
+    done
+
+    local result=0
+    wait "$pio_pid" || result=$?
+    cat "$output_file"
+    rm -f "$output_file"
+    return "$result"
 }
 
 assert_http_endpoint() {
@@ -168,6 +221,7 @@ wait_for_password_restart() {
     local password="$1"
     local status_code=""
     local attempt
+    local stable_successes=0
 
     # A successful password update deliberately schedules a reboot. Observe
     # both the outage and recovered authentication rather than racing it.
@@ -188,8 +242,13 @@ wait_for_password_restart() {
             --write-out '%{http_code}' -u "admin:$password" \
             "http://${device_host}/api/status" 2>/dev/null || true)"
         if [[ "$status_code" == "200" ]]; then
-            echo "Direct LAN check passed: password persists after restart"
-            return 0
+            stable_successes=$((stable_successes + 1))
+            if [[ "$stable_successes" -ge 2 ]]; then
+                echo "Direct LAN check passed: password persists after restart"
+                return 0
+            fi
+        else
+            stable_successes=0
         fi
         sleep 1
     done
@@ -211,9 +270,16 @@ verify_web_interface() {
             echo "avahi-resolve is required for automatic .local discovery; set DEVICEFRAMEWORK_TEST_DEVICE_HOST to an IP address instead" >&2
             return 1
         }
-        device_host="$(avahi-resolve -4 -n "$device_host" | awk 'NR == 1 { print $2; exit }')"
+        local mdns_name="$device_host"
+        local attempt
+        device_host=""
+        for attempt in {1..45}; do
+            device_host="$(avahi-resolve -4 -n "$mdns_name" 2>/dev/null | awk 'NR == 1 { print $2; exit }')"
+            [[ -n "$device_host" ]] && break
+            sleep 1
+        done
         [[ -n "$device_host" ]] || {
-            echo "Could not resolve the test device mDNS name; set DEVICEFRAMEWORK_TEST_DEVICE_HOST to an IP address instead" >&2
+            echo "Could not resolve the test device mDNS name within 45 seconds; set DEVICEFRAMEWORK_TEST_DEVICE_HOST to an IP address instead" >&2
             return 1
         }
     fi
@@ -223,28 +289,39 @@ verify_web_interface() {
         profile_password="$(sed -nE 's/^[[:space:]]*"device_password"[[:space:]]*:[[:space:]]*"([^"]*)"[[:space:]]*,?[[:space:]]*$/\1/p' "$profile_source")"
         [[ -n "$profile_password" ]] || { echo "Profile fixture has no device_password" >&2; return 1; }
         assert_http_endpoint "unauthenticated API status" "/api/status" 401 ""
+        assert_http_endpoint "unauthenticated stylesheet" "/assets/deviceframework.css" 401 ""
+        assert_http_endpoint "unauthenticated logo" "/assets/deviceframework-logo" 401 ""
     fi
 
     assert_http_endpoint "API status" "/api/status" 200 "$profile_password" runtime chip_id version
-    assert_http_endpoint "web interface root" "/" 200 "$profile_password" '<!DOCTYPE html>' 'Device Status' 'System Controls' 'refreshStatus()'
-    assert_http_endpoint "custom 404 page" "/notfound" 200 "$profile_password" 404 'Page Not Found' 'Return to Home'
+    for page_pass in 1 2; do
+        assert_http_endpoint "web interface root (pass $page_pass)" "/" 200 "$profile_password" "<!DOCTYPE html>" "Device Status" "System Controls" "deviceframework.css" "deviceframework.js" "DeviceFramework UI Test" "Test Lab" "df-web-theme" "--df-accent:#15803d" "</html>"
+        if [[ "$page_pass" == "1" ]]; then
+            assert_http_endpoint "web interface stylesheet" "/assets/deviceframework.css" 200 "$profile_password" "Modern CSS Reset" ".page-loader"
+            assert_http_endpoint "web interface script" "/assets/deviceframework.js" 200 "$profile_password" "function refreshStatus" "initializeWebSerial"
+            assert_http_endpoint "web interface logo" "/assets/deviceframework-logo" 200 "$profile_password" "IHDR"
+        fi
+        assert_http_endpoint "custom 404 page (pass $page_pass)" "/notfound" 200 "$profile_password" 404 "Page Not Found" "Return to Home" "</html>"
+    done
+    assert_http_endpoint "post-page API status" "/api/status" 200 "$profile_password" runtime chip_id version
     if [[ "$profile_fixture" == "true" ]]; then
         assert_password_endpoint "$profile_password"
         wait_for_password_restart "$profile_password"
         assert_http_endpoint "post-restart API status" "/api/status" 200 "$profile_password" runtime chip_id version
     fi
 }
-
 cleanup() {
     rm -f "$config_file"
     [[ -z "$hardware_profile" ]] || rm -f "$hardware_profile"
+    [[ -z "$hardware_smoke_profile" ]] || rm -f "$hardware_smoke_profile"
 }
 trap cleanup EXIT INT TERM
 write_config
 if [[ "$profile_fixture" == "true" ]]; then
     write_hardware_profile
-    DEVICEFRAMEWORK_HARDWARE_PROFILE="$hardware_profile" pio test -e "$environment" --filter test_device_framework --upload-port "$port" --test-port "$port"
+    run_unity_hardware_test
+    DEVICEFRAMEWORK_HARDWARE_PROFILE="$hardware_smoke_profile" pio run -d test/compile-project -e "$environment" -t upload --upload-port "$port"
 else
-    pio test -e "$environment" --filter test_device_framework --upload-port "$port" --test-port "$port"
+    run_unity_hardware_test
 fi
 verify_web_interface

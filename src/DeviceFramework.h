@@ -23,6 +23,7 @@
 #include "Configuration/DeviceFrameworkParameterRegistry.h"
 #include "Configuration/DeviceFrameworkParameters.h"
 #include "DeviceFrameworkDebug.h"
+#include "UI/DeviceFrameworkUI.h"
 #include "WiFi/DeviceFrameworkWiFi.h"
 #include "MQTT/DeviceFrameworkMQTT.h"
 #include "Storage/DeviceFrameworkStorage.h"
@@ -48,6 +49,10 @@ public:
                                      uint16_t configurationSchema,
                                      DeviceFrameworkConfigMigrationCallback migration = nullptr);
     static const char* getLibraryVersion();
+    // Presentation-only setup configuration for the existing web admin UI and
+    // WiFiManager provisioning portal. Call before DeviceFramework::setup().
+    static bool setUIConfig(const DeviceFrameworkUIConfig& config);
+    static const DeviceFrameworkUIConfig& getUIConfig();
     static const DeviceFrameworkApplicationIdentity& getApplicationIdentity();
     // Optional password shared by the provisioning AP, OTA, HTTP Basic auth,
     // and WebSerial. Updates are written transactionally before becoming live;

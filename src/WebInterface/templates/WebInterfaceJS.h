@@ -481,13 +481,13 @@ function updateMQTTStabilityInfo(mqtt) {
 function updateMemoryStabilityInfo(memory) {
     const memoryStabilityElement = document.getElementById('memory-stability');
     if (memoryStabilityElement) {
-        const deltaText = memory.delta > 0 ? `+${memory.delta}` : `${memory.delta}`;
+        const deltaText = memory.free_heap_delta > 0 ? `+${memory.free_heap_delta}` : `${memory.free_heap_delta}`;
         memoryStabilityElement.innerHTML = `
             <div>Max Block: ${formatBytes(memory.max_block)}</div>
             <div>Fragmentation: ${memory.fragmentation}%</div>
-            <div>Change: ${deltaText}</div>
-            <div>Peak: ${formatBytes(memory.peak_usage)}</div>
-            <div>Lowest: ${formatBytes(memory.lowest_usage)}</div>
+            <div>Change since last status: ${deltaText}</div>
+            <div>Highest free since boot: ${formatBytes(memory.highest_free)}</div>
+            <div>Lowest free since boot: ${formatBytes(memory.lowest_free)}</div>
         `;
     }
 }
@@ -512,9 +512,9 @@ function updateSystemHealthInfo(health) {
         const healthClass = health.system_healthy ? 'healthy' : 'unhealthy';
         healthElement.className = `system-health ${healthClass}`;
         healthElement.innerHTML = `
-            <div>Loop Count: ${health.loop_count}</div>
-            <div>Last Loop: ${health.last_loop_time}ms</div>
-            <div>Heap Trend: ${health.free_heap_trend}</div>
+            <div>Status updates: ${health.status_update_count}</div>
+            <div>Last status update: ${health.last_status_update_ms}ms</div>
+            <div>Heap trend: ${health.free_heap_trend_bytes_per_minute} B/min</div>
             <div>Status: ${health.system_healthy ? 'Healthy' : 'Unhealthy'}</div>
         `;
     }
@@ -1116,7 +1116,11 @@ function loadSavedIntervals() {
 }
 
 // Control functions
-async function updateDevicePassword() {
+async function updateDevicePassword(event) {
+    if (event) {
+        event.preventDefault();
+    }
+
     const passwordInput = document.getElementById('device-password');
     const confirmInput = document.getElementById('device-password-confirm');
     const password = passwordInput.value;

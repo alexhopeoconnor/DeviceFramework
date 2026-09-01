@@ -31,6 +31,7 @@ uint32_t CONFIG_wsCleanupInterval = 30000;  // 30 seconds client cleanup interva
 // mDNS configuration defaults
 uint32_t CONFIG_mdnsMinFreeHeap = 2048;              // 2KB minimum free heap for MDNS.update()
 uint32_t CONFIG_mdnsMinLargestBlock = 2048;          // 2KB contiguous allocation headroom for ESP8266 mDNS parsing
+uint32_t CONFIG_mdnsUpdateInterval = 25;             // Bound expensive ESP8266 heap-stat scans to 40Hz
 uint32_t CONFIG_mdnsPacketDrainMinFreeHeap = 2048;   // 2KB minimum free heap for resolver.loop()
 uint32_t CONFIG_mdnsPacketDrainInterval = 2000;      // 2 seconds between packet drain operations
 
@@ -258,6 +259,16 @@ uint32_t getConfigMDNSMinLargestBlock() {
 
 void setConfigMDNSMinLargestBlock(uint32_t minLargestBlock) {
     CONFIG_mdnsMinLargestBlock = minLargestBlock;
+}
+
+uint32_t getConfigMDNSUpdateInterval() {
+    return CONFIG_mdnsUpdateInterval;
+}
+
+void setConfigMDNSUpdateInterval(uint32_t interval) {
+    if (interval >= 10 && interval <= 1000) { // 10ms to 1s
+        CONFIG_mdnsUpdateInterval = interval;
+    }
 }
 
 uint32_t getConfigMDNSPacketDrainMinFreeHeap() {

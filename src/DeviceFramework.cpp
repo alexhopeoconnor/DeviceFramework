@@ -40,6 +40,14 @@ const char* DeviceFramework::getLibraryVersion() {
 const DeviceFrameworkApplicationIdentity& DeviceFramework::getApplicationIdentity() {
     return DeviceFrameworkIdentity::getApplication();
 }
+bool DeviceFramework::setUIConfig(const DeviceFrameworkUIConfig& config) {
+    return DeviceFrameworkUI::setConfig(config);
+}
+
+const DeviceFrameworkUIConfig& DeviceFramework::getUIConfig() {
+    return DeviceFrameworkUI::getConfig();
+}
+
 const char* DeviceFramework::getDevicePassword() {
     return getConfigDevicePassword();
 }

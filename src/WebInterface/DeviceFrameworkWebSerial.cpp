@@ -3,11 +3,12 @@
 #include "../Utils/TimeUtils.h"
 #include "../DeviceFrameworkDebug.h"
 #include "../Configuration/DeviceFrameworkConfig.h"
+#include <new>
 
 // DeviceFrameworkCircularBuffer implementation
 DeviceFrameworkCircularBuffer::DeviceFrameworkCircularBuffer(size_t size)
     : _bufferSize(size), _writePos(0), _readPos(0), _dataLength(0) {
-    _buffer = new char[_bufferSize];
+    _buffer = new (std::nothrow) char[_bufferSize];
     if (!_buffer) {
         LOG_ERRORLN(F("CircularBuffer: Failed to allocate buffer"));
         _bufferSize = 0;
@@ -75,6 +76,10 @@ bool DeviceFrameworkCircularBuffer::isNearFull() const {
     return _dataLength >= (_bufferSize * 0.8); // 80% full
 }
 
+bool DeviceFrameworkCircularBuffer::isReady() const {
+    return _buffer != nullptr && _bufferSize > 0;
+}
+
 void DeviceFrameworkCircularBuffer::clear() {
     _writePos = 0;
     _readPos = 0;
@@ -122,13 +127,6 @@ void DeviceFrameworkWebSerial::begin(AsyncWebServer* server, const char* url) {
     _ws = new AsyncWebSocket(url ? url : "/webserial");
     server->addHandler(_ws);
 
-    // Initialize circular buffer
-    _buffer = new DeviceFrameworkCircularBuffer(getConfigWSBufferSize());
-    if (!_buffer) {
-        LOG_ERRORLN(F("WebSerialTransport: Failed to allocate circular buffer"));
-        return;
-    }
-
     // Initialize timing
     _lastFlushTime = millis();
     _lastClientCheckTime = millis();
@@ -136,7 +134,7 @@ void DeviceFrameworkWebSerial::begin(AsyncWebServer* server, const char* url) {
 
     _enabled = true;
 
-    LOG_INFOLN(F("WebSerialTransport: WebSocket initialized with buffering"));
+    LOG_INFOLN(F("WebSerialTransport: WebSocket initialized with on-demand buffering"));
 }
 
 void DeviceFrameworkWebSerial::setAuthentication(const char* username, const char* password) {
@@ -158,6 +156,10 @@ void DeviceFrameworkWebSerial::send(const char* message, size_t length) {
         return;
     }
 
+    if (!ensureBuffer()) {
+        return;
+    }
+
     // Add to buffer instead of sending directly
     addToBuffer(message, length);
 
@@ -176,14 +178,14 @@ bool DeviceFrameworkWebSerial::hasConnections() {
 }
 
 void DeviceFrameworkWebSerial::loop() {
-    if (!_enabled || !_ws || !_buffer) {
+    if (!_enabled || !_ws) {
         return;
     }
 
     unsigned long now = millis();
 
     // Periodic buffer flush
-    if (TimeUtils::hasTimeElapsed(now, _lastFlushTime, getConfigWSSendInterval())) {
+    if (_buffer && TimeUtils::hasTimeElapsed(now, _lastFlushTime, getConfigWSSendInterval())) {
         if (_buffer->getDataLength() > 0) {
             flushBuffer();
         }
@@ -192,6 +194,11 @@ void DeviceFrameworkWebSerial::loop() {
     // Client cleanup (less frequent now with better buffering)
     if (now - _lastCleanupTime >= getConfigWSCleanupInterval()) {
         _ws->cleanupClients();
+        if (!hasConnections() && _buffer && _buffer->getDataLength() == 0) {
+            delete _buffer;
+            _buffer = nullptr;
+            _clientStates.clear();
+        }
         _lastCleanupTime = now;
     }
 }
@@ -239,6 +246,23 @@ void DeviceFrameworkWebSerial::end() {
 }
 
 // Helper method implementations
+bool DeviceFrameworkWebSerial::ensureBuffer() {
+    if (_buffer) {
+        return _buffer->isReady();
+    }
+
+    DeviceFrameworkCircularBuffer* buffer =
+        new (std::nothrow) DeviceFrameworkCircularBuffer(getConfigWSBufferSize());
+    if (!buffer || !buffer->isReady()) {
+        delete buffer;
+        LOG_ERRORLN(F("WebSerialTransport: Failed to allocate circular buffer"));
+        return false;
+    }
+
+    _buffer = buffer;
+    return true;
+}
+
 void DeviceFrameworkWebSerial::updateClientStates() {
     if (!_ws) return;
 
@@ -332,8 +356,12 @@ void DeviceFrameworkWebSerial::addToBuffer(const char* message, size_t length) {
 }
 
 // Function to send debug output to WebSocket (called from WebInterface)
+bool shouldSendDebugToWebSocket() {
+    return DeviceFrameworkWebSerial::isEnabled() && DeviceFrameworkWebSerial::hasConnections();
+}
+
 void sendDebugToWebSocket(const String& message) {
-    if (!DeviceFrameworkWebSerial::isEnabled()) {
+    if (!shouldSendDebugToWebSocket()) {
         return;
     }
 
