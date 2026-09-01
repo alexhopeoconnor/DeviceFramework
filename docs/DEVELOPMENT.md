@@ -101,17 +101,24 @@ application dependency needs to change.
 
 ## Publish a release
 
-1. Release dependencies before their consumers: publish DFTE and ArduinoHA, then WiFiManager (which pins DFTE), then the DeviceFramework tag that pins all three. Update `library.json`, `CHANGELOG.md`, and the compatibility table together.
-2. Run the four compile checks above; run the hardware suite when its covered
+1. Release dependencies before their consumers: DFTE and ArduinoHA, then WiFiManager (which pins DFTE), then DeviceFramework (which pins all three).
+2. Start each release with the one deterministic metadata update:
+
+   ```bash
+   ./scripts/bump-version.sh vMAJOR.MINOR.PATCH
+   ```
+
+3. Replace the generated changelog TODO with the release summary. Update the compatibility table only when a pinned dependency or target contract changes; update guides when behaviour changes.
+4. Run the four compile checks above; run the hardware suite when its covered
    behavior changed.
-3. Commit the release preparation, then validate and create the annotated tag:
+5. Commit the release preparation, then validate and create the annotated tag:
 
    ```bash
    ./scripts/prepare-release.sh vMAJOR.MINOR.PATCH --tag
    ```
 
-4. Push the branch and tag. The tag workflow repeats the compile checks, validates the PlatformIO package, and creates the GitHub Release from that tag.
 
+6. Push the branch and tag. The tag workflow repeats the compile checks, validates release metadata and the PlatformIO package, and creates the GitHub Release from that tag.
 The `#vMAJOR.MINOR.PATCH` portion of a PlatformIO Git dependency is a Git ref:
 PlatformIO clones the repository and checks out that tag. It does not download
 a GitHub Release asset. Tags therefore provide reproducible dependency inputs;

@@ -55,7 +55,7 @@ Use a released Git tag. DeviceFramework's manifest resolves the tested WiFiManag
 ```ini
 [common]
 lib_deps =
-  DeviceFramework=https://github.com/alexhopeoconnor/DeviceFramework.git#v2.2.1
+  DeviceFramework=https://github.com/alexhopeoconnor/DeviceFramework.git#v2.2.2
 ```
 
 The text after `#` is a Git ref. PlatformIO clones the repository and checks out that tag; it does not download a GitHub Release asset.
@@ -78,6 +78,8 @@ For a new protected device, select an ignored local profile containing `device_p
 ## Development and releases
 
 ```bash
+./scripts/bump-version.sh vMAJOR.MINOR.PATCH
+# Replace the generated CHANGELOG TODO with the release summary.
 ./scripts/test.sh compile --platform esp8266
 ./scripts/test.sh compile --platform esp32
 ./scripts/check-docs.sh

@@ -1,5 +1,10 @@
 # Changelog
 
+## 2.2.2
+
+- Correct the runtime library-version values so PlatformIO, Arduino IDE, and the package manifest all report 2.2.2.
+- Add a deterministic version-bump command and release preflight checks for metadata, install references, and unfinished release notes.
+
 ## 2.2.1
 
 - Pin the ArduinoHA package correction in v3.0.2 so PlatformIO and Arduino IDE consumers receive matching dependency metadata.
