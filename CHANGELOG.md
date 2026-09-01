@@ -1,5 +1,9 @@
 # Changelog
 
+## 2.2.1
+
+- Pin the ArduinoHA package correction in v3.0.2 so PlatformIO and Arduino IDE consumers receive matching dependency metadata.
+
 ## 2.2.0
 
 - Add an optional primary/fallback WiFi profile set, persisted in the transactional DFC4 record through WiFiManager 3.1.0. New portal profiles are committed only after a usable station connection.

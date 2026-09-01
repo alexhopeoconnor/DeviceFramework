@@ -55,7 +55,7 @@ Use a released Git tag. DeviceFramework's manifest resolves the tested WiFiManag
 ```ini
 [common]
 lib_deps =
-  DeviceFramework=https://github.com/alexhopeoconnor/DeviceFramework.git#v2.2.0
+  DeviceFramework=https://github.com/alexhopeoconnor/DeviceFramework.git#v2.2.1
 ```
 
 The text after `#` is a Git ref. PlatformIO clones the repository and checks out that tag; it does not download a GitHub Release asset.
