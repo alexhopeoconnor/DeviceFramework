@@ -12,6 +12,14 @@
 namespace {
 DeviceFrameworkWiFiManagerLogSink g_deviceFrameworkWiFiManagerLogSink;
 DeviceFrameworkArduinoHALogSink g_deviceFrameworkArduinoHALogSink;
+
+bool g_networkServicesLinkObserved = false;
+unsigned long g_networkServicesLinkObservedAt = 0;
+constexpr unsigned long NetworkServicesStabilizationMs = 1000UL;
+
+bool g_networkServicesInitialized = false;
+unsigned long g_networkServicesInitializedAt = 0;
+constexpr unsigned long NetworkServicesMqttStartDelayMs = 1500UL;
 }
 
 #ifdef ENABLE_WEB_INTERFACE
@@ -168,13 +176,36 @@ void DeviceFramework::loop() {
 
     // Network services start only after WiFiManager reports a usable address.
     if (!DeviceFrameworkWiFi::hasUsableConnection()) {
+        g_networkServicesLinkObserved = false;
+        g_networkServicesInitialized = false;
         DeviceFrameworkMDNS::onNetworkLost();
         return;
     }
 
+    /* The ESP8266 Wi-Fi event path can still be unwinding immediately after
+     * association. Observe a stable usable IP before beginning network services. */
+    if (!g_networkServicesLinkObserved) {
+        g_networkServicesLinkObserved = true;
+        g_networkServicesLinkObservedAt = currentMillis;
+        return;
+    }
+    if ((currentMillis - g_networkServicesLinkObservedAt) < NetworkServicesStabilizationMs) {
+        return;
+    }
+
     DeviceFrameworkMDNS::onNetworkReady(getSanitizedHostname());
-    // Handle mDNS updates
+    if (!g_networkServicesInitialized) {
+        g_networkServicesInitialized = true;
+        g_networkServicesInitializedAt = currentMillis;
+        return;
+    }
+
+    // Let ESP8266 mDNS complete its three 250 ms host probes before the first
+    // TCP connection. Those probes allocate in the Wi-Fi system context.
     DeviceFrameworkMDNS::loop();
+    if ((currentMillis - g_networkServicesInitializedAt) < NetworkServicesMqttStartDelayMs) {
+        return;
+    }
 
     // Handle OTA updates
     DeviceFrameworkOTA::loop();

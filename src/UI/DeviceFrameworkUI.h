@@ -50,7 +50,7 @@ struct DeviceFrameworkBranding {
     DeviceFrameworkText productName;  // Existing web heading and default document title.
     DeviceFrameworkText webTitle;     // Optional document-title override.
     DeviceFrameworkText provisioningTitle;
-    DeviceFrameworkText provisioningIntro;
+    DeviceFrameworkText provisioningTagline;
     DeviceFrameworkText portalLogoSvg;
     DeviceFrameworkText logoAltText;
     DeviceFrameworkWebLogo webLogo;

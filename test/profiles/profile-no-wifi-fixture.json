@@ -1,0 +1,10 @@
+{
+  "format": 2,
+  "application": "deviceframework",
+  "profile": {
+    "id": "deviceframework-profile-no-wifi-fixture",
+    "revision": 1,
+    "policy": "bootstrap"
+  },
+  "device_password": "profile-fixture-password"
+}

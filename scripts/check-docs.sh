@@ -44,6 +44,19 @@ done
 
 "$root/tools/check-web-assets.sh"
 
+while IFS= read -r example; do
+    for required in README.md platformio.ini; do
+        if [[ ! -f "$example/$required" ]]; then
+            printf 'Incomplete example: %s is missing %s\n' "${example#$root/}" "$required" >&2
+            failed=1
+        fi
+    done
+    if ! find "$example" -maxdepth 3 -type f \( -name '*.ino' -o -name '*.cpp' \) -print -quit | grep -q .; then
+        printf 'Incomplete example: %s has no source\n' "${example#$root/}" >&2
+        failed=1
+    fi
+done < <(find "$root/examples" -mindepth 1 -maxdepth 1 -type d -name '[0-9][0-9]-*' -print | sort)
+
 if [[ "$failed" -ne 0 ]]; then
     exit 1
 fi

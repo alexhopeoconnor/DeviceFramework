@@ -6,6 +6,9 @@
 #include "../Provisioning/DeviceFrameworkProvisioning.h"
 #include "../UI/DeviceFrameworkUI.h"
 #include "../WebInterface/WebInterfaceTemplateEngineLogger.h"
+#ifdef ENABLE_WEB_INTERFACE
+#include "../WebInterface/DeviceFrameworkWeb.h"
+#endif
 #include <DeviceFrameworkPlatform.h>  // Platform abstraction
 
 // LED helper macros - simplify LED control code
@@ -257,6 +260,14 @@ void DeviceFrameworkWiFi::saveConfigCallbackInternal() {
 
 void DeviceFrameworkWiFi::configModeCallbackInternal() {
     LOG_INFOLN(F("[CALLBACK] Configuration portal started."));
+#ifdef ENABLE_WEB_INTERFACE
+    // A failed asynchronous profile candidate can reach the portal after the
+    // normal web server has started. Release port 80 before WiFiManager
+    // registers its own portable provisioning routes.
+    if (DeviceFrameworkWeb::isEnabled()) {
+        DeviceFrameworkWeb::shutdown();
+    }
+#endif
     isConfigMode = true;          // Enter config mode
     isConfigAttempted = true;     // Track that config was attempted
     DeviceFrameworkWiFi::wm.setEnableConfigPortal(false);  // Prevent future portal attempts in this cycle

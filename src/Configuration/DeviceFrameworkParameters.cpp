@@ -67,7 +67,9 @@ void DeviceFrameworkParameters::registerCoreParameters() {
     mqttUserMeta.id = PARAM_MQTT_USER;
     mqttUserMeta.label = "MQTT User";
     mqttUserMeta.sources = SOURCE_WIFI_MANAGER;
-    mqttUserMeta.defaultValue = "user";
+    // Broker credentials are deployment-specific. Keep them empty by default
+    // rather than silently attempting a placeholder login.
+    mqttUserMeta.defaultValue = "";
     mqttUserMeta.maxLength = 20;
     mqttUserMeta.order = 3;
     // HTML attributes for better UX - usernames shouldn't be auto-capitalized
@@ -81,7 +83,7 @@ void DeviceFrameworkParameters::registerCoreParameters() {
     mqttPassMeta.id = PARAM_MQTT_PASS;
     mqttPassMeta.label = "MQTT Password";
     mqttPassMeta.sources = SOURCE_WIFI_MANAGER;
-    mqttPassMeta.defaultValue = "pass";
+    mqttPassMeta.defaultValue = "";
     mqttPassMeta.maxLength = 20;
     mqttPassMeta.order = 4;
     // HTML attributes for better UX - password field (hidden by default with show toggle)

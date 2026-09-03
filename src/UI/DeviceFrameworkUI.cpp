@@ -137,7 +137,7 @@ bool DeviceFrameworkUI::setConfig(const DeviceFrameworkUIConfig& candidate) {
     if (locked || !isThemeValid(candidate.theme) ||
         !isTextValid(branding.brandName) || !isTextValid(branding.productName) ||
         !isTextValid(branding.webTitle) || !isTextValid(branding.provisioningTitle) ||
-        !isTextValid(branding.provisioningIntro) || !isTextValid(branding.logoAltText) ||
+        !isTextValid(branding.provisioningTagline) || !isTextValid(branding.logoAltText) ||
         !isTextValid(candidate.about.summary) ||
         !isExternalLinkValid(candidate.about.primaryLink) ||
         !isExternalLinkValid(candidate.about.creditLink)) {
@@ -168,7 +168,7 @@ void DeviceFrameworkUI::applyPortalConfig(WiFiManager& wifiManager) {
     WiFiManagerPortalConfig portal;
     portal.title = mapPortalText(config.branding.provisioningTitle);
     portal.identityText = mapPortalText(config.branding.brandName);
-    portal.homeIntro = mapPortalText(config.branding.provisioningIntro);
+    portal.tagline = mapPortalText(config.branding.provisioningTagline);
     portal.logo = {mapPortalText(config.branding.portalLogoSvg)};
     portal.logoAltText = mapPortalText(getLogoAltText());
     portal.theme.pageBackground = mapPortalText(config.theme.pageStart);

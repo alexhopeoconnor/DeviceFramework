@@ -8,3 +8,4 @@ compile_commands.json
 scripts/endpoint-fetcher/bin/
 scripts/endpoint-fetcher/obj/
 *.tar.gz
+__pycache__/

@@ -72,6 +72,19 @@
     #define DF_GET_CHIP_ID() ((uint32_t)ESP.getEfuseMac())
 #endif
 
+// Hardware MAC - ESP32's station MAC is unavailable before Wi-Fi starts, so
+// use its eFuse value during framework setup. ESP8266 exposes its MAC early.
+inline void DFGetHardwareMac(uint8_t mac[6]) {
+#ifdef DF_PLATFORM_ESP8266
+    WiFi.macAddress(mac);
+#elif defined(DF_PLATFORM_ESP32)
+    const uint64_t efuseMac = ESP.getEfuseMac();
+    for (uint8_t index = 0; index < 6; ++index) {
+        mac[index] = static_cast<uint8_t>(efuseMac >> (index * 8));
+    }
+#endif
+}
+
 // HTTP Client includes (for test files)
 #ifdef DF_PLATFORM_ESP8266
     #include <ESP8266HTTPClient.h>

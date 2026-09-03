@@ -1,19 +1,8 @@
 # DeviceFramework
 
-DeviceFramework is the ESP8266/ESP32 foundation for devices that need WiFi provisioning, persistent configuration, MQTT and Home Assistant integration, OTA, mDNS, and an optional local web interface.
+DeviceFramework is the ESP8266/ESP32 foundation for a complete connected device: interactive Wi-Fi provisioning, persistent configuration, MQTT and Home Assistant discovery, OTA updates, mDNS, and an optional local web interface. A firmware declares its identity and device-specific behaviour; the framework handles the shared lifecycle.
 
-## Why use it
-
-- **One device lifecycle:** initialise a device once, then let the framework manage provisioning, WiFi, MQTT, OTA, and the web UI. After the broker address is resolved, it configures ArduinoHA once; ArduinoHA's loop owns MQTT reconnects.
-- **Configuration that survives real upgrades:** DFC4 records are application-bound and schema-aware, so routine parameter changes do not require erasing devices.
-- **Network resilience without duplicate setup:** a profile can define a primary WiFi network and one fallback; successful portal changes are verified before they persist.
-- **One optional device password:** provisioning, OTA, HTTP Basic authentication, and WebSerial share one persisted password.
-- **Repeatable deployment:** an ignored local profile can seed a new board without placing credentials in source control.
-- **One branded product experience:** configure the existing web admin UI and WiFi provisioning portal once with `DeviceFrameworkUIConfig`.
-
-## Try it
-
-Each firmware declares its own identity, then uses the same compact setup/loop skeleton:
+## Build a first device
 
 ```cpp
 #include <DeviceFramework.h>
@@ -21,6 +10,10 @@ Each firmware declares its own identity, then uses the same compact setup/loop s
 
 void setup() {
     FirmwareIdentity::configure();
+    DeviceFramework::beforeSetup([] {
+        auto& parameters = DeviceFramework::getParameterRegistry();
+        parameters.setDefaultValue(DeviceFrameworkParameters::PARAM_DEVICE_NAME, "Example device");
+    });
     DeviceFramework::setup();
 }
 
@@ -29,63 +22,33 @@ void loop() {
 }
 ```
 
-The consuming firmware registers its parameters and entities in `beforeSetup()`; see the [getting-started guide](docs/GETTING_STARTED.md) for the complete flow.
+Build [Portal First](examples/01-portal-first/) for the complete project. On a clean board it opens the WiFiManager portal; after setup it exposes the existing device web interface and services.
 
+## What it provides
 
-To give both existing interfaces a product name and semantic theme, set `DeviceFrameworkUIConfig` once before setup:
+- **One device lifecycle:** configuration, provisioning, Wi-Fi, mDNS, OTA, MQTT, Home Assistant, and the existing web UI work together without repeated sketch boilerplate.
+- **Persistent configuration:** application-bound records keep normal parameter changes and upgrades from requiring an erase cycle.
+- **Primary and fallback Wi-Fi:** a configured device can remember two networks; portal changes are verified before they persist.
+- **One optional device password:** the portal, OTA, authenticated web interface, and WebSerial use one active stored value.
+- **Private deployment profiles:** an ignored local JSON profile can seed a new device without putting credentials in source control.
+- **Product presentation:** `DeviceFrameworkUIConfig` brands the existing web UI and provisioning portal with one source-level configuration.
 
-```cpp
-const char kBrand[] PROGMEM = "Example Devices";
-const char kProduct[] PROGMEM = "Temperature Monitor";
-const char kAccent[] PROGMEM = "#347a45";
+## Choose an example
 
-DeviceFrameworkUIConfig ui;
-ui.branding.brandName = DeviceFrameworkText::progmem(kBrand);
-ui.branding.productName = DeviceFrameworkText::progmem(kProduct);
-ui.theme.accent = DeviceFrameworkText::progmem(kAccent);
-DeviceFramework::setUIConfig(ui);  // web admin + provisioning portal
-```
-
-`productName` is the existing web heading and default browser title; `webTitle` is an optional browser-title override. See [Web UI and provisioning branding](docs/WEB_UI.md) for the complete mapping, themes, and static logo support.
+| Example | Start here when you want to… |
+| --- | --- |
+| [Portal First](examples/01-portal-first/) | make the smallest device and provision it interactively |
+| [Home Assistant Telemetry](examples/02-home-assistant-telemetry/) | add a parameter plus a changing discovered telemetry entity |
+| [Branded Device](examples/03-branded-device/) | give the existing admin UI and provisioning portal a product identity |
+| [Managed Configuration](examples/04-managed-configuration/) | understand a safe profile template, first-boot seed, and profile-free operation |
 
 ## Install
 
-Use a released Git tag. DeviceFramework's manifest resolves the tested WiFiManager, DFTE, ArduinoHA, async-web, and platform-specific TCP dependencies:
-
 ```ini
-[common]
 lib_deps =
-  DeviceFramework=https://github.com/alexhopeoconnor/DeviceFramework.git#v2.4.0
+    DeviceFramework=https://github.com/alexhopeoconnor/DeviceFramework.git#v2.5.0
 ```
 
-The text after `#` is a Git ref. PlatformIO clones the repository and checks out that tag; it does not download a GitHub Release asset.
+PlatformIO clones the repository and checks out the release tag after `#`. The package resolves the compatible WiFiManager, DFTE, ArduinoHA, web, and target-specific dependencies.
 
-## Start here
-
-| Goal | Guide |
-| --- | --- |
-| Build a first device or understand the setup lifecycle | [Getting started](docs/GETTING_STARTED.md) |
-| Provision with a private profile, migrate V4 data, or rotate a password | [Configuration and profiles](docs/CONFIGURATION.md) |
-| Brand the existing admin UI and provisioning portal together | [Web UI and provisioning branding](docs/WEB_UI.md) |
-| See tested dependency versions and supported targets | [Compatibility](docs/COMPATIBILITY.md) |
-| Run compile or connected-device checks | [Testing](docs/TESTING.md) |
-| Work on the framework or prepare a release | [Development and releases](docs/DEVELOPMENT.md) |
-
-## Local profile in one sentence
-
-For a new protected device, select an ignored local profile containing `device_password`. It seeds the first V4 record and gives PlatformIO the same OTA password. Later password changes persist in V4 storage; update that local JSON before the next OTA upload so `espota` can authenticate.
-
-## Development and releases
-
-```bash
-./scripts/bump-version.sh vMAJOR.MINOR.PATCH
-# Replace the generated CHANGELOG TODO with the release summary.
-./scripts/test.sh compile --platform esp8266
-./scripts/test.sh compile --platform esp32
-./scripts/check-docs.sh
-./scripts/prepare-release.sh vMAJOR.MINOR.PATCH --tag
-```
-
-The tag workflow repeats the board-free compile checks, validates a PlatformIO package, and creates a GitHub Release from the matching changelog section. It does not publish to the PlatformIO Registry or deploy firmware.
-
-See the [documentation index](docs/README.md), [release history](CHANGELOG.md), and [MIT licence](LICENSE).
+See [getting started](docs/GETTING_STARTED.md), [configuration](docs/CONFIGURATION.md), [web UI branding](docs/WEB_UI.md), [examples](examples/README.md), and the [documentation index](docs/README.md).

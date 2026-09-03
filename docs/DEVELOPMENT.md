@@ -68,10 +68,10 @@ cp test/.env.example test/.env
 
 Use `--env-file path/to/file` when the credentials live outside the repository.
 The runner creates its generated test header only for the run and removes it on
-exit. It runs the Unity image with a bootstrap profile, observes the selected
-board’s esptool upload, and sends the same RTS-only hard reset esptool normally
-uses after upload. It requires a non-empty zero-failure Unity result before
-proceeding.
+exit. It uploads the Unity image with a bootstrap profile, then owns the serial
+port while it sends the same RTS-only hard reset esptool normally uses after
+upload and captures the result. It requires a non-empty zero-failure Unity
+result before proceeding.
 
 For a profile fixture, it then flashes the minimal consuming sketch with a
 separate reconcile-profile identity. That makes the WiFi seed apply after the

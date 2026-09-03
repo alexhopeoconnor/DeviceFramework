@@ -35,8 +35,22 @@ try:
 except (IOError, ValueError) as exc:
     fail("cannot read {}: {}".format(profile_path, exc))
 
-if not isinstance(document, dict) or document.get("format") != 2:
+if (not isinstance(document, dict) or
+        isinstance(document.get("format"), bool) or
+        not isinstance(document.get("format"), int) or
+        document.get("format") != 2):
     fail("profile format must be integer 2")
+
+def reject_unknown_keys(value, allowed, name):
+    unknown = sorted(set(value) - set(allowed))
+    if unknown:
+        fail("{} has unknown field{}: {}".format(
+            name,
+            "s" if len(unknown) != 1 else "",
+            ", ".join(unknown),
+        ))
+
+reject_unknown_keys(document, ["format", "application", "profile", "wifi", "device_password", "parameters"], "profile")
 
 def text(value, name, required=False):
     if value is None and not required:
@@ -51,25 +65,33 @@ application = text(document.get("application"), "application", True)
 profile = document.get("profile")
 if not isinstance(profile, dict):
     fail("profile must be an object")
+reject_unknown_keys(profile, ["id", "revision", "policy"], "profile")
 profile_id = text(profile.get("id"), "profile.id", True)
 revision = profile.get("revision")
-if not isinstance(revision, int) or revision < 1 or revision > 4294967295:
+if (isinstance(revision, bool) or not isinstance(revision, int) or
+        revision < 1 or revision > 4294967295):
     fail("profile.revision must be an integer from 1 to 4294967295")
 policy = text(profile.get("policy"), "profile.policy", True)
 if policy not in ("bootstrap", "reconcile"):
     fail("profile.policy must be bootstrap or reconcile")
 
-wifi = document.get("wifi")
-if not isinstance(wifi, dict):
-    fail("wifi must be an object")
-wifi_profiles = wifi.get("profiles")
-if not isinstance(wifi_profiles, list) or not 1 <= len(wifi_profiles) <= 2:
-    fail("wifi.profiles must contain one primary profile and an optional fallback")
+wifi_profiles = []
+if "wifi" in document:
+    wifi = document["wifi"]
+    if not isinstance(wifi, dict):
+        fail("wifi must be an object when provided")
+    reject_unknown_keys(wifi, ["profiles"], "wifi")
+    wifi_profiles = wifi.get("profiles")
+    if not isinstance(wifi_profiles, list) or not 1 <= len(wifi_profiles) <= 2:
+        fail("wifi.profiles must contain one primary profile and an optional fallback")
 wifi_profile_items = []
 for index, entry in enumerate(wifi_profiles):
     if not isinstance(entry, dict):
         fail("wifi.profiles[{}] must be an object".format(index))
+    reject_unknown_keys(entry, ["ssid", "password"], "wifi.profiles[{}]".format(index))
     ssid = text(entry.get("ssid"), "wifi.profiles[{}].ssid".format(index), True)
+    if "password" in entry and not isinstance(entry["password"], str):
+        fail("wifi.profiles[{}].password must be a string".format(index))
     password = text(entry.get("password"), "wifi.profiles[{}].password".format(index))
     if len(ssid) > 32:
         fail("wifi.profiles[{}].ssid must be at most 32 characters".format(index))
@@ -77,6 +99,8 @@ for index, entry in enumerate(wifi_profiles):
         fail("wifi.profiles[{}].password must be at most 64 characters".format(index))
     wifi_profile_items.append((ssid, password))
 
+if "device_password" in document and not isinstance(document["device_password"], str):
+    fail("device_password must be a string")
 device_password = text(document.get("device_password"), "device_password")
 if device_password and not 8 <= len(device_password) <= 31:
     fail("device_password must be empty or 8-31 characters")
@@ -97,6 +121,8 @@ parameter_items = []
 for parameter_id in sorted(parameters):
     if not isinstance(parameter_id, str) or not parameter_id.isalnum():
         fail("parameter IDs must be alphanumeric")
+    if not isinstance(parameters[parameter_id], str):
+        fail("parameters.{} must be a string".format(parameter_id))
     parameter_value = text(parameters[parameter_id], "parameters.{}".format(parameter_id))
     parameter_items.append((parameter_id, parameter_value))
 
@@ -119,8 +145,12 @@ lines = [
     "#define DEVICEFRAMEWORK_PROFILE_DEVICE_PASSWORD " + literal(device_password),
     "static const DeviceFrameworkProvisionedWiFiProfile DEVICEFRAMEWORK_PROFILE_WIFI_PROFILES[] = {",
 ]
-for ssid, password in wifi_profile_items:
-    lines.append("    {" + literal(ssid) + ", " + literal(password) + "},")
+if wifi_profile_items:
+    for ssid, password in wifi_profile_items:
+        lines.append("    {" + literal(ssid) + ", " + literal(password) + "},")
+else:
+    # C++ has no portable zero-length arrays; the count remains zero.
+    lines.append("    {\"\", \"\"},")
 lines.extend([
     "};",
     "#define DEVICEFRAMEWORK_PROFILE_WIFI_PROFILE_COUNT {}".format(len(wifi_profile_items)),

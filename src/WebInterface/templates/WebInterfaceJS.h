@@ -1231,52 +1231,6 @@ async function factoryReset() {
     }
 }
 
-async function enterConfigMode() {
-    if (confirm('Enter WiFi configuration mode?')) {
-        try {
-            const response = await fetch('/api/control', {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                },
-                body: JSON.stringify({ action: 'config_mode' })
-            });
-
-            if (response.ok) {
-                showSuccess('Config mode command sent!');
-            } else {
-                throw new Error('Failed to send config mode command');
-            }
-        } catch (error) {
-            console.error('Error entering config mode:', error);
-            showError('Failed to send config mode command');
-        }
-    }
-}
-
-async function disconnectWiFi() {
-    if (confirm('Disconnect from current WiFi network?')) {
-        try {
-            const response = await fetch('/api/control', {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                },
-                body: JSON.stringify({ action: 'disconnect_wifi' })
-            });
-
-            if (response.ok) {
-                showSuccess('Disconnect command sent!');
-            } else {
-                throw new Error('Failed to send disconnect command');
-            }
-        } catch (error) {
-            console.error('Error disconnecting WiFi:', error);
-            showError('Failed to send disconnect command');
-        }
-    }
-}
-
 // Utility functions
 function showSuccess(message) {
     showNotification(message, 'success');

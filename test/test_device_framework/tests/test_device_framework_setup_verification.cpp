@@ -23,17 +23,22 @@ void test_device_framework_setup_verification() {
     TEST_ASSERT_EQUAL_STRING_MESSAGE(sanitizedHostname, otaHostname.c_str(),
         "OTA hostname should match DeviceFramework sanitized hostname");
 
-    // Verify MDNS was initialized during DeviceFramework::setup()
-    bool mdnsInitialized = DeviceFrameworkMDNS::isInitialized();
-    TEST_ASSERT_TRUE_MESSAGE(mdnsInitialized,
-        "MDNS should be initialized after DeviceFramework::setup()");
+    // mDNS starts only after a stable usable network and adequate heap. A fixed
+    // numeric endpoint must still work while that optional responder is deferred.
+    IPAddress literalAddress;
+    TEST_ASSERT_TRUE_MESSAGE(DeviceFrameworkMDNS::resolveCached("192.0.2.1", literalAddress),
+        "A numeric endpoint should not depend on mDNS initialization");
+    TEST_ASSERT_EQUAL_UINT8(192, literalAddress[0]);
+    TEST_ASSERT_EQUAL_UINT8(0, literalAddress[1]);
+    TEST_ASSERT_EQUAL_UINT8(2, literalAddress[2]);
+    TEST_ASSERT_EQUAL_UINT8(1, literalAddress[3]);
 
     const DeviceFrameworkStorageLoadResult storage = DeviceFrameworkStorage::getLastLoadResult();
     TEST_ASSERT_TRUE_MESSAGE(storage.hasUsableConfiguration(), "Storage should load a V4 configuration after setup");
 
     HAMqtt& mqtt = DeviceFramework::getHAMqtt();
-    TEST_ASSERT_EQUAL_UINT8_MESSAGE(3, mqtt.getRegisteredDeviceTypeCount(),
-        "ArduinoHA should automatically register static entities and the HA parameter entity");
+    TEST_ASSERT_EQUAL_UINT8_MESSAGE(4, mqtt.getRegisteredDeviceTypeCount(),
+        "ArduinoHA should register the fixture's static entities and HA-backed parameters");
     TEST_ASSERT_EQUAL_UINT16_MESSAGE(0, mqtt.getDeviceTypeRegistrationFailures(),
         "Automatic registration should not hit ArduinoHA's entity limit");
 

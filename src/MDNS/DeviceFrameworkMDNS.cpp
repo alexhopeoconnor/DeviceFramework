@@ -53,6 +53,12 @@ void DeviceFrameworkMDNS::setup(const char* hostname) {
         return;
     }
 
+    // ESP8266 mDNS allocates from the Wi-Fi system context after begin().
+    // Do not start it until both total and contiguous heap leave a safe margin.
+    if (!hasMDNSHeapHeadroom(getConfigMDNSMinFreeHeap())) {
+        return;
+    }
+
     // Start mDNS responder
     if (!MDNS.begin(hostname)) {
         LOG_ERRORLN(F("Error setting up MDNS responder!"));
@@ -417,13 +423,21 @@ void DeviceFrameworkMDNS::updateResolverIP() {
 }
 
 bool DeviceFrameworkMDNS::resolveCached(const char* hostname, IPAddress& result) {
-    if (!initialized) {
-        LOG_ERRORLN(F("MDNSManager not initialized"));
+    if (!hostname || hostname[0] == 0) {
+        LOG_ERRORLN(F("MDNSManager resolveCached failed: hostname is null or empty"));
         return false;
     }
 
-    if (!hostname || strlen(hostname) == 0) {
-        LOG_ERRORLN(F("MDNSManager resolveCached failed: hostname is null or empty"));
+    // A numeric endpoint is already resolved. Keeping this path independent of
+    // the optional mDNS responder lets low-memory devices use a fixed broker IP.
+    IPAddress literalAddress;
+    if (literalAddress.fromString(hostname)) {
+        result = literalAddress;
+        return true;
+    }
+
+    if (!initialized) {
+        LOG_ERRORLN(F("MDNSManager not initialized"));
         return false;
     }
 

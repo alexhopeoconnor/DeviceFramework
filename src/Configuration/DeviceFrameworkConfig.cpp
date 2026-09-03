@@ -29,10 +29,10 @@ uint32_t CONFIG_wsBackoffDelay = 200;       // 200ms backoff when all clients re
 uint32_t CONFIG_wsCleanupInterval = 30000;  // 30 seconds client cleanup interval
 
 // mDNS configuration defaults
-uint32_t CONFIG_mdnsMinFreeHeap = 2048;              // 2KB minimum free heap for MDNS.update()
-uint32_t CONFIG_mdnsMinLargestBlock = 2048;          // 2KB contiguous allocation headroom for ESP8266 mDNS parsing
+uint32_t CONFIG_mdnsMinFreeHeap = 4096;              // 4KB minimum free heap for ESP8266 mDNS work
+uint32_t CONFIG_mdnsMinLargestBlock = 4096;          // 4KB contiguous allocation headroom for ESP8266 mDNS work
 uint32_t CONFIG_mdnsUpdateInterval = 25;             // Bound expensive ESP8266 heap-stat scans to 40Hz
-uint32_t CONFIG_mdnsPacketDrainMinFreeHeap = 2048;   // 2KB minimum free heap for resolver.loop()
+uint32_t CONFIG_mdnsPacketDrainMinFreeHeap = 4096;   // 4KB minimum free heap for resolver.loop()
 uint32_t CONFIG_mdnsPacketDrainInterval = 2000;      // 2 seconds between packet drain operations
 
 // Template engine configuration defaults

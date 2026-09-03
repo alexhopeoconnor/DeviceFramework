@@ -4,6 +4,8 @@
 #include "../Configuration/DeviceFrameworkConfig.h"
 #include "../DeviceFramework.h"
 #include "DeviceFrameworkWebHandlers.h"
+#include <cstdlib>
+#include <cstring>
 #include <memory>
 #include <new>
 #include "DeviceFrameworkDeviceStatus.h"
@@ -122,6 +124,8 @@ size_t renderDecodedLogoChunk(Base64LogoResponseState& state, uint8_t* buffer, s
 }
 
 bool restartPending = false;
+bool resetPending = false;
+DeviceFrameworkResetScope pendingResetScope = DeviceFrameworkResetScope::Factory;
 unsigned long restartAt = 0;
 
 // DeviceFramework's built-in pages nest only a few templates. Keep their
@@ -129,10 +133,18 @@ unsigned long restartAt = 0;
 // retains its larger standalone defaults for callers that need them.
 constexpr size_t kWebTemplateStackDepth = 6;
 constexpr size_t kWebTemplateReadBufferSize = 128;
+constexpr size_t kControlRequestBodyLimit = 96;
+constexpr const char* kControlBodyErrorAttribute = "df-control-body-error";
 
 void scheduleRestart() {
     restartPending = true;
     restartAt = millis() + 500;
+}
+
+void scheduleReset(DeviceFrameworkResetScope scope) {
+    pendingResetScope = scope;
+    resetPending = true;
+    scheduleRestart();
 }
 
 bool restartDue(unsigned long now) {
@@ -254,30 +266,52 @@ void DeviceFrameworkWebHandlers::handleAPIStatus(AsyncWebServerRequest *request)
 
 void DeviceFrameworkWebHandlers::handleAPIControl(AsyncWebServerRequest *request) {
     if (!isAuthenticated(request)) return;
-    if (request->hasParam("body")) {
-        String body = request->getParam("body")->value();
-
-        if (body.indexOf("\"action\":\"restart\"") >= 0) {
-            request->send(200, "application/json", "{\"status\":\"success\",\"message\":\"Restart command received\"}");
-            scheduleRestart();
-        } else if (body.indexOf("\"action\":\"reset\"") >= 0) {
-            DeviceFramework::reset(DeviceFrameworkResetScope::ParametersOnly);
-            request->send(200, "application/json", "{\"status\":\"success\",\"message\":\"Configuration reset\"}");
-            scheduleRestart();
-        } else if (body.indexOf("\"action\":\"factory_reset\"") >= 0) {
-            DeviceFramework::reset(DeviceFrameworkResetScope::Factory);
-            request->send(200, "application/json", "{\"status\":\"success\",\"message\":\"Factory reset\"}");
-            scheduleRestart();
-        } else if (body.indexOf("\"action\":\"config_mode\"") >= 0) {
-            request->send(200, "application/json", "{\"status\":\"success\",\"message\":\"Config mode command received\"}");
-        } else if (body.indexOf("\"action\":\"disconnect_wifi\"") >= 0) {
-            request->send(200, "application/json", "{\"status\":\"success\",\"message\":\"Disconnect WiFi command received\"}");
-        } else {
-            request->send(400, "application/json", "{\"status\":\"error\",\"message\":\"Unknown action\"}");
-        }
-    } else {
-        request->send(400, "application/json", "{\"status\":\"error\",\"message\":\"No action specified\"}");
+    if (request->hasAttribute(kControlBodyErrorAttribute)) {
+        request->send(400, "application/json", "{\"status\":\"error\",\"message\":\"Invalid control request body\"}");
+        return;
     }
+
+    const char* body = static_cast<const char*>(request->_tempObject);
+    if (body == nullptr || body[0] == 0) {
+        request->send(400, "application/json", "{\"status\":\"error\",\"message\":\"No action specified\"}");
+        return;
+    }
+
+    if (strstr(body, "\"action\":\"restart\"") != nullptr) {
+        request->send(200, "application/json", "{\"status\":\"success\",\"message\":\"Restart command received\"}");
+        scheduleRestart();
+    } else if (strstr(body, "\"action\":\"reset\"") != nullptr) {
+        request->send(200, "application/json", "{\"status\":\"success\",\"message\":\"Configuration reset\"}");
+        scheduleReset(DeviceFrameworkResetScope::ParametersOnly);
+    } else if (strstr(body, "\"action\":\"factory_reset\"") != nullptr) {
+        request->send(200, "application/json", "{\"status\":\"success\",\"message\":\"Factory reset\"}");
+        scheduleReset(DeviceFrameworkResetScope::Factory);
+    } else {
+        request->send(400, "application/json", "{\"status\":\"error\",\"message\":\"Unknown action\"}");
+    }
+}
+
+void DeviceFrameworkWebHandlers::handleAPIControlBody(AsyncWebServerRequest *request, uint8_t *data,
+                                                       size_t len, size_t index, size_t total) {
+    if (index == 0) {
+        if (total == 0 || total > kControlRequestBodyLimit) {
+            request->setAttribute(kControlBodyErrorAttribute, true);
+            return;
+        }
+
+        request->_tempObject = calloc(total + 1, sizeof(uint8_t));
+        if (request->_tempObject == nullptr) {
+            request->setAttribute(kControlBodyErrorAttribute, true);
+            return;
+        }
+    }
+
+    if (request->_tempObject == nullptr || index > total || len > total - index) {
+        request->setAttribute(kControlBodyErrorAttribute, true);
+        return;
+    }
+
+    memcpy(static_cast<uint8_t*>(request->_tempObject) + index, data, len);
 }
 
 void DeviceFrameworkWebHandlers::handleAPIDevicePassword(AsyncWebServerRequest *request) {
@@ -310,6 +344,10 @@ void DeviceFrameworkWebHandlers::handleAPIDevicePassword(AsyncWebServerRequest *
 void DeviceFrameworkWebHandlers::loop() {
     if (restartDue(millis())) {
         restartPending = false;
+        if (resetPending) {
+            resetPending = false;
+            DeviceFramework::reset(pendingResetScope);
+        }
         ESP.restart();
     }
 }

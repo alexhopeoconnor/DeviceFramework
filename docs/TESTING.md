@@ -16,14 +16,18 @@ The `hardware` mode runs the Unity/integration suite against a connected device.
 reads required WiFi and MQTT values from an ignored `test/.env`; copy
 `test/.env.example` and fill it locally. The runner generates an ignored C++ header
 only for the duration of the run, then removes it. With `--profile-fixture`, it
-runs Unity with a bootstrap profile, injects an RTS-only serial reset after the
-selected board’s esptool upload, and requires a non-empty zero-failure result.
-This keeps USB-UART adapters from producing a false green result when PlatformIO’s
-non-interactive monitor does not reset them.
+runs Unity with a bootstrap profile, owns the serial port while it injects an
+RTS-only reset after the selected board’s esptool upload, and requires a
+non-empty zero-failure result. This keeps USB-UART adapters from producing a
+false green result when PlatformIO’s non-interactive monitor does not reset them.
 
 It then flashes a minimal, separate consuming application with a distinct
-one-time reconcile profile. This proves a real application can accept provisioned
-WiFi after Unity has left a valid V4 record, rather than relying on an erased board.
+one-time reconcile profile. This proves a real application can accept
+provisioned WiFi after Unity has left a valid V4 record, rather than relying on
+an erased board. Compile-only profile checks also cover a valid profile with no
+`wifi` object, ensuring a profiled firmware can deliberately open interactive
+provisioning without a dummy SSID.
+
 The runner waits up to 45 seconds for the unique mDNS name, then checks
 unauthenticated rejection plus authenticated status, root-page, static assets,
 and 404 responses. Finally it checks that the profiled password persists across

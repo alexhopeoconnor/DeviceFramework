@@ -5,6 +5,7 @@ usage() {
     cat <<'EOF'
 Usage:
   ./scripts/test.sh compile  --platform esp8266|esp32 [--profile-fixture]
+  ./scripts/test.sh examples --platform esp8266|esp32
   ./scripts/test.sh hardware --platform esp8266|esp32 --port /dev/ttyUSB0 [--env-file test/.env] [--profile-fixture]
 EOF
     exit 2
@@ -13,7 +14,7 @@ EOF
 "$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/tools/check-web-assets.sh"
 
 mode="${1:-}"
-[[ "$mode" == "compile" || "$mode" == "hardware" ]] || usage
+[[ "$mode" == "compile" || "$mode" == "examples" || "$mode" == "hardware" ]] || usage
 shift
 platform=""
 profile_fixture=false
@@ -32,6 +33,19 @@ done
 [[ "$mode" != "hardware" || -n "$port" ]] || usage
 [[ "$mode" != "hardware" || "$profile_fixture" == "false" || -f "$env_file" ]] || usage
 
+if [[ "$mode" == "examples" ]]; then
+    mapfile -t examples < <(find examples -mindepth 1 -maxdepth 1 -type d -name '[0-9][0-9]-*' -print | sort)
+    if (( ${#examples[@]} == 0 )); then
+        echo "No example projects found" >&2
+        exit 1
+    fi
+    for example in "${examples[@]}"; do
+        pio run -d "$example" -e "$platform" </dev/null
+    done
+    echo "DeviceFramework examples compile check passed for $platform"
+    exit 0
+fi
+
 environment="$platform"
 refresh_clean_consumer_dependency() {
     local target_environment="$1"
@@ -47,11 +61,16 @@ if [[ "$mode" == "hardware" && "$profile_fixture" == "true" ]]; then
 fi
 if [[ "$mode" == "compile" && "$profile_fixture" == "true" ]]; then
     pio run -d test/compile-project -e "$environment" -t clean >/dev/null
+    pio run -d test/compile-project -e "${platform}_profile_no_wifi" -t clean >/dev/null
 fi
 if [[ "$mode" == "compile" ]]; then
     refresh_clean_consumer_dependency "$environment"
     pio run -d test/compile-project -e "$environment"
-    if [[ "$profile_fixture" == "false" ]]; then
+    if [[ "$profile_fixture" == "true" ]]; then
+        local_profile_environment="${platform}_profile_no_wifi"
+        refresh_clean_consumer_dependency "$local_profile_environment"
+        pio run -d test/compile-project -e "$local_profile_environment"
+    else
         refresh_clean_consumer_dependency "${platform}_default_ui"
         pio run -d test/compile-project -e "${platform}_default_ui"
     fi
@@ -115,42 +134,33 @@ write_hardware_profile() {
     write_profile "$hardware_smoke_profile" "hardware-${platform}-smoke" "reconcile"
 }
 
-reset_test_board() {
-    # ESP8266 D1 Mini: keep IO0 high (DTR false) and pulse EN through RTS.
-    # This matches esptool post-upload hard reset.
-    python3 -c "import serial, sys, time; serial_port = serial.Serial(sys.argv[1], 115200, timeout=0.1); serial_port.dtr = False; serial_port.rts = False; time.sleep(0.05); serial_port.rts = True; time.sleep(0.1); serial_port.rts = False; serial_port.close()" "$port"
-}
 
 run_unity_hardware_test() {
     local output_file
     output_file="$(mktemp -p /tmp deviceframework-unity.XXXXXX)"
 
+    # The generated credential header is intentionally ignored, so force the
+    # test translation units that include it to rebuild for every hardware run.
+    pio run -e "$environment" -t clean >/dev/null
     if [[ "$profile_fixture" == "true" ]]; then
-        DEVICEFRAMEWORK_HARDWARE_PROFILE="$hardware_profile" pio test -e "$environment" --filter test_device_framework --upload-port "$port" --test-port "$port" >"$output_file" 2>&1 &
-    else
-        pio test -e "$environment" --filter test_device_framework --upload-port "$port" --test-port "$port" >"$output_file" 2>&1 &
-    fi
-    local pio_pid=$!
-    local upload_seen=false
-    local reset_sent=false
-    while kill -0 "$pio_pid" 2>/dev/null; do
-        if [[ "$upload_seen" == "false" ]]; then
-            if pgrep -f -- "esptool.py.*--port $port" >/dev/null; then
-                upload_seen=true
-            fi
-        elif [[ "$reset_sent" == "false" ]] && ! pgrep -f -- "esptool.py.*--port $port" >/dev/null; then
-            sleep 0.5
-            reset_test_board
-            reset_sent=true
+        if ! DEVICEFRAMEWORK_HARDWARE_PROFILE="$hardware_profile" pio test -e "$environment" --filter test_device_framework --upload-port "$port" --without-testing >"$output_file" 2>&1; then
+            cat "$output_file"
+            rm -f "$output_file"
+            return 1
         fi
-        sleep 0.1
-    done
+    elif ! pio test -e "$environment" --filter test_device_framework --upload-port "$port" --without-testing >"$output_file" 2>&1; then
+        cat "$output_file"
+        rm -f "$output_file"
+        return 1
+    fi
 
-    local result=0
-    wait "$pio_pid" || result=$?
+    if ! python3 tools/capture-unity-serial.py --port "$port" --output "$output_file"; then
+        cat "$output_file"
+        rm -f "$output_file"
+        return 1
+    fi
     cat "$output_file"
     rm -f "$output_file"
-    return "$result"
 }
 
 assert_http_endpoint() {

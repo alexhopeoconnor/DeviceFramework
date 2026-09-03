@@ -223,11 +223,6 @@ const char PROGMEM spa_content_template[] = R"rawliteral(
                 </form>
             </div>
 
-            <div class="control-group">
-                <h3>WiFi Controls</h3>
-                <button onclick="enterConfigMode()" class="btn">Enter Config Mode</button>
-                <button onclick="disconnectWiFi()" class="btn">Disconnect WiFi</button>
-            </div>
         </div>
     </div>
 </div>

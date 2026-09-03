@@ -46,7 +46,8 @@ void DeviceFrameworkWeb::setup() {
         request->send(204);
     });
     webServer->on("/api/status", HTTP_GET, DeviceFrameworkWebHandlers::handleAPIStatus);
-    webServer->on("/api/control", HTTP_POST, DeviceFrameworkWebHandlers::handleAPIControl);
+    webServer->on("/api/control", HTTP_POST, DeviceFrameworkWebHandlers::handleAPIControl,
+                  nullptr, DeviceFrameworkWebHandlers::handleAPIControlBody);
     webServer->onNotFound(DeviceFrameworkWebHandlers::handleWebNotFound);
     webServer->on("/api/device-password", HTTP_POST, DeviceFrameworkWebHandlers::handleAPIDevicePassword);
 

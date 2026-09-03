@@ -1,6 +1,6 @@
 # Getting started
 
-DeviceFramework is intended to be the one direct framework dependency of an ESP8266 or ESP32 device. Its package manifest resolves the maintained WiFiManager, DFTE, and ArduinoHA releases.
+DeviceFramework is intended to be the one direct framework dependency of an ESP8266 or ESP32 device. Start with the buildable [Portal First example](../examples/01-portal-first/) if you prefer a complete project before reading the individual setup steps.
 
 ## 1. Add the dependency
 
@@ -11,7 +11,7 @@ board = d1_mini
 framework = arduino
 lib_ldf_mode = deep+
 lib_deps =
-    DeviceFramework=https://github.com/alexhopeoconnor/DeviceFramework.git#v2.4.0
+    DeviceFramework=https://github.com/alexhopeoconnor/DeviceFramework.git#v2.5.0
 ```
 
 Use `#vMAJOR.MINOR.PATCH` for released firmware. PlatformIO checks out that Git tag; it does not download a GitHub Release asset.
@@ -62,6 +62,6 @@ Register custom framework parameters and construct long-lived Home Assistant ent
 
 ArduinoHA's [entity lifecycle](https://github.com/alexhopeoconnor/arduino-home-assistant/blob/main/docs/device-and-discovery.md#discovery) explains the underlying registration and capacity rules.
 
-Next: [configuration and profiles](CONFIGURATION.md) or [testing](TESTING.md).
+Next: [configuration and profiles](CONFIGURATION.md), [web UI branding](WEB_UI.md), or the [guided examples](../examples/README.md).
 
 Back to [documentation](README.md) · [project overview](../README.md).

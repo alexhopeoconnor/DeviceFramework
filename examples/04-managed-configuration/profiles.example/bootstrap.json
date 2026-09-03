@@ -1,0 +1,9 @@
+{
+  "format": 2,
+  "application": "df-example-managed-configuration",
+  "profile": { "id": "workshop", "revision": 1, "policy": "bootstrap" },
+  "device_password": "replace-this-password",
+  "parameters": {
+    "device": "Managed configuration example"
+  }
+}

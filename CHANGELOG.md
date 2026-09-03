@@ -1,5 +1,17 @@
 # Changelog
 
+## 2.5.0
+
+- Depend on WiFiManager 3.2.0 so the framework's provisioning tagline and updated portal contract resolve from published tags.
+- Refine the existing web and provisioning experience with clearer status handling, safer connection hand-off, and consistent branded wording.
+- Make DFC4 writes stream directly into the inactive EEPROM slot, then verify headers and CRCs before activation, reducing transient heap pressure and strengthening corruption recovery.
+- Delay network services until Wi-Fi and mDNS have settled on ESP8266, and guard mDNS parsing on both total and contiguous heap headroom.
+- Tighten format-2 profile validation, deployment tests, examples, and documentation for profile-free, bootstrap, and reconcile workflows.
+
+### Upgrade note
+
+- Rename `DeviceFrameworkBranding::provisioningIntro` to `provisioningTagline` when compiling a product branding override.
+
 ## 2.4.0
 
 - Integrate ArduinoHA 3.1's automatic entity lifecycle: framework and sketch entities register without repeated `addDeviceType()` calls, while custom command handlers remain explicit.

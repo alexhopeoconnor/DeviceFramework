@@ -25,13 +25,13 @@ void setup() {
     ui.branding.brandName = text("Test Lab");
     ui.branding.productName = text("DeviceFramework UI Test");
     ui.branding.provisioningTitle = text("Set up DeviceFramework UI Test");
-    ui.branding.provisioningIntro = text("Connected-device portal and web UI verification.");
+    ui.branding.provisioningTagline = text("Connected-device portal and web UI verification.");
     ui.branding.logoAltText = text("Test Lab");
 #else
     ui.branding.brandName = text("Compile Fixture");
     ui.branding.productName = text("DeviceFramework UI Check");
     ui.branding.provisioningTitle = text("Set up DeviceFramework UI Check");
-    ui.branding.provisioningIntro = text("This verifies the shared portal and web UI configuration.");
+    ui.branding.provisioningTagline = text("This verifies the shared portal and web UI configuration.");
     ui.branding.logoAltText = text("Compile Fixture");
 #endif
     ui.about.summary = text("A fixed product attribution area in the existing web interface.");

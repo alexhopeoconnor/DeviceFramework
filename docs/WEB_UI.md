@@ -23,7 +23,7 @@ namespace {
 const char kBrand[] PROGMEM = "Example Devices";
 const char kProduct[] PROGMEM = "Temperature Monitor";
 const char kSetupTitle[] PROGMEM = "Set up Temperature Monitor";
-const char kIntro[] PROGMEM = "Connect this device to Wi-Fi.";
+const char kTagline[] PROGMEM = "Connect this device to Wi-Fi.";
 const char kPageStart[] PROGMEM = "#f4f7f3";
 const char kPageEnd[] PROGMEM = "#dcebdd";
 const char kSurface[] PROGMEM = "#ffffff";
@@ -37,7 +37,7 @@ void setup() {
     ui.branding.brandName = DeviceFrameworkText::progmem(kBrand);
     ui.branding.productName = DeviceFrameworkText::progmem(kProduct);
     ui.branding.provisioningTitle = DeviceFrameworkText::progmem(kSetupTitle);
-    ui.branding.provisioningIntro = DeviceFrameworkText::progmem(kIntro);
+    ui.branding.provisioningTagline = DeviceFrameworkText::progmem(kTagline);
     ui.branding.logoAltText = DeviceFrameworkText::progmem(kBrand);
 
     ui.theme.pageStart = DeviceFrameworkText::progmem(kPageStart);
@@ -61,7 +61,7 @@ The small `ui` object may be local because the fields it refers to are static. T
 | `DeviceFrameworkUIConfig` value | Existing DeviceFramework web UI | Existing WiFiManager portal |
 | --- | --- | --- |
 | `brandName`, `productName`, `webTitle`, `logoAltText` | Header identity, document title (with `webTitle` as an optional override), and image label | Brand name becomes portal identity and fallback image label |
-| `provisioningTitle`, `provisioningIntro` | — | Portal heading and home introduction |
+| `provisioningTitle`, `provisioningTagline` | — | Setup-page heading and short portal-header tagline |
 | `portalLogoSvg` | — | Optional trusted inline SVG |
 | `webLogo` | Optional base64 header image | — |
 | `about.summary`, `about.primaryLink`, `about.creditLink` | Optional fixed About navigation and section | — |
@@ -107,8 +107,8 @@ built firmware                         source UI plus selected deployment profil
 
 UI values are not EEPROM configuration, so changing them needs no schema migration. USB and OTA deploy the exact same binary when built from the same source/profile selection.
 
+The base page links authenticated static `/assets/deviceframework.css` and `/assets/deviceframework.js` responses. They are streamed from PROGMEM and privately cached for five minutes, while the small per-device theme block remains in the HTML response. This keeps the dynamic page response small on ESP8266 without changing the user-facing UI.
+
 For standalone portal fields, see the [WiFiManager portal UI guide](https://github.com/alexhopeoconnor/WiFiManager/blob/device-framework/docs/PORTAL_UI.md). For profiles, password rotation, and recovery behavior, see [Configuration and profiles](CONFIGURATION.md).
 
 Back to the [documentation index](README.md) or [project overview](../README.md).
-
-The base page links authenticated static `/assets/deviceframework.css` and `/assets/deviceframework.js` responses. They are streamed from PROGMEM and privately cached for five minutes, while the small per-device theme block remains in the HTML response. This keeps the dynamic page response small on ESP8266 without changing the user-facing UI.

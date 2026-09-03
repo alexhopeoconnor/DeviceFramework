@@ -57,18 +57,9 @@ uint32_t applicationHash(const String& value) {
     return hash;
 }
 
-void appendU16(std::vector<uint8_t>& data, uint16_t value) {
-    data.push_back(static_cast<uint8_t>(value & 0xff));
-    data.push_back(static_cast<uint8_t>((value >> 8) & 0xff));
-}
-
 uint16_t readU16(const uint8_t* data) {
     return static_cast<uint16_t>(data[0]) |
            (static_cast<uint16_t>(data[1]) << 8);
-}
-
-void appendU32(std::vector<uint8_t>& data, uint32_t value) {
-    for (uint8_t i = 0; i < 4; ++i) data.push_back(static_cast<uint8_t>((value >> (i * 8)) & 0xff));
 }
 
 uint32_t readU32(const uint8_t* data) {
@@ -77,21 +68,74 @@ uint32_t readU32(const uint8_t* data) {
     return value;
 }
 
-bool appendParameterEntries(const DeviceFrameworkParameterRegistry& registry, std::vector<uint8_t>& payload) {
+void writeU16(uint8_t* data, uint16_t value) {
+    data[0] = static_cast<uint8_t>(value & 0xff);
+    data[1] = static_cast<uint8_t>((value >> 8) & 0xff);
+}
+
+void writeU32(uint8_t* data, uint32_t value) {
+    for (uint8_t i = 0; i < 4; ++i) data[i] = static_cast<uint8_t>((value >> (i * 8)) & 0xff);
+}
+
+class PayloadWriter {
+public:
+    PayloadWriter(uint16_t base, uint16_t capacity)
+        : _base(base), _capacity(capacity), _length(0), _crc(CRC32Utils::initialValue()), _valid(true) {}
+
+    bool appendByte(uint8_t value) {
+        if (!_valid || _length >= _capacity) {
+            _valid = false;
+            return false;
+        }
+        EEPROM.write(_base + _length, value);
+        _crc = CRC32Utils::update(_crc, value);
+        ++_length;
+        return true;
+    }
+
+    bool appendBytes(const char* values, size_t length) {
+        if (!values && length != 0) {
+            _valid = false;
+            return false;
+        }
+        for (size_t index = 0; index < length; ++index) {
+            if (!appendByte(static_cast<uint8_t>(values[index]))) return false;
+        }
+        return true;
+    }
+
+    bool appendU16(uint16_t value) {
+        return appendByte(static_cast<uint8_t>(value & 0xff)) &&
+               appendByte(static_cast<uint8_t>((value >> 8) & 0xff));
+    }
+
+    uint16_t length() const { return _length; }
+    uint32_t crc() const { return _crc; }
+    bool valid() const { return _valid; }
+
+private:
+    uint16_t _base;
+    uint16_t _capacity;
+    uint16_t _length;
+    uint32_t _crc;
+    bool _valid;
+};
+
+bool appendParameterEntries(const DeviceFrameworkParameterRegistry& registry, PayloadWriter& payload) {
     const auto ids = registry.getParameterIds();
     for (size_t i = 0; i < ids.count; ++i) {
         const String& id = ids.ids[i];
         const String value = registry.getValue(id);
         if (id.length() == 0 || id.length() > UINT8_MAX || value.length() > UINT16_MAX) return false;
-        payload.push_back(static_cast<uint8_t>(id.length()));
-        payload.insert(payload.end(), id.c_str(), id.c_str() + id.length());
-        appendU16(payload, static_cast<uint16_t>(value.length()));
-        payload.insert(payload.end(), value.c_str(), value.c_str() + value.length());
+        if (!payload.appendByte(static_cast<uint8_t>(id.length())) ||
+            !payload.appendBytes(id.c_str(), id.length()) ||
+            !payload.appendU16(static_cast<uint16_t>(value.length())) ||
+            !payload.appendBytes(value.c_str(), value.length())) return false;
     }
     return true;
 }
 
-bool appendStationProfiles(const WiFiManagerStationProfiles& profiles, std::vector<uint8_t>& payload) {
+bool appendStationProfiles(const WiFiManagerStationProfiles& profiles, PayloadWriter& payload) {
     if (profiles.preferredSlot >= WM_STATION_PROFILE_COUNT ||
         (profiles.lastSuccessfulSlot != WM_NO_STATION_PROFILE &&
          profiles.lastSuccessfulSlot >= WM_STATION_PROFILE_COUNT)) return false;
@@ -110,15 +154,12 @@ bool appendStationProfiles(const WiFiManagerStationProfiles& profiles, std::vect
         if (ssidLength > 32 || passwordLength > 64) return false;
         const uint8_t flags = static_cast<uint8_t>((enabled ? 0x01 : 0x00) |
                                                    (enabled && profile.hasPassword ? 0x02 : 0x00));
-        payload.push_back(flags);
-        payload.push_back(static_cast<uint8_t>(ssidLength));
-        payload.insert(payload.end(), profile.ssid, profile.ssid + ssidLength);
-        payload.push_back(static_cast<uint8_t>(passwordLength));
-        payload.insert(payload.end(), profile.password, profile.password + passwordLength);
+        if (!payload.appendByte(flags) || !payload.appendByte(static_cast<uint8_t>(ssidLength)) ||
+            !payload.appendBytes(profile.ssid, ssidLength) ||
+            !payload.appendByte(static_cast<uint8_t>(passwordLength)) ||
+            !payload.appendBytes(profile.password, passwordLength)) return false;
     }
-    payload.push_back(profiles.preferredSlot);
-    payload.push_back(profiles.lastSuccessfulSlot);
-    return true;
+    return payload.appendByte(profiles.preferredSlot) && payload.appendByte(profiles.lastSuccessfulSlot);
 }
 
 bool decodeStationProfiles(const uint8_t* data, size_t size, size_t& offset,
@@ -153,17 +194,23 @@ bool decodeStationProfiles(const uint8_t* data, size_t size, size_t& offset,
              profiles.slots[profiles.lastSuccessfulSlot].enabled));
 }
 
-bool encodePayload(const DeviceFrameworkParameterRegistry& registry, const char* password,
-                   const WiFiManagerStationProfiles& profiles,
-                   std::vector<uint8_t>& payload) {
+bool writePayload(uint16_t base, uint16_t capacity,
+                  const DeviceFrameworkParameterRegistry& registry, const char* password,
+                  const WiFiManagerStationProfiles& profiles,
+                  uint16_t& length, uint32_t& crc) {
     if (!isConfigDevicePasswordValid(password)) return false;
     const char* value = password ? password : "";
     const size_t passwordLength = strlen(value);
-    payload.push_back(kPayloadVersion);
-    payload.push_back(static_cast<uint8_t>(passwordLength));
-    payload.insert(payload.end(), value, value + passwordLength);
-    if (!appendStationProfiles(profiles, payload)) return false;
-    return appendParameterEntries(registry, payload);
+    PayloadWriter payload(base, capacity);
+    if (!payload.appendByte(kPayloadVersion) ||
+        !payload.appendByte(static_cast<uint8_t>(passwordLength)) ||
+        !payload.appendBytes(value, passwordLength) ||
+        !appendStationProfiles(profiles, payload) ||
+        !appendParameterEntries(registry, payload) ||
+        !payload.valid()) return false;
+    length = payload.length();
+    crc = payload.crc();
+    return true;
 }
 
 bool decodeParameterEntries(const uint8_t* data, size_t size, std::map<String, String>& values) {
@@ -199,19 +246,6 @@ bool decodePayload(const std::vector<uint8_t>& payload, String& password,
     return decodeParameterEntries(payload.data() + offset, payload.size() - offset, values);
 }
 
-bool stationProfilesEqual(const WiFiManagerStationProfiles& first,
-                         const WiFiManagerStationProfiles& second) {
-    if (first.preferredSlot != second.preferredSlot ||
-        first.lastSuccessfulSlot != second.lastSuccessfulSlot) return false;
-    for (uint8_t slot = 0; slot < WM_STATION_PROFILE_COUNT; ++slot) {
-        const WiFiManagerStationProfile& a = first.slots[slot];
-        const WiFiManagerStationProfile& b = second.slots[slot];
-        if (a.enabled != b.enabled || a.hasPassword != b.hasPassword) return false;
-        if (a.enabled && strcmp(a.ssid, b.ssid) != 0) return false;
-        if (a.hasPassword && strcmp(a.password, b.password) != 0) return false;
-    }
-    return true;
-}
 
 bool readHeader(uint16_t base, StorageHeader& header) {
     if (base + kHeaderSize > storageEnd()) return false;
@@ -230,25 +264,50 @@ bool readHeader(uint16_t base, StorageHeader& header) {
     const uint16_t available = slotSize();
     return available >= kHeaderSize && header.payloadLength <= available - kHeaderSize;
 }
+bool slotPayloadCrcMatches(uint16_t base, const StorageHeader& header) {
+    uint32_t crc = CRC32Utils::initialValue();
+    for (uint16_t index = 0; index < header.payloadLength; ++index) {
+        crc = CRC32Utils::update(crc, EEPROM.read(base + kHeaderSize + index));
+    }
+    return crc == header.payloadCrc;
+}
+
+bool inspectSlot(uint8_t slot, uint32_t& generation) {
+    StorageHeader header{};
+    const uint16_t base = slotBase(slot);
+    if (!readHeader(base, header)) return false;
+    if (header.applicationHash != applicationHash(DeviceFrameworkIdentity::getApplication().applicationId)) return false;
+    if (!slotPayloadCrcMatches(base, header)) return false;
+    generation = header.generation;
+    return true;
+}
+
+bool writtenSlotMatches(uint16_t base, const StorageHeader& expected) {
+    StorageHeader actual{};
+    if (!readHeader(base, actual) ||
+        actual.applicationHash != expected.applicationHash || actual.schema != expected.schema ||
+        actual.generation != expected.generation || actual.payloadLength != expected.payloadLength ||
+        actual.payloadCrc != expected.payloadCrc || actual.profileHash != expected.profileHash ||
+        actual.attemptedRevision != expected.attemptedRevision ||
+        actual.appliedRevision != expected.appliedRevision) return false;
+    return slotPayloadCrcMatches(base, actual);
+}
 
 void writeHeader(uint16_t base, const StorageHeader& header) {
     uint8_t raw[kHeaderSize] = {};
-    std::vector<uint8_t> encoded;
-    appendU32(encoded, kMagic);
-    appendU16(encoded, DeviceFrameworkStorage::STORAGE_FORMAT_VERSION);
-    encoded.push_back(kStateValid);
-    encoded.push_back(0);
-    appendU32(encoded, header.applicationHash);
-    appendU16(encoded, header.schema);
-    appendU32(encoded, header.generation);
-    appendU16(encoded, header.payloadLength);
-    appendU32(encoded, header.payloadCrc);
-    appendU32(encoded, header.profileHash);
-    appendU32(encoded, header.attemptedRevision);
-    appendU32(encoded, header.appliedRevision);
-    for (uint16_t i = 0; i < kHeaderWithoutCrcSize; ++i) raw[i] = encoded[i];
+    writeU32(raw, kMagic);
+    writeU16(raw + 4, DeviceFrameworkStorage::STORAGE_FORMAT_VERSION);
+    raw[6] = kStateValid;
+    writeU32(raw + 8, header.applicationHash);
+    writeU16(raw + 12, header.schema);
+    writeU32(raw + 14, header.generation);
+    writeU16(raw + 18, header.payloadLength);
+    writeU32(raw + 20, header.payloadCrc);
+    writeU32(raw + 24, header.profileHash);
+    writeU32(raw + 28, header.attemptedRevision);
+    writeU32(raw + 32, header.appliedRevision);
     const uint32_t crc = CRC32Utils::calculate(raw, kHeaderWithoutCrcSize);
-    for (uint8_t i = 0; i < 4; ++i) raw[kHeaderWithoutCrcSize + i] = static_cast<uint8_t>((crc >> (i * 8)) & 0xff);
+    writeU32(raw + kHeaderWithoutCrcSize, crc);
     for (uint16_t i = 0; i < kHeaderSize; ++i) EEPROM.write(base + i, raw[i]);
 }
 
@@ -329,58 +388,43 @@ bool DeviceFrameworkStorage::save() {
 
 bool DeviceFrameworkStorage::saveWithDevicePassword(const char* password) {
     auto& registry = DeviceFrameworkParameters::getRegistry();
-    std::vector<uint8_t> payload;
-    if (!encodePayload(registry, password, stationProfiles, payload)) {
-        LOG_ERRORLN(F("DeviceFramework storage: unable to encode parameter payload"));
-        return false;
-    }
-
     const uint16_t available = slotSize();
-    if (available <= kHeaderSize || payload.size() > static_cast<size_t>(available - kHeaderSize)) {
+    if (available <= kHeaderSize) {
         LOG_ERRORLN(F("DeviceFramework storage: configuration exceeds transactional slot capacity"));
         return false;
     }
 
-    std::map<String, String> firstValues;
-    std::map<String, String> secondValues;
-    String firstPassword;
-    String secondPassword;
-    WiFiManagerStationProfiles firstProfiles;
-    WiFiManagerStationProfiles secondProfiles;
-    uint16_t firstSchema = 0;
-    uint16_t secondSchema = 0;
     uint32_t firstGeneration = 0;
     uint32_t secondGeneration = 0;
-    const bool firstValid = readSlot(0, firstValues, firstPassword, firstProfiles, firstSchema, firstGeneration);
-    const bool secondValid = readSlot(1, secondValues, secondPassword, secondProfiles, secondSchema, secondGeneration);
+    const bool firstValid = inspectSlot(0, firstGeneration);
+    const bool secondValid = inspectSlot(1, secondGeneration);
     const uint8_t target = !firstValid ? 0 : (!secondValid ? 1 : (firstGeneration <= secondGeneration ? 0 : 1));
     const uint32_t generation = max(firstGeneration, secondGeneration) + 1;
     const uint16_t base = slotBase(target);
 
     // Invalidate the target first; its header becomes valid only after its full payload is written.
     EEPROM.write(base + 6, 0);
-    for (size_t i = 0; i < payload.size(); ++i) EEPROM.write(base + kHeaderSize + i, payload[i]);
+    uint16_t payloadLength = 0;
+    uint32_t payloadCrc = CRC32Utils::initialValue();
+    if (!writePayload(base + kHeaderSize, available - kHeaderSize,
+                      registry, password, stationProfiles, payloadLength, payloadCrc)) {
+        LOG_ERRORLN(F("DeviceFramework storage: configuration exceeds transactional slot capacity"));
+        return false;
+    }
 
     StorageHeader header{};
     header.applicationHash = applicationHash(DeviceFrameworkIdentity::getApplication().applicationId);
     header.schema = DeviceFrameworkIdentity::getApplication().configurationSchema;
     header.generation = generation;
-    header.payloadLength = static_cast<uint16_t>(payload.size());
-    header.payloadCrc = CRC32Utils::calculate(payload.data(), payload.size());
+    header.payloadLength = payloadLength;
+    header.payloadCrc = payloadCrc;
     header.profileHash = provisioningState.profileHash;
     header.attemptedRevision = provisioningState.attemptedRevision;
     header.appliedRevision = provisioningState.appliedRevision;
     writeHeader(base, header);
     EEPROM.commit();
 
-    std::map<String, String> verifiedValues;
-    String verifiedPassword;
-    WiFiManagerStationProfiles verifiedProfiles;
-    uint16_t verifiedSchema = 0;
-    uint32_t verifiedGeneration = 0;
-    if (!readSlot(target, verifiedValues, verifiedPassword, verifiedProfiles, verifiedSchema, verifiedGeneration) ||
-        verifiedPassword != (password ? password : "") ||
-        !stationProfilesEqual(verifiedProfiles, stationProfiles)) {
+    if (!writtenSlotMatches(base, header)) {
         LOG_ERRORLN(F("DeviceFramework storage: post-write verification failed"));
         return false;
     }
@@ -407,36 +451,36 @@ void DeviceFrameworkStorage::setStationProfiles(const WiFiManagerStationProfiles
 
 bool DeviceFrameworkStorage::readCurrent(std::map<String, String>& values, String& password,
                                     uint16_t& schema, uint32_t& generation) {
-    std::map<String, String> firstValues;
-    std::map<String, String> secondValues;
-    String firstPassword;
-    String secondPassword;
-    WiFiManagerStationProfiles firstProfiles;
-    WiFiManagerStationProfiles secondProfiles;
-    uint16_t firstSchema = 0;
-    uint16_t secondSchema = 0;
     uint32_t firstGeneration = 0;
     uint32_t secondGeneration = 0;
-    DeviceFrameworkProvisioningState firstProvisioning;
-    DeviceFrameworkProvisioningState secondProvisioning;
-    const bool firstValid = readSlot(0, firstValues, firstPassword, firstProfiles, firstSchema, firstGeneration, &firstProvisioning);
-    const bool secondValid = readSlot(1, secondValues, secondPassword, secondProfiles, secondSchema, secondGeneration, &secondProvisioning);
+    const bool firstValid = inspectSlot(0, firstGeneration);
+    const bool secondValid = inspectSlot(1, secondGeneration);
     if (!firstValid && !secondValid) return false;
-    if (secondValid && (!firstValid || secondGeneration > firstGeneration)) {
-        values = secondValues;
-        password = secondPassword;
-        schema = secondSchema;
-        generation = secondGeneration;
-        provisioningState = secondProvisioning;
-        stationProfiles = secondProfiles;
-    } else {
-        values = firstValues;
-        password = firstPassword;
-        schema = firstSchema;
-        generation = firstGeneration;
-        provisioningState = firstProvisioning;
-        stationProfiles = firstProfiles;
+
+    const uint8_t preferredSlot = secondValid && (!firstValid || secondGeneration > firstGeneration) ? 1 : 0;
+    const uint8_t fallbackSlot = preferredSlot == 0 ? 1 : 0;
+    const bool fallbackIsValid = fallbackSlot == 0 ? firstValid : secondValid;
+    WiFiManagerStationProfiles loadedProfiles;
+    DeviceFrameworkProvisioningState loadedProvisioning;
+
+    values.clear();
+    password = "";
+    schema = 0;
+    generation = 0;
+    bool decoded = readSlot(preferredSlot, values, password, loadedProfiles, schema, generation, &loadedProvisioning);
+    if (!decoded && fallbackIsValid) {
+        values.clear();
+        password = "";
+        loadedProfiles = WiFiManagerStationProfiles();
+        loadedProvisioning = DeviceFrameworkProvisioningState();
+        schema = 0;
+        generation = 0;
+        decoded = readSlot(fallbackSlot, values, password, loadedProfiles, schema, generation, &loadedProvisioning);
     }
+    if (!decoded) return false;
+
+    provisioningState = loadedProvisioning;
+    stationProfiles = loadedProfiles;
     return true;
 }
 

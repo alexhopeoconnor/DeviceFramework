@@ -241,7 +241,7 @@ void DeviceFrameworkMQTT::setup() {
 
     // Configure HADevice
     byte mac[6];
-    WiFi.macAddress(mac);
+    DFGetHardwareMac(mac);
     haDevice.setUniqueId(mac, sizeof(mac));
     haDevice.setName(DeviceFrameworkParameters::getDeviceName());
     haDevice.setSoftwareVersion(DeviceFrameworkIdentity::getApplication().firmwareVersion.c_str());

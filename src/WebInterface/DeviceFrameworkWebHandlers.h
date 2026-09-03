@@ -15,6 +15,8 @@ public:
     static void handleWebLogo(AsyncWebServerRequest *request);
     static void handleAPIStatus(AsyncWebServerRequest *request);
     static void handleAPIControl(AsyncWebServerRequest *request);
+    static void handleAPIControlBody(AsyncWebServerRequest *request, uint8_t *data,
+                                     size_t len, size_t index, size_t total);
     static void handleAPIDevicePassword(AsyncWebServerRequest *request);
 
     // Requires HTTP Basic authentication only when a device password is set.

@@ -35,6 +35,10 @@ TestCase tests[] = {
     // Group 2: Initial State Verification
     TEST_ENTRY(test_device_framework_basic_methods),
     TEST_ENTRY(test_device_framework_setup_verification),
+
+    // Run rendering while the production server is initialized but before
+    // fault-injection storage tests deliberately churn the allocator.
+    TEST_ENTRY(test_web_interface_methods),
     TEST_ENTRY(test_eeprom_storage_methods),
     TEST_ENTRY(test_storage_legacy_markers_allow_profile_cutover),
 
@@ -56,9 +60,6 @@ TestCase tests[] = {
     // Group 5: ParameterRegistry Integration
     TEST_ENTRY(test_parameter_registry_integration),
     TEST_ENTRY(test_parameter_registry_ha_origin_updates_shadow_state),
-
-    // Group 6: Web Interface
-    TEST_ENTRY(test_web_interface_methods),
 };
 
 const size_t TEST_COUNT = sizeof(tests) / sizeof(TestCase);
@@ -71,6 +72,7 @@ bool wifiConnected = false;
 bool mqttConnected = false;
 unsigned long connectionWaitStartedAt = 0;
 constexpr unsigned long CONNECTION_READY_TIMEOUT_MS = 120000UL;
+constexpr unsigned long SERIAL_MONITOR_ATTACH_DELAY_MS = 5000UL;
 
 // Dummy test device entities (simulating typical consuming sketch)
 HASensorNumber testSensor("test_sensor", HASensorNumber::PrecisionP1);
@@ -146,7 +148,9 @@ void setup() {
     #endif
 
     Serial.begin(115200);
-    delay(2000); // Give time for serial to initialize
+    // The uploader hard-resets the board before PlatformIO opens its test reader.
+    // Leave a test-only grace window so the reader sees the complete Unity output.
+    delay(SERIAL_MONITOR_ATTACH_DELAY_MS);
     markSerialAsInitialized(); // Tell framework Serial is already initialized
 
     Serial.println("\n[TEST] =============================================");
@@ -184,7 +188,7 @@ void setup() {
     ui.branding.brandName = DeviceFrameworkText::ram("Test Lab");
     ui.branding.productName = DeviceFrameworkText::ram("DeviceFramework UI Test");
     ui.branding.provisioningTitle = DeviceFrameworkText::ram("Set up DeviceFramework UI Test");
-    ui.branding.provisioningIntro = DeviceFrameworkText::ram("Connected-device portal and web UI verification.");
+    ui.branding.provisioningTagline = DeviceFrameworkText::ram("Connected-device portal and web UI verification.");
     ui.branding.logoAltText = DeviceFrameworkText::ram("Test Lab");
     ui.about.summary = DeviceFrameworkText::ram("Test firmware validates the fixed product About area.");
     ui.about.primaryLink = {DeviceFrameworkText::ram("Test Lab"),

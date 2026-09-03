@@ -8,6 +8,8 @@ void test_eeprom_storage_methods() {
     TEST_ASSERT_EQUAL_UINT16_MESSAGE(64, getConfigEEPROMStart(), "EEPROM start should remain reserved");
     TEST_ASSERT_EQUAL_UINT16_MESSAGE(1024, getConfigEEPROMSize(), "V4 uses two transactional slots");
 
+    const String originalDevicePassword(DeviceFramework::getDevicePassword());
+
     TEST_ASSERT_TRUE_MESSAGE(DeviceFrameworkStorage::reset(), "Storage reset should commit");
     const DeviceFrameworkStorageLoadResult result = DeviceFrameworkStorage::load();
     TEST_ASSERT_EQUAL_MESSAGE(static_cast<int>(DeviceFrameworkStorageLoadStatus::Empty),
@@ -15,6 +17,11 @@ void test_eeprom_storage_methods() {
                               "Erased storage should be reported as empty");
     TEST_ASSERT_EQUAL_UINT16_MESSAGE(4, DeviceFrameworkStorage::STORAGE_FORMAT_VERSION,
                                    "Storage format must be V4");
+    TEST_ASSERT_TRUE_MESSAGE(
+        setConfigDevicePassword(originalDevicePassword.c_str()),
+        "Reset test should restore the runtime password before recreating its record"
+    );
+    TEST_ASSERT_TRUE_MESSAGE(DeviceFrameworkStorage::save(), "Reset test should restore a valid V4 record");
 }
 
 void test_storage_legacy_markers_allow_profile_cutover() {

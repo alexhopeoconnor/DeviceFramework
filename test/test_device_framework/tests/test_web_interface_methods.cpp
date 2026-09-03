@@ -1,6 +1,5 @@
 #include <unity.h>
 #include <Arduino.h>
-#include <new>
 #include <ArduinoJson.h>
 #include <DeviceFramework.h>
 #include <WiFiClient.h>
@@ -12,6 +11,13 @@
 #include <WebInterface/templates/WebInterfaceHTML.h>
 
 namespace {
+
+// ESPAsyncWebServer can provide 1,064-byte response chunks on ESP8266. Keep
+// this verification buffer in BSS: production receives that server-owned
+// buffer, so allocating another one from the fixture heap would test an
+// artificial failure mode and can invoke the ESP8266 core OOM exception.
+constexpr size_t kAsyncWebChunkSize = 1064;
+uint8_t asyncWebChunkBuffer[kAsyncWebChunkSize];
 
 void assertTemplateCompletesIntoBuffer(const char* templateData, const char* description,
                                        uint8_t* buffer, size_t bufferSize) {
@@ -53,10 +59,8 @@ void assertTemplateCompletesWithAsyncSizedChunks(const char* templateData,
                                                  const char* description) {
     // ESPAsyncWebServer supplies up to 1,064 payload bytes after chunk framing
     // on ESP8266 (two 536-byte TCP MSS buffers minus eight framing bytes).
-    uint8_t* buffer = new (std::nothrow) uint8_t[1064];
-    TEST_ASSERT_NOT_NULL_MESSAGE(buffer, "ESPAsyncWebServer-sized test buffer should allocate");
-    assertTemplateCompletesIntoBuffer(templateData, description, buffer, 1064);
-    delete[] buffer;
+    assertTemplateCompletesIntoBuffer(
+        templateData, description, asyncWebChunkBuffer, sizeof(asyncWebChunkBuffer));
 }
 
 void assertTemplateContainsMarkers(const char* templateData, const char* description,
