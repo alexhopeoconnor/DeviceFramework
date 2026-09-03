@@ -61,11 +61,11 @@ A profile overrides only the parameter IDs it names. On a new or reset device, o
 
 DeviceFramework 2.1.x records are DFC3. They are deliberately not decoded by 2.2.x. Select the same ignored local deployment profile, including a primary WiFi candidate, and perform one normal authenticated USB or OTA update: the profile seeds a DFC4 record, verifies its primary/fallback WiFi candidate, and then stores the verified profiles. There is no special erase firmware. A profile-free 2.2.x build treats DFC3 as unsupported and opens provisioning instead of guessing at an incompatible layout.
 
-`reconcile` deliberately applies changed managed values once per profile ID/revision and records the attempt before Wi-Fi connects. Increase `profile.revision` after changing a reconciliation profile. Use it only when profile values are intended to take precedence over existing portal-managed values.
+`reconcile` deliberately applies supplied managed values once per profile ID/revision and records the attempt before Wi-Fi connects. Increase `profile.revision` after changing a reconciliation profile. Use it only when profile values are intended to take precedence over existing portal-managed values.
 
 ## One shared device password
 
-`device_password` is an initial seed, not a second authority. When a profile legitimately seeds configuration, DeviceFramework writes the password and parameters together in one CRC-protected V4 record. Once a valid record exists, its active password restores on every boot and a later selected profile does not overwrite it.
+`device_password` is optional. A `bootstrap` profile seeds it only for a new or recovery configuration. A `reconcile` profile that explicitly supplies it writes that value once when its profile ID or revision changes, alongside its other managed values. Omit the field from a reconcile profile to leave the existing password untouched; explicitly supply `""` to clear it. In every case, the saved value restores on ordinary boots and OTA updates without the profile becoming a second runtime authority.
 
 Use the public API to rotate it at runtime:
 

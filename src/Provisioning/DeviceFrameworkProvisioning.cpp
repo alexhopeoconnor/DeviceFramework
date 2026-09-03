@@ -57,13 +57,20 @@ bool DeviceFrameworkProvisioning::apply(const DeviceFrameworkStorageLoadResult& 
         storageResult.status == DeviceFrameworkStorageLoadStatus::Empty ||
         storageResult.status == DeviceFrameworkStorageLoadStatus::ForeignApplication ||
         storageResult.status == DeviceFrameworkStorageLoadStatus::UnsupportedLegacyFormat;
-    const bool passwordFallback = initialConfiguration ||
-        storageResult.status == DeviceFrameworkStorageLoadStatus::Corrupt;
 
-    // A local profile is an initial seed and recovery fallback, not the source
-    // of truth after a V4 record has been committed. This preserves a password
-    // changed at runtime across every later boot and OTA update.
-    if (passwordFallback && !setConfigDevicePassword(DEVICEFRAMEWORK_PROFILE_DEVICE_PASSWORD)) {
+    const bool applyNow = bootstrap
+        ? initialConfiguration
+        : initialConfiguration || previous.profileHash != activeProfileHash ||
+              previous.attemptedRevision != activeProfileRevision;
+
+    // bootstrap profiles seed only a new/recovery configuration. An explicit
+    // reconcile profile owns every supplied managed value, including the one
+    // shared password, exactly once per profile ID/revision. Omitted passwords
+    // never clear an existing runtime-managed value.
+    const bool applyProfilePassword = DEVICEFRAMEWORK_PROFILE_HAS_DEVICE_PASSWORD &&
+        (initialConfiguration || storageResult.status == DeviceFrameworkStorageLoadStatus::Corrupt ||
+         (!bootstrap && applyNow));
+    if (applyProfilePassword && !setConfigDevicePassword(DEVICEFRAMEWORK_PROFILE_DEVICE_PASSWORD)) {
         LOG_WARNLN(F("DeviceFramework profile: rejected device password (must be empty or 8-31 characters)"));
         return false;
     }
@@ -73,10 +80,6 @@ bool DeviceFrameworkProvisioning::apply(const DeviceFrameworkStorageLoadResult& 
     // profile fallback so the local recovery surfaces remain usable.
     if (!initialConfiguration && !storageResult.hasUsableConfiguration()) return false;
 
-    const bool applyNow = bootstrap
-        ? initialConfiguration
-        : initialConfiguration || previous.profileHash != activeProfileHash ||
-              previous.attemptedRevision != activeProfileRevision;
     if (!applyNow) return false;
 
     DeviceFrameworkProvisioningState next = previous;

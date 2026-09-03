@@ -112,12 +112,13 @@ write_profile() {
     local profile_id="$2"
     local policy="$3"
 
+    local password="$4"
     {
         printf "%s\n" "{"
         printf "%s\n" "  \"format\": 2,"
         printf "%s\n" "  \"application\": \"deviceframework\","
         printf "  \"profile\": { \"id\": \"%s\", \"revision\": 1, \"policy\": \"%s\" },\n" "$profile_id" "$policy"
-        printf "%s\n" "  \"device_password\": \"profile-fixture-password\","
+        printf "  \"device_password\": \"%s\",\n" "$(escape_c_string "$password")"
         printf "%s\n" "  \"wifi\": { \"profiles\": ["
         printf "%s\n" "    { \"ssid\": \"df-test-primary-unavailable\", \"password\": \"\" },"
         printf "    { \"ssid\": \"%s\", \"password\": \"%s\" }\n" "$(escape_c_string "$DEVICEFRAMEWORK_TEST_WIFI_SSID")" "$(escape_c_string "$DEVICEFRAMEWORK_TEST_WIFI_PASSWORD")"
@@ -130,8 +131,8 @@ write_hardware_profile() {
     hardware_profile="$(mktemp -p /tmp deviceframework-profile.XXXXXX)"
     hardware_smoke_profile="$(mktemp -p /tmp deviceframework-smoke-profile.XXXXXX)"
     chmod 600 "$hardware_profile" "$hardware_smoke_profile"
-    write_profile "$hardware_profile" "hardware-${platform}-bootstrap" "bootstrap"
-    write_profile "$hardware_smoke_profile" "hardware-${platform}-smoke" "reconcile"
+    write_profile "$hardware_profile" "hardware-${platform}-bootstrap" "bootstrap" "profile-fixture-password"
+    write_profile "$hardware_smoke_profile" "hardware-${platform}-smoke" "reconcile" "profile-reconcile-password"
 }
 
 
@@ -297,9 +298,10 @@ verify_web_interface() {
     fi
     local profile_password=""
     if [[ "$profile_fixture" == "true" ]]; then
-        local profile_source="${hardware_profile:-test/profiles/profile-fixture.json}"
+        local profile_source="${hardware_smoke_profile:-test/profiles/profile-fixture.json}"
         profile_password="$(sed -nE 's/^[[:space:]]*"device_password"[[:space:]]*:[[:space:]]*"([^"]*)"[[:space:]]*,?[[:space:]]*$/\1/p' "$profile_source")"
         [[ -n "$profile_password" ]] || { echo "Profile fixture has no device_password" >&2; return 1; }
+        assert_http_endpoint "superseded bootstrap password" "/api/status" 401 "profile-fixture-password"
         assert_http_endpoint "unauthenticated API status" "/api/status" 401 ""
         assert_http_endpoint "unauthenticated stylesheet" "/assets/deviceframework.css" 401 ""
         assert_http_endpoint "unauthenticated logo" "/assets/deviceframework-logo" 401 ""

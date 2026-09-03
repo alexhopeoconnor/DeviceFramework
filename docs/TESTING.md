@@ -22,9 +22,10 @@ non-empty zero-failure result. This keeps USB-UART adapters from producing a
 false green result when PlatformIO’s non-interactive monitor does not reset them.
 
 It then flashes a minimal, separate consuming application with a distinct
-one-time reconcile profile. This proves a real application can accept
-provisioned WiFi after Unity has left a valid V4 record, rather than relying on
-an erased board. Compile-only profile checks also cover a valid profile with no
+one-time reconcile profile and a different device password. This proves a real
+application can accept provisioned WiFi and deliberately rotate the shared
+password after Unity has left a valid V4 record, rather than relying on an
+erased board. Compile-only profile checks also cover a valid profile with no
 `wifi` object, ensuring a profiled firmware can deliberately open interactive
 provisioning without a dummy SSID.
 

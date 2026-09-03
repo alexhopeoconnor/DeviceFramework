@@ -74,9 +74,10 @@ upload and captures the result. It requires a non-empty zero-failure Unity
 result before proceeding.
 
 For a profile fixture, it then flashes the minimal consuming sketch with a
-separate reconcile-profile identity. That makes the WiFi seed apply after the
-Unity run has left a valid V4 record, exercising the intended non-erased-device
-path. The runner waits for its unique mDNS name before it verifies authenticated
+separate reconcile-profile identity and password. That makes the WiFi seed and
+the shared-password rotation apply after the Unity run has left a valid V4
+record, exercising the intended non-erased-device path. The runner waits for
+its unique mDNS name before it verifies authenticated
 status, pages, CSS/JavaScript/logo assets, and password persistence through a
 reboot. Set `DEVICEFRAMEWORK_TEST_DEVICE_HOST` in the ignored env file when
 Avahi or mDNS is unavailable.

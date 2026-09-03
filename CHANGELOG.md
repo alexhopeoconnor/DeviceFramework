@@ -1,5 +1,11 @@
 # Changelog
 
+## 2.5.1
+
+- Correct explicit `reconcile` profiles so a newly applied profile revision updates its supplied shared device password alongside Wi-Fi and parameters.
+- Preserve the active password when a reconcile profile omits `device_password`; bootstrap and corrupt-record recovery behaviour remains unchanged.
+- Strengthen the connected-device regression to require a reconcile deployment to reject its superseded bootstrap password.
+
 ## 2.5.0
 
 - Depend on WiFiManager 3.2.0 so the framework's provisioning tagline and updated portal contract resolve from published tags.
