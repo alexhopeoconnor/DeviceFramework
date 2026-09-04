@@ -3,6 +3,7 @@
 #include "../Utils/TimeUtils.h"
 #include "../DeviceFrameworkDebug.h"
 #include "../Configuration/DeviceFrameworkConfig.h"
+#include "DeviceFrameworkWebAdmissionControl.h"
 #include <new>
 
 // DeviceFrameworkCircularBuffer implementation
@@ -46,31 +47,27 @@ bool DeviceFrameworkCircularBuffer::add(const char* data, size_t length) {
     return true;
 }
 
-String DeviceFrameworkCircularBuffer::extractAll() {
-    if (_dataLength == 0) return "";
-
-    String result = "";
-    result.reserve(_dataLength);
-
-    while (_dataLength > 0) {
-        size_t contiguousRead = getContiguousReadSpace();
-        size_t toRead = min(contiguousRead, _dataLength);
-
-        // Extract chunk
-        for (size_t i = 0; i < toRead; i++) {
-            result += _buffer[(_readPos + i) % _bufferSize];
-        }
-
-        _readPos = (_readPos + toRead) % _bufferSize;
-        _dataLength -= toRead;
-    }
-
-    return result;
-}
 
 size_t DeviceFrameworkCircularBuffer::getDataLength() const {
     return _dataLength;
 }
+const char* DeviceFrameworkCircularBuffer::getContiguousData() const {
+    return _dataLength == 0 || _buffer == nullptr ? nullptr : _buffer + _readPos;
+}
+
+size_t DeviceFrameworkCircularBuffer::getContiguousDataLength() const {
+    return min(getContiguousReadSpace(), _dataLength);
+}
+
+void DeviceFrameworkCircularBuffer::consume(size_t length) {
+    const size_t consumed = min(length, _dataLength);
+    if (consumed == 0 || _bufferSize == 0) {
+        return;
+    }
+    _readPos = (_readPos + consumed) % _bufferSize;
+    _dataLength -= consumed;
+}
+
 
 bool DeviceFrameworkCircularBuffer::isNearFull() const {
     return _dataLength >= (_bufferSize * 0.8); // 80% full
@@ -113,18 +110,65 @@ AsyncWebSocket* DeviceFrameworkWebSerial::_ws = nullptr;
 bool DeviceFrameworkWebSerial::_enabled = false;
 std::function<void(const String&)> DeviceFrameworkWebSerial::_messageCallback = nullptr;
 DeviceFrameworkCircularBuffer* DeviceFrameworkWebSerial::_buffer = nullptr;
-std::vector<ClientState> DeviceFrameworkWebSerial::_clientStates;
+ClientState DeviceFrameworkWebSerial::_clientStates[
+    DeviceFrameworkWebAdmissionControl::kMaximumTrackedWebSerialClients] = {};
+uint8_t DeviceFrameworkWebSerial::_clientStateCount = 0;
 unsigned long DeviceFrameworkWebSerial::_lastFlushTime = 0;
 unsigned long DeviceFrameworkWebSerial::_lastClientCheckTime = 0;
 unsigned long DeviceFrameworkWebSerial::_lastCleanupTime = 0;
 
+bool DeviceFrameworkWebSerial::isExplicitTakeoverRequest(AsyncWebServerRequest* request) {
+    return request != nullptr && request->hasParam("takeover") &&
+           request->getParam("takeover")->value() == "1";
+}
+
+
+void DeviceFrameworkWebSerial::handleWebSocketEvent(AsyncWebSocket* server,
+                                                     AsyncWebSocketClient* client,
+                                                     AwsEventType type, void* arg,
+                                                     uint8_t*, size_t) {
+    if (client == nullptr) {
+        return;
+    }
+
+    if (type == WS_EVT_CONNECT) {
+        AsyncWebServerRequest* request = static_cast<AsyncWebServerRequest*>(arg);
+        uint32_t evictedClientId = 0;
+        const WebSerialAdmissionResult admission =
+            DeviceFrameworkWebAdmissionControl::admitWebSerial(
+                client->id(), isExplicitTakeoverRequest(request),
+                &evictedClientId);
+        if (admission == WebSerialAdmissionResult::RejectedCapacity ||
+            admission == WebSerialAdmissionResult::RejectedMemory) {
+            client->close(1013, "WebSerial busy");
+            return;
+        }
+
+        // Serial output is diagnostic, so dropping a line is preferable to a
+        // full queue closing the socket and making the browser reconnect.
+        client->setCloseClientOnQueueFull(false);
+        if (evictedClientId != 0 && server != nullptr) {
+            server->close(evictedClientId, 4001, "WebSerial replaced");
+        }
+        return;
+    }
+
+    if (type == WS_EVT_DISCONNECT) {
+        DeviceFrameworkWebAdmissionControl::releaseWebSerial(client->id());
+    }
+}
 void DeviceFrameworkWebSerial::begin(AsyncWebServer* server, const char* url) {
     if (!server) {
         LOG_ERRORLN(F("WebSerialTransport: Server is null"));
         return;
     }
 
-    _ws = new AsyncWebSocket(url ? url : "/webserial");
+    _ws = new (std::nothrow) AsyncWebSocket(url ? url : "/webserial");
+    if (_ws == nullptr) {
+        LOG_ERRORLN(F("WebSerialTransport: Failed to allocate WebSocket"));
+        return;
+    }
+    _ws->onEvent(DeviceFrameworkWebSerial::handleWebSocketEvent);
     server->addHandler(_ws);
 
     // Initialize timing
@@ -174,7 +218,7 @@ bool DeviceFrameworkWebSerial::isEnabled() {
 }
 
 bool DeviceFrameworkWebSerial::hasConnections() {
-    return _ws && _ws->count() > 0;
+    return _ws && DeviceFrameworkWebAdmissionControl::activeWebSerialClients() > 0;
 }
 
 void DeviceFrameworkWebSerial::loop() {
@@ -184,6 +228,16 @@ void DeviceFrameworkWebSerial::loop() {
 
     unsigned long now = millis();
 
+    // AsyncWebServer can retain a disconnected client object until its later
+    // housekeeping pass. Refresh our independent admission records promptly:
+    // an already-closed diagnostic tab must not consume a WebSerial slot.
+    if (DeviceFrameworkWebAdmissionControl::activeWebSerialClients() > 0 &&
+        TimeUtils::hasTimeElapsed(now, _lastClientCheckTime,
+                                  getConfigWSClientCheckInterval())) {
+        updateClientStates();
+        _lastClientCheckTime = now;
+    }
+
     // Periodic buffer flush
     if (_buffer && TimeUtils::hasTimeElapsed(now, _lastFlushTime, getConfigWSSendInterval())) {
         if (_buffer->getDataLength() > 0) {
@@ -191,13 +245,22 @@ void DeviceFrameworkWebSerial::loop() {
         }
     }
 
-    // Client cleanup (less frequent now with better buffering)
+    // Keep the bounded client view current and shed one low-priority serial
+    // client only if the configured critical-memory watermark is crossed.
     if (now - _lastCleanupTime >= getConfigWSCleanupInterval()) {
-        _ws->cleanupClients();
+        updateClientStates();
+        uint32_t evictedClientId = 0;
+        if (DeviceFrameworkWebAdmissionControl::shouldShedWebSerialClient(&evictedClientId) &&
+            evictedClientId != 0) {
+            _ws->close(evictedClientId, 1013, "Device memory pressure");
+        }
+        // Admission owns the policy. Passing the upstream default here would
+        // silently evict the oldest client above its unrelated limit.
+        _ws->cleanupClients(0xFFFFU);
         if (!hasConnections() && _buffer && _buffer->getDataLength() == 0) {
             delete _buffer;
             _buffer = nullptr;
-            _clientStates.clear();
+            _clientStateCount = 0;
         }
         _lastCleanupTime = now;
     }
@@ -223,7 +286,7 @@ void DeviceFrameworkWebSerial::end() {
     _ws->closeAll();
 
     // Clean up any remaining clients
-    _ws->cleanupClients();
+    _ws->cleanupClients(0xFFFFU);
 
     // Clean up buffer
     if (_buffer) {
@@ -232,7 +295,7 @@ void DeviceFrameworkWebSerial::end() {
     }
 
     // Clear client states
-    _clientStates.clear();
+    _clientStateCount = 0;
 
     // Reset state
     _enabled = false;
@@ -266,21 +329,36 @@ bool DeviceFrameworkWebSerial::ensureBuffer() {
 void DeviceFrameworkWebSerial::updateClientStates() {
     if (!_ws) return;
 
-    _clientStates.clear();
+    _clientStateCount = 0;
+    const unsigned long checkedAt = millis();
+    bool releasedDisconnectedClient = false;
 
-    // Get all connected clients
+    // Refresh fixed-capacity state without allocating a vector on a busy web server.
     auto& clients = _ws->getClients();
     for (auto& client : clients) {
-        if (client.status() == WS_CONNECTED) {
-            ClientState state;
-            state.id = client.id();
-            state.queueIsFull = client.queueIsFull();
-            state.canSend = client.canSend();
-            state.queueLen = client.queueLen();
-            state.lastCheck = millis();
-
-            _clientStates.push_back(state);
+        if (client.status() != WS_CONNECTED) {
+            DeviceFrameworkWebAdmissionControl::releaseWebSerial(client.id());
+            releasedDisconnectedClient = true;
+            continue;
         }
+        if (_clientStateCount >= DeviceFrameworkWebAdmissionControl::kMaximumTrackedWebSerialClients) {
+            client.close(1013, "WebSerial capacity");
+            continue;
+        }
+
+        ClientState& state = _clientStates[_clientStateCount++];
+        state.id = client.id();
+        state.queueIsFull = client.queueIsFull();
+        state.canSend = client.canSend();
+        state.queueLen = client.queueLen();
+        state.lastCheck = checkedAt;
+        DeviceFrameworkWebAdmissionControl::updateWebSerialClient(
+            state.id, state.queueIsFull, state.canSend, state.queueLen);
+    }
+    if (releasedDisconnectedClient) {
+        // Remove only already-disconnected transport objects. A large limit
+        // avoids AsyncWebServer's unrelated oldest-client eviction policy.
+        _ws->cleanupClients(0xFFFFU);
     }
 }
 
@@ -292,7 +370,8 @@ bool DeviceFrameworkWebSerial::canAnyClientAccept() {
     }
 
     // Return true if any client can accept
-    for (const auto& client : _clientStates) {
+    for (uint8_t index = 0; index < _clientStateCount; ++index) {
+        const ClientState& client = _clientStates[index];
         if (client.canSend && !client.queueIsFull) {
             return true;
         }
@@ -317,29 +396,32 @@ bool DeviceFrameworkWebSerial::shouldFlushImmediately() {
 void DeviceFrameworkWebSerial::flushBuffer() {
     if (!_buffer || !_ws || _buffer->getDataLength() == 0) return;
 
-    // Extract all buffered data (client will handle newlines)
-    String bufferedData = _buffer->extractAll();
-
-    if (bufferedData.length() > 0) {
-        // Send with status checking
-        AsyncWebSocket::SendStatus status = _ws->textAll(bufferedData);
-
-        // Handle different statuses
-        switch (status) {
-            case AsyncWebSocket::DISCARDED:
-                // All clients rejected - back off
-                _lastFlushTime = millis() + getConfigWSBackoffDelay();
-                break;
-            case AsyncWebSocket::PARTIALLY_ENQUEUED:
-                // Some clients accepted - normal timing
-                _lastFlushTime = millis();
-                break;
-            case AsyncWebSocket::ENQUEUED:
-                // All clients accepted - can flush more aggressively
-                _lastFlushTime = millis();
-                break;
-        }
+    if (!hasConnections()) {
+        DeviceFrameworkWebAdmissionControl::recordDroppedWebSerialBytes(_buffer->getDataLength());
+        _buffer->clear();
+        return;
     }
+
+    if (DeviceFrameworkWebAdmissionControl::isCriticalMemoryPressure()) {
+        DeviceFrameworkWebAdmissionControl::recordDroppedWebSerialBytes(_buffer->getDataLength());
+        _buffer->clear();
+        _lastFlushTime = millis() + getConfigWSBackoffDelay();
+        return;
+    }
+
+    const char* chunk = _buffer->getContiguousData();
+    const size_t chunkLength = _buffer->getContiguousDataLength();
+    if (chunk == nullptr || chunkLength == 0) return;
+
+    const AsyncWebSocket::SendStatus status = _ws->textAll(chunk, chunkLength);
+    _buffer->consume(chunkLength);
+    if (status == AsyncWebSocket::DISCARDED) {
+        DeviceFrameworkWebAdmissionControl::recordDroppedWebSerialBytes(chunkLength);
+        _lastFlushTime = millis() + getConfigWSBackoffDelay();
+        return;
+    }
+
+    _lastFlushTime = millis();
 }
 
 void DeviceFrameworkWebSerial::addToBuffer(const char* message, size_t length) {
@@ -350,8 +432,9 @@ void DeviceFrameworkWebSerial::addToBuffer(const char* message, size_t length) {
         // Buffer full - force flush what we have
         flushBuffer();
 
-        // Try again
-        _buffer->add(message, length);
+        if (!_buffer->add(message, length)) {
+            DeviceFrameworkWebAdmissionControl::recordDroppedWebSerialBytes(length);
+        }
     }
 }
 

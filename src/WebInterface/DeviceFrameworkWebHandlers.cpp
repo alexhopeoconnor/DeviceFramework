@@ -11,6 +11,7 @@
 #include "DeviceFrameworkDeviceStatus.h"
 #include "../Utils/TimeUtils.h"
 #include "DeviceFrameworkWeb.h"
+#include "DeviceFrameworkWebAdmissionControl.h"
 #include <TemplateEngine.h>
 #include <TemplateEngineAsyncWeb.h>
 #include "templates/WebInterfaceHTML.h"
@@ -30,6 +31,16 @@ struct StatusStreamResponseState {
     StatusStreamResponseState() : stream(), started(false) {}
 };
 
+template <typename StateT>
+struct BorrowedResponseSlot {
+    StateT state;
+    uint16_t generation;
+    bool inUse;
+};
+
+constexpr uint8_t kResponseSlotCount = DeviceFrameworkWebAdmissionControl::kMaximumStreamPermits;
+BorrowedResponseSlot<StatusStreamResponseState> statusResponseSlots[kResponseSlotCount] = {};
+
 struct Base64LogoResponseState {
     const char* data;
     size_t length;
@@ -41,11 +52,44 @@ struct Base64LogoResponseState {
     bool inputFinished;
     bool complete;
 
+    Base64LogoResponseState()
+        : Base64LogoResponseState(nullptr, 0, false) {}
+
     Base64LogoResponseState(const char* source, size_t sourceLength, bool sourceInProgmem)
         : data(source), length(sourceLength), sourceOffset(0), progmem(sourceInProgmem),
           pending{0, 0, 0}, pendingOffset(0), pendingLength(0),
           inputFinished(false), complete(false) {}
 };
+
+BorrowedResponseSlot<Base64LogoResponseState> logoResponseSlots[kResponseSlotCount] = {};
+
+template <typename StateT>
+BorrowedResponseSlot<StateT>* acquireResponseSlot(
+    BorrowedResponseSlot<StateT>* slots, uint8_t slotCount) {
+    for (uint8_t index = 0; index < slotCount; ++index) {
+        if (!slots[index].inUse) {
+            slots[index].inUse = true;
+            ++slots[index].generation;
+            if (slots[index].generation == 0) {
+                ++slots[index].generation;
+            }
+            return &slots[index];
+        }
+    }
+    return nullptr;
+}
+
+template <typename StateT>
+void releaseResponseSlot(BorrowedResponseSlot<StateT>* slot, uint16_t generation) {
+    if (slot != nullptr && slot->inUse && slot->generation == generation) {
+        slot->inUse = false;
+    }
+}
+
+void sendBusyResponse(AsyncWebServerRequest* request, const char* contentType) {
+    request->send(503, contentType,
+                  "{\"error\":\"busy\",\"message\":\"Device is handling another request\"}");
+}
 
 char readBase64LogoByte(const Base64LogoResponseState& state, size_t offset) {
     return state.progmem ? static_cast<char>(pgm_read_byte(state.data + offset))
@@ -216,16 +260,31 @@ void DeviceFrameworkWebHandlers::handleWebLogo(AsyncWebServerRequest *request) {
         request->send(204);
         return;
     }
-    auto responseState = std::make_shared<Base64LogoResponseState>(
-        logo.base64Data, encodedLength, logo.progmem);
+    WebStreamPermit* permit = DeviceFrameworkWebAdmissionControl::tryAcquireStreamPermit();
+    BorrowedResponseSlot<Base64LogoResponseState>* slot =
+        permit == nullptr ? nullptr : acquireResponseSlot(logoResponseSlots, kResponseSlotCount);
+    if (permit == nullptr || slot == nullptr) {
+        if (permit != nullptr) {
+            DeviceFrameworkWebAdmissionControl::releaseStreamPermit(permit, permit->generation);
+        }
+        sendBusyResponse(request, "text/plain");
+        return;
+    }
+    slot->state = Base64LogoResponseState(logo.base64Data, encodedLength, logo.progmem);
+    const uint16_t permitGeneration = permit->generation;
+    const uint16_t slotGeneration = slot->generation;
     const char* contentType = (logo.mimeType && logo.mimeType[0]) ? logo.mimeType : "image/png";
-    AsyncWebServerResponse* response = TemplateEngineAsyncWeb::beginSafeChunkedResponse(
-        request, contentType, responseState,
+    AsyncWebServerResponse* response = TemplateEngineAsyncWeb::beginBorrowedChunkedResponse(
+        request, contentType, &slot->state,
         [](Base64LogoResponseState& state, uint8_t* buffer, size_t maxLen, size_t /*index*/) -> size_t {
             return renderDecodedLogoChunk(state, buffer, maxLen);
         },
         [](const Base64LogoResponseState& state) -> bool {
             return state.complete;
+        },
+        [permit, permitGeneration, slot, slotGeneration](Base64LogoResponseState&) {
+            releaseResponseSlot(slot, slotGeneration);
+            DeviceFrameworkWebAdmissionControl::releaseStreamPermit(permit, permitGeneration);
         });
     response->addHeader("Cache-Control", "private, max-age=300");
     request->send(response);
@@ -233,17 +292,30 @@ void DeviceFrameworkWebHandlers::handleWebLogo(AsyncWebServerRequest *request) {
 
 void DeviceFrameworkWebHandlers::handleAPIStatus(AsyncWebServerRequest *request) {
     if (!isAuthenticated(request)) return;
-    // Update status before building response
+    WebStreamPermit* permit = DeviceFrameworkWebAdmissionControl::tryAcquireStreamPermit();
+    BorrowedResponseSlot<StatusStreamResponseState>* slot =
+        permit == nullptr ? nullptr : acquireResponseSlot(statusResponseSlots, kResponseSlotCount);
+    if (permit == nullptr || slot == nullptr) {
+        if (permit != nullptr) {
+            DeviceFrameworkWebAdmissionControl::releaseStreamPermit(permit, permit->generation);
+        }
+        sendBusyResponse(request, "application/json");
+        return;
+    }
+    slot->state = StatusStreamResponseState();
+    // Preserve the API's fresh snapshot semantics after admission confirms
+    // the configured headroom for diagnostic work.
     DeviceStatusManager::updateRuntimeInfo();
-    auto responseState = std::make_shared<StatusStreamResponseState>();
-    DeviceStatusManager::resetJSONStreamState(responseState->stream);
+    DeviceStatusManager::resetJSONStreamState(slot->state.stream);
+    const uint16_t permitGeneration = permit->generation;
+    const uint16_t slotGeneration = slot->generation;
 
     // Stream the status JSON directly into the response buffer so we don't
     // materialize the entire document in heap memory first.
-    AsyncWebServerResponse *response = TemplateEngineAsyncWeb::beginSafeChunkedResponse(
+    AsyncWebServerResponse *response = TemplateEngineAsyncWeb::beginBorrowedChunkedResponse(
         request,
         "application/json",
-        responseState,
+        &slot->state,
         [](StatusStreamResponseState& state, uint8_t *buffer, size_t maxLen, size_t /*index*/) -> size_t {
             if (!state.started) {
                 DeviceStatusManager::resetJSONStreamState(state.stream);
@@ -255,6 +327,10 @@ void DeviceFrameworkWebHandlers::handleAPIStatus(AsyncWebServerRequest *request)
         },
         [](const StatusStreamResponseState& state) -> bool {
             return state.stream.complete;
+        },
+        [permit, permitGeneration, slot, slotGeneration](StatusStreamResponseState&) {
+            releaseResponseSlot(slot, slotGeneration);
+            DeviceFrameworkWebAdmissionControl::releaseStreamPermit(permit, permitGeneration);
         });
 
     response->addHeader("Cache-Control", "no-cache, no-store, must-revalidate");
@@ -362,10 +438,17 @@ void DeviceFrameworkWebHandlers::sendStreamingResponse(AsyncWebServerRequest *re
         return;
     }
 
+    WebStreamPermit* permit = DeviceFrameworkWebAdmissionControl::tryAcquireStreamPermit();
+    if (permit == nullptr) {
+        sendBusyResponse(request, "text/plain");
+        return;
+    }
+
     TemplateContext* rawContext = new (std::nothrow) TemplateContext(
         kWebTemplateStackDepth, kWebTemplateReadBufferSize);
     if (rawContext == nullptr || !rawContext->isReady()) {
         delete rawContext;
+        DeviceFrameworkWebAdmissionControl::releaseStreamPermit(permit, permit->generation);
         request->send(503, "text/plain", "Web interface temporarily unavailable");
         return;
     }
@@ -374,8 +457,12 @@ void DeviceFrameworkWebHandlers::sendStreamingResponse(AsyncWebServerRequest *re
     ctx->setRegistry(registry);
     TemplateRenderer::initializeContext(*ctx, baseTemplate);
 
+    const uint16_t permitGeneration = permit->generation;
     AsyncWebServerResponse *response = TemplateEngineAsyncWeb::beginSafeTemplateResponse(
-        request, "text/html", ctx, 128);
+        request, "text/html", ctx, 128,
+        [permit, permitGeneration]() {
+            DeviceFrameworkWebAdmissionControl::releaseStreamPermit(permit, permitGeneration);
+        });
 
     response->addHeader("Cache-Control", "no-cache, no-store, must-revalidate");
     response->addHeader("Pragma", "no-cache");

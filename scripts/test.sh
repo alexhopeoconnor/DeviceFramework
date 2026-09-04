@@ -313,7 +313,7 @@ verify_web_interface() {
         if [[ "$page_pass" == "1" ]]; then
             assert_http_endpoint "web interface stylesheet" "/assets/deviceframework.css" 200 "$profile_password" "Modern CSS Reset" ".page-loader"
             assert_http_endpoint "web interface script" "/assets/deviceframework.js" 200 "$profile_password" "function refreshStatus" "initializeWebSerial"
-            assert_http_endpoint "web interface logo" "/assets/deviceframework-logo" 200 "$profile_password" "IHDR"
+            assert_http_endpoint "web interface logo" "/assets/deviceframework-logo" 200 "$profile_password" "<svg"
         fi
         assert_http_endpoint "custom 404 page (pass $page_pass)" "/notfound" 200 "$profile_password" 404 "Page Not Found" "Return to Home" "</html>"
     done

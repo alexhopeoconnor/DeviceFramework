@@ -24,6 +24,7 @@ void loop() {
 
 Build [Portal First](examples/01-portal-first/) for the complete project. On a clean board it opens the WiFiManager portal; after setup it exposes the existing device web interface and services.
 
+- **Measured web resilience:** platform-aware response and WebSerial limits keep a busy ESP8266 responsive while remaining configurable by a consuming sketch.
 ## What it provides
 
 - **One device lifecycle:** configuration, provisioning, Wi-Fi, mDNS, OTA, MQTT, Home Assistant, and the existing web UI work together without repeated sketch boilerplate.
@@ -46,9 +47,9 @@ Build [Portal First](examples/01-portal-first/) for the complete project. On a c
 
 ```ini
 lib_deps =
-    DeviceFramework=https://github.com/alexhopeoconnor/DeviceFramework.git#v2.5.1
+    DeviceFramework=https://github.com/alexhopeoconnor/DeviceFramework.git#v2.6.0
 ```
 
 PlatformIO clones the repository and checks out the release tag after `#`. The package resolves the compatible WiFiManager, DFTE, ArduinoHA, web, and target-specific dependencies.
 
-See [getting started](docs/GETTING_STARTED.md), [configuration](docs/CONFIGURATION.md), [web UI branding](docs/WEB_UI.md), [examples](examples/README.md), and the [documentation index](docs/README.md).
+See [getting started](docs/GETTING_STARTED.md), [configuration](docs/CONFIGURATION.md), [web UI branding](docs/WEB_UI.md), [web resource limits](docs/WEB_RESOURCES.md), [examples](examples/README.md), and the [documentation index](docs/README.md).

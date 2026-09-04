@@ -35,6 +35,7 @@ void test_mqtt_command_handlers();
 void test_parameter_registry_integration();
 void test_parameter_registry_ha_origin_updates_shadow_state();
 
+extern bool resourceLimitsConfigured;
 // Group 6: Web Interface
 void test_web_interface_methods();
 

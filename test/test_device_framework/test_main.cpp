@@ -63,6 +63,7 @@ TestCase tests[] = {
 };
 
 const size_t TEST_COUNT = sizeof(tests) / sizeof(TestCase);
+bool resourceLimitsConfigured = false;
 
 // Test state variables
 size_t next_index = 0;
@@ -209,7 +210,15 @@ void setup() {
     DeviceFramework::setUIConfig(ui);
     Serial.println("[TEST]     Shared UI configured");
 
+    // A consuming sketch configures web policy before framework setup. Give
+    // this test firmware room for two ordinary concurrent status responses.
+    DeviceFrameworkWebResourceLimits webResourceLimits =
+        DeviceFrameworkWeb::defaultResourceLimits();
+    webResourceLimits.maxConcurrentStreamResponses = 2;
+    resourceLimitsConfigured = DeviceFrameworkWeb::setResourceLimits(webResourceLimits);
+
     Serial.println("[TEST]     Registering parameters...");
+
     DeviceFramework::beforeSetup([]() {
         auto& paramRegistry = DeviceFrameworkParameters::getRegistry();
         DeviceFrameworkParameterMetadata testParamMeta;

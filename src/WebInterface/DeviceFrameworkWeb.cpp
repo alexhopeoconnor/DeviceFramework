@@ -1,6 +1,7 @@
 #ifdef ENABLE_WEB_INTERFACE
 #include "DeviceFrameworkWeb.h"
 #include "DeviceFrameworkWebHandlers.h"
+#include "DeviceFrameworkWebAdmissionControl.h"
 #include "DeviceFrameworkWebSerial.h"
 #include "DeviceFrameworkTemplatePlaceholders.h"
 #include "DeviceFrameworkDeviceStatus.h"
@@ -8,9 +9,73 @@
 #include "../WiFi/DeviceFrameworkWiFi.h"
 #include "../DeviceFramework.h"
 #include "../Utils/TimeUtils.h"
+#include <DeviceFrameworkPlatform.h>
 
 AsyncWebServer* DeviceFrameworkWeb::webServer = nullptr;
 bool DeviceFrameworkWeb::webInterfaceEnabled = false;
+bool DeviceFrameworkWeb::resourceLimitsLocked = false;
+DeviceFrameworkWebResourceLimits DeviceFrameworkWeb::resourceLimits =
+    DeviceFrameworkWeb::defaultResourceLimits();
+
+DeviceFrameworkWebResourceLimits DeviceFrameworkWeb::defaultResourceLimits() {
+#if defined(DF_PLATFORM_ESP8266)
+    return {
+        1,
+        2,
+        {
+            12UL * 1024UL,
+            8UL * 1024UL,
+            8UL * 1024UL,
+            6UL * 1024UL,
+        },
+        WebSerialAdmissionPolicy::PreserveExisting,
+    };
+#else
+    return {
+        6,
+        12,
+        {
+            64UL * 1024UL,
+            32UL * 1024UL,
+            32UL * 1024UL,
+            16UL * 1024UL,
+        },
+        WebSerialAdmissionPolicy::PreserveExisting,
+    };
+#endif
+}
+
+bool DeviceFrameworkWeb::validateResourceLimits(
+    const DeviceFrameworkWebResourceLimits& limits) {
+    if (limits.maxConcurrentStreamResponses == 0 ||
+        limits.maxConcurrentStreamResponses > DeviceFrameworkWebAdmissionControl::kMaximumStreamPermits ||
+        limits.maxWebSerialClients == 0 ||
+        limits.maxWebSerialClients > DeviceFrameworkWebAdmissionControl::kMaximumTrackedWebSerialClients) {
+        return false;
+    }
+
+    return limits.memory.shedWebSerialBelowFreeHeapBytes <=
+               limits.memory.rejectNewBelowFreeHeapBytes &&
+           limits.memory.shedWebSerialBelowLargestBlockBytes <=
+               limits.memory.rejectNewBelowLargestBlockBytes;
+}
+
+bool DeviceFrameworkWeb::setResourceLimits(
+    const DeviceFrameworkWebResourceLimits& limits) {
+    if (resourceLimitsLocked || !validateResourceLimits(limits)) {
+        return false;
+    }
+    resourceLimits = limits;
+    return true;
+}
+
+const DeviceFrameworkWebResourceLimits& DeviceFrameworkWeb::getResourceLimits() {
+    return resourceLimits;
+}
+
+DeviceFrameworkWebResourceStats DeviceFrameworkWeb::getResourceStats() {
+    return DeviceFrameworkWebAdmissionControl::stats();
+}
 
 void DeviceFrameworkWeb::setup() {
     if (webServer) {
@@ -27,6 +92,9 @@ void DeviceFrameworkWeb::setup() {
 
     // Setup template placeholders (creates registry and registers all placeholders)
     DeviceFrameworkTemplatePlaceholders::setup();
+
+    DeviceFrameworkWebAdmissionControl::begin(resourceLimits);
+    resourceLimitsLocked = true;
 
     webServer = new AsyncWebServer(80);
 
@@ -78,6 +146,8 @@ void DeviceFrameworkWeb::cleanup() {
 
     // Cleanup template placeholders (destroys registry)
     DeviceFrameworkTemplatePlaceholders::cleanup();
+
+    DeviceFrameworkWebAdmissionControl::end();
 
     // Reset state
     webInterfaceEnabled = false;

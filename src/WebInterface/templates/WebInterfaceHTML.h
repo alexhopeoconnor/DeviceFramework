@@ -102,7 +102,6 @@ const char PROGMEM spa_content_template[] = R"rawliteral(
                     <p><strong>Uptime:</strong> <span id="device-uptime" class="status-value">Loading...</span></p>
                     <p><strong>CPU:</strong> <span id="device-cpu-freq" class="status-value">Loading...</span> MHz</p>
                     <p><strong>Flash:</strong> <span id="device-flash-size" class="status-value">Loading...</span></p>
-                    <p><strong>Config Mode:</strong> <span id="config-mode" class="status-value">Loading...</span></p>
                     <p><strong>Log Level:</strong> <span id="log-level" class="status-value">Loading...</span></p>
                 </div>
             </div>

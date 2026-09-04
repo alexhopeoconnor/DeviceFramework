@@ -7,7 +7,9 @@
 #include <TemplateEngine.h>
 #include <WebInterface/DeviceFrameworkTemplatePlaceholders.h>
 #include <WebInterface/DeviceFrameworkDeviceStatus.h>
+#include <WebInterface/DeviceFrameworkWebAdmissionControl.h>
 #include <Utils/PrintAdapters.h>
+#include "../test_main.h"
 #include <WebInterface/templates/WebInterfaceHTML.h>
 
 namespace {
@@ -184,6 +186,45 @@ void assertStatusJSONStreamsInSmallChunks() {
 
 // Test WebInterface methods
 void test_web_interface_methods() {
+    TEST_ASSERT_TRUE_MESSAGE(resourceLimitsConfigured,
+        "A sketch must be able to set a valid web resource policy before setup");
+    const DeviceFrameworkWebResourceLimits& resourceLimits =
+        DeviceFrameworkWeb::getResourceLimits();
+    TEST_ASSERT_GREATER_THAN_UINT8_MESSAGE(0, resourceLimits.maxConcurrentStreamResponses,
+        "Web response capacity must be non-zero");
+    TEST_ASSERT_EQUAL_UINT8_MESSAGE(2, resourceLimits.maxConcurrentStreamResponses,
+        "The sketch-selected stream capacity must be retained at setup");
+    TEST_ASSERT_GREATER_THAN_UINT8_MESSAGE(0, resourceLimits.maxWebSerialClients,
+        "WebSerial capacity must be non-zero");
+    const DeviceFrameworkWebResourceStats resourceStats =
+        DeviceFrameworkWeb::getResourceStats();
+    TEST_ASSERT_TRUE_MESSAGE(resourceStats.activeStreamResponses <= resourceLimits.maxConcurrentStreamResponses,
+        "Active stream count must remain within the configured capacity");
+    TEST_ASSERT_TRUE_MESSAGE(resourceStats.activeWebSerialClients <= resourceLimits.maxWebSerialClients,
+        "Active WebSerial count must remain within the configured capacity");
+    TEST_ASSERT_FALSE_MESSAGE(DeviceFrameworkWeb::setResourceLimits(resourceLimits),
+        "Web resource policy must lock once the interface has started");
+
+    WebStreamPermit* firstPermit = DeviceFrameworkWebAdmissionControl::tryAcquireStreamPermit();
+    WebStreamPermit* secondPermit = DeviceFrameworkWebAdmissionControl::tryAcquireStreamPermit();
+    if (firstPermit == nullptr || secondPermit == nullptr) {
+        if (firstPermit != nullptr) {
+            DeviceFrameworkWebAdmissionControl::releaseStreamPermit(
+                firstPermit, firstPermit->generation);
+        }
+        if (secondPermit != nullptr) {
+            DeviceFrameworkWebAdmissionControl::releaseStreamPermit(
+                secondPermit, secondPermit->generation);
+        }
+        TEST_FAIL_MESSAGE("Configured stream permits should be acquirable");
+        return;
+    }
+    TEST_ASSERT_NULL_MESSAGE(DeviceFrameworkWebAdmissionControl::tryAcquireStreamPermit(),
+        "The response controller must reject work above the configured limit");
+    DeviceFrameworkWebAdmissionControl::releaseStreamPermit(firstPermit, firstPermit->generation);
+    DeviceFrameworkWebAdmissionControl::releaseStreamPermit(secondPermit, secondPermit->generation);
+    TEST_ASSERT_EQUAL_UINT8_MESSAGE(0, DeviceFrameworkWeb::getResourceStats().activeStreamResponses,
+        "Released response permits must be returned to the controller");
     // Test WebInterface enabled status - should be true since it's running in test mode
     bool enabled = DeviceFrameworkWeb::isEnabled();
     TEST_ASSERT_TRUE_MESSAGE(enabled,

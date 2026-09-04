@@ -1,11 +1,11 @@
 {
   "$schema": "https://raw.githubusercontent.com/platformio/platformio-core/develop/platformio/assets/schema/library.json",
   "name": "DeviceFramework",
-  "version": "2.5.1",
+  "version": "2.6.0",
   "build": {
     "extraScript": "tools/platformio/profile.py",
     "flags": [
-      "-DDEVICEFRAMEWORK_LIBRARY_VERSION=\\\"2.5.1\\\""
+      "-DDEVICEFRAMEWORK_LIBRARY_VERSION=\\\"2.6.0\\\""
     ]
   },
   "description": "Reusable ESP8266 and ESP32 device framework with WiFi provisioning, MQTT, OTA, local web UI, and Home Assistant integration.",
@@ -45,7 +45,7 @@
     },
     {
       "name": "DeviceFrameworkTemplateEngine",
-      "version": "https://github.com/alexhopeoconnor/DFTE.git#v1.1.0"
+      "version": "https://github.com/alexhopeoconnor/DFTE.git#v1.2.0"
     },
     {
       "name": "home-assistant-integration",

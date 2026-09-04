@@ -4,6 +4,8 @@ DeviceFramework releases document the library stack in one place instead of dupl
 
 | DeviceFramework | WiFiManager | DFTE | home-assistant-integration | Platforms |
 | --- | --- | --- | --- | --- |
+| 2.6.x | 3.2.0 | 1.2.0 | 3.1.0 | ESP8266, ESP32 |
+| 2.5.x | 3.2.0 | 1.1.0 | 3.1.0 | ESP8266, ESP32 |
 | 2.4.x | 3.1.0 | 1.1.0 | 3.1.0 | ESP8266, ESP32 |
 | 2.3.x | 3.1.0 | 1.1.0 | 3.0.2 | ESP8266, ESP32 |
 | 2.2.x | 3.1.0 | 1.0.2 | 3.0.0 | ESP8266, ESP32 |

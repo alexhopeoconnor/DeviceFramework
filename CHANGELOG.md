@@ -1,5 +1,13 @@
 # Changelog
 
+## 2.6.0
+
+- Add a platform-aware `DeviceFrameworkWebResourceLimits` policy, configured before setup, for bounded streamed responses, WebSerial capacity, memory headroom, and admission behavior.
+- Serve built-in status and logo responses from fixed framework-owned slots, while bounding the remaining streamed page work instead of allowing an unbounded set of active responses.
+- Replace WebSerial's dynamic client view and extraction `String` allocations with fixed client records and direct circular-buffer slices; overloads close with WebSocket code 1013 and diagnostic log data is dropped before device work is threatened.
+- Refine existing web status polling and serial-tab lifecycle handling to avoid overlapping requests, stale error noise, and unnecessary diagnostic connections.
+- Depend on DFTE 1.2.0 and document the measured resource policy, observability counters, configuration contract, and regression coverage.
+
 ## 2.5.1
 
 - Correct explicit `reconcile` profiles so a newly applied profile revision updates its supplied shared device password alongside Wi-Fi and parameters.

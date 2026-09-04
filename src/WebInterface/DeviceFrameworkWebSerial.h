@@ -5,7 +5,6 @@
 #include <Arduino.h>
 #include <ESPAsyncWebServer.h>
 #include <functional>
-#include <vector>
 
 // Circular buffer for WebSocket message buffering
 class DeviceFrameworkCircularBuffer {
@@ -16,8 +15,12 @@ public:
     // Add data to buffer
     bool add(const char* data, size_t length);
 
-    // Extract all buffered data (for client-side newline handling)
-    String extractAll();
+
+    // Access and consume the next contiguous slice without materialising a
+    // second heap String. The caller must consume exactly what it sent.
+    const char* getContiguousData() const;
+    size_t getContiguousDataLength() const;
+    void consume(size_t length);
 
     // Get available space
     size_t getAvailableSpace() const;
@@ -86,7 +89,8 @@ private:
 
     // Buffering system
     static DeviceFrameworkCircularBuffer* _buffer;
-    static std::vector<ClientState> _clientStates;
+    static ClientState _clientStates[];
+    static uint8_t _clientStateCount;
 
     // Timing
     static unsigned long _lastFlushTime;
@@ -95,14 +99,15 @@ private:
 
     // Helper methods
     static void updateClientStates();
+    static void handleWebSocketEvent(AsyncWebSocket* server, AsyncWebSocketClient* client,
+                                     AwsEventType type, void* arg, uint8_t* data, size_t len);
+    static bool isExplicitTakeoverRequest(AsyncWebServerRequest* request);
     static bool ensureBuffer();
     static bool canAnyClientAccept();
     static bool shouldFlushImmediately();
     static void flushBuffer();
     static void addToBuffer(const char* message, size_t length);
 
-    // Helper for getting all buffered data at once (simpler than extractAll)
-    static String getAllBufferedData();
 };
 
 #endif // ENABLE_WEB_INTERFACE

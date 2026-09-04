@@ -7,10 +7,14 @@
 const char PROGMEM js_scripts[] = R"rawliteral(
 // Modern JavaScript for SPA functionality
 let statusUpdateInterval;
+let statusRequestInFlight = false;
+let statusErrorShown = false;
 let autoScrollSerial = true;
 let webserialSocket = null;
 let webserialConnected = false;
+let webserialDesired = false;
 let webserialReconnectAttempts = 0;
+let webserialReconnectTimer = null;
 let webserialLastMessageTime = 0;
 let webserialHeartbeatInterval = null;
 
@@ -26,7 +30,6 @@ document.addEventListener('DOMContentLoaded', function() {
         loadStatus();
         setupEventListeners();
         initializeSerialMonitor();
-        initializeWebSerial();
         loadSavedIntervals();
 
         // Handle initial hash navigation
@@ -85,6 +88,9 @@ function closeMobileNav() {
 
 // Load status from API
 async function loadStatus() {
+    if (statusRequestInFlight) return;
+
+    statusRequestInFlight = true;
     try {
         const response = await fetch('/api/status');
         if (!response.ok) {
@@ -96,8 +102,13 @@ async function loadStatus() {
         clearErrorState();
     } catch (error) {
         console.error('Error loading status:', error);
-        showError('Failed to load device status: ' + error.message);
+        if (!statusErrorShown) {
+            showError('Failed to load device status: ' + error.message);
+            statusErrorShown = true;
+        }
         setErrorState();
+    } finally {
+        statusRequestInFlight = false;
     }
 }
 
@@ -117,6 +128,7 @@ function setErrorState() {
 
 // Clear error state
 function clearErrorState() {
+    statusErrorShown = false;
     const errorElements = document.querySelectorAll('.status-value.error');
     errorElements.forEach(element => {
         element.classList.remove('error');
@@ -152,8 +164,6 @@ function updateStatusDisplay(data) {
             const rssi = parseInt(wifi.rssi) || -100;
             updateWifiSignalBars(rssi);
 
-            // Update WiFi stability information
-            updateWiFiStabilityInfo(wifi);
         }
 
         // Update MQTT stability information
@@ -167,8 +177,6 @@ function updateStatusDisplay(data) {
             // Update MQTT status indicator
             updateStatusIndicator('mqtt-indicator', mqtt.connected);
 
-            // Update MQTT stability information
-            updateMQTTStabilityInfo(mqtt);
         }
 
         // Update Device Information
@@ -176,7 +184,6 @@ function updateStatusDisplay(data) {
             const device = data.runtime.device;
             updateElement('device-name', device.name || 'Unknown');
             updateElement('device-uptime', formatUptime(device.uptime));
-            // Remove config-mode display as it's not relevant when web interface is active
         }
 
         // Update Enhanced Memory Information
@@ -189,8 +196,6 @@ function updateStatusDisplay(data) {
             updateElement('memory-usage', memoryUsage);
             updateMemoryBar(memoryUsage);
 
-            // Update enhanced memory information
-            updateMemoryStabilityInfo(memory);
         }
 
         // Update Flash Information
@@ -200,11 +205,6 @@ function updateStatusDisplay(data) {
         const flashUsage = Math.round((data.hardware.sketch_size / data.hardware.flash_size) * 100);
         updateElement('flash-usage', flashUsage);
         updateFlashBar(flashUsage);
-
-        // Update Stability Information
-        if (data.runtime && data.runtime.stability) {
-            updateStabilityInfo(data.runtime.stability);
-        }
 
         // Update Logging Information
         if (data.runtime && data.runtime.logging) {
@@ -216,11 +216,6 @@ function updateStatusDisplay(data) {
 
             // Update WebSocket connection based on serial status
             updateWebSocketConnection(logging.serial_enabled, logging.web_serial_enabled);
-        }
-
-        // Update System Health
-        if (data.runtime && data.runtime.health) {
-            updateSystemHealthInfo(data.runtime.health);
         }
 
     } catch (error) {
@@ -382,14 +377,20 @@ function hidePageLoader() {
 function handleHashNavigation() {
     const hash = window.location.hash.substring(1); // Remove the #
     const sections = ['device-status', 'serial-output', 'controls'];
+    if (document.getElementById('about')) {
+        sections.push('about');
+    }
+    const visibleSections = sections.filter(sectionId =>
+        sectionId !== 'serial-output' || serialAvailable
+    );
 
     // If no hash or invalid hash, show all sections and scroll to top
-    if (!hash || !sections.includes(hash)) {
+    if (!hash || !visibleSections.includes(hash)) {
         // Show all sections
         sections.forEach(sectionId => {
             const section = document.getElementById(sectionId);
             if (section) {
-                section.style.display = 'block';
+                section.style.display = visibleSections.includes(sectionId) ? 'block' : 'none';
             }
         });
 
@@ -410,7 +411,7 @@ function handleHashNavigation() {
     sections.forEach(sectionId => {
         const section = document.getElementById(sectionId);
         if (section) {
-            section.style.display = 'block';
+            section.style.display = visibleSections.includes(sectionId) ? 'block' : 'none';
         }
     });
 
@@ -430,14 +431,18 @@ function handleHashNavigation() {
 }
 
 // Update serial availability based on device configuration
+let serialAvailable = true;
+
 function updateSerialAvailability(serialEnabled) {
     const serialSection = document.getElementById('serial-output');
     const serialNavLink = document.querySelector('a[href="#serial-output"]');
 
     if (!serialSection || !serialNavLink) return;
 
+    serialAvailable = serialEnabled !== false;
+
     // Hide serial section and nav link if serial is disabled for this device
-    if (serialEnabled === false) {
+    if (!serialAvailable) {
         serialSection.style.display = 'none';
         serialNavLink.style.display = 'none';
 
@@ -451,96 +456,17 @@ function updateSerialAvailability(serialEnabled) {
     }
 }
 
-// Enhanced status update functions
-function updateWiFiStabilityInfo(wifi) {
-    const wifiStabilityElement = document.getElementById('wifi-stability');
-    if (wifiStabilityElement) {
-        const stabilityClass = wifi.is_stable ? 'stable' : 'unstable';
-        wifiStabilityElement.className = `wifi-stability ${stabilityClass}`;
-        wifiStabilityElement.innerHTML = `
-            <div>Connected: ${Math.floor(wifi.connection_duration / 60)}m ${wifi.connection_duration % 60}s</div>
-            <div>Disconnections: ${wifi.total_disconnections}</div>
-            <div>Status: ${wifi.is_stable ? 'Stable' : 'Unstable'}</div>
-        `;
-    }
-}
-
-function updateMQTTStabilityInfo(mqtt) {
-    const mqttStabilityElement = document.getElementById('mqtt-stability');
-    if (mqttStabilityElement) {
-        const stabilityClass = mqtt.is_stable ? 'stable' : 'unstable';
-        mqttStabilityElement.className = `mqtt-stability ${stabilityClass}`;
-        mqttStabilityElement.innerHTML = `
-            <div>Connected: ${Math.floor(mqtt.connection_duration / 60)}m ${mqtt.connection_duration % 60}s</div>
-            <div>Disconnections: ${mqtt.total_disconnections}</div>
-            <div>Status: ${mqtt.is_stable ? 'Stable' : 'Unstable'}</div>
-        `;
-    }
-}
-
-function updateMemoryStabilityInfo(memory) {
-    const memoryStabilityElement = document.getElementById('memory-stability');
-    if (memoryStabilityElement) {
-        const deltaText = memory.free_heap_delta > 0 ? `+${memory.free_heap_delta}` : `${memory.free_heap_delta}`;
-        memoryStabilityElement.innerHTML = `
-            <div>Max Block: ${formatBytes(memory.max_block)}</div>
-            <div>Fragmentation: ${memory.fragmentation}%</div>
-            <div>Change since last status: ${deltaText}</div>
-            <div>Highest free since boot: ${formatBytes(memory.highest_free)}</div>
-            <div>Lowest free since boot: ${formatBytes(memory.lowest_free)}</div>
-        `;
-    }
-}
-
-function updateStabilityInfo(stability) {
-    const stabilityElement = document.getElementById('device-stability');
-    if (stabilityElement) {
-        const stabilityClass = stability.is_stable ? 'stable' : 'unstable';
-        stabilityElement.className = `device-stability ${stabilityClass}`;
-        stabilityElement.innerHTML = `
-            <div>Resets: ${stability.reset_count}</div>
-            <div>Uptime: ${Math.floor(stability.time_since_reset / 1000)}s</div>
-            <div>Total Uptime: ${formatUptime(stability.total_uptime)}</div>
-            <div>Status: ${stability.is_stable ? 'Stable' : 'Unstable'}</div>
-        `;
-    }
-}
-
-function updateSystemHealthInfo(health) {
-    const healthElement = document.getElementById('system-health');
-    if (healthElement) {
-        const healthClass = health.system_healthy ? 'healthy' : 'unhealthy';
-        healthElement.className = `system-health ${healthClass}`;
-        healthElement.innerHTML = `
-            <div>Status updates: ${health.status_update_count}</div>
-            <div>Last status update: ${health.last_status_update_ms}ms</div>
-            <div>Heap trend: ${health.free_heap_trend_bytes_per_minute} B/min</div>
-            <div>Status: ${health.system_healthy ? 'Healthy' : 'Unhealthy'}</div>
-        `;
-    }
-}
-
 function updateWebSocketConnection(serialEnabled, webSerialEnabled) {
-    const serialStatus = document.getElementById('serial-status');
-    if (serialStatus) {
-        const isSerialEnabled = serialEnabled;
-        const logLevel = document.getElementById('log-level')?.textContent || 'Unknown';
-        const webSerialEnabled = webSerialEnabled;
+    const shouldConnect = serialEnabled === true && webSerialEnabled === true;
+    if (webserialDesired === shouldConnect) {
+        return;
+    }
 
-        serialStatus.className = `serial-status serial-${isSerialEnabled ? 'enabled' : 'disabled'}`;
-        serialStatus.textContent = isSerialEnabled ?
-            `● Serial (${logLevel})` : '● Serial Disabled';
-
-        // Enable/disable WebSocket based on serial status
-        if (isSerialEnabled && webSerialEnabled) {
-            if (!webserialConnected) {
-                initializeWebSerial();
-            }
-        } else {
-            if (webserialConnected) {
-                stopWebSerial();
-            }
-        }
+    webserialDesired = shouldConnect;
+    if (webserialDesired) {
+        initializeWebSerial();
+    } else {
+        stopWebSerial();
     }
 }
 
@@ -584,13 +510,24 @@ function initializeSerialMonitor() {
 
 // Initialize WebSocket connection for real-time serial output
 function initializeWebSerial() {
+    if (!webserialDesired ||
+        (webserialSocket && (webserialSocket.readyState === WebSocket.CONNECTING ||
+            webserialSocket.readyState === WebSocket.OPEN))) {
+        return;
+    }
+
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
     const wsUrl = `${protocol}//${window.location.host}/webserial`;
 
     try {
-        webserialSocket = new WebSocket(wsUrl);
+        const socket = new WebSocket(wsUrl);
+        webserialSocket = socket;
 
-        webserialSocket.onopen = function(event) {
+        socket.onopen = function(event) {
+            if (!webserialDesired || webserialSocket !== socket) {
+                socket.close();
+                return;
+            }
             webserialConnected = true;
             webserialReconnectAttempts = 0;
             webserialLastMessageTime = Date.now();
@@ -605,7 +542,7 @@ function initializeWebSerial() {
             startWebSerialHeartbeat();
         };
 
-        webserialSocket.onmessage = function(event) {
+        socket.onmessage = function(event) {
             // Update last message time for health monitoring
             webserialLastMessageTime = Date.now();
 
@@ -613,10 +550,19 @@ function initializeWebSerial() {
             processWebSocketMessage(event.data);
         };
 
-        webserialSocket.onclose = function(event) {
+        socket.onclose = function(event) {
+            if (webserialSocket !== socket) return;
+
+            webserialSocket = null;
             webserialConnected = false;
             webserialConnectionTime = null;
             stopWebSerialHeartbeat();
+
+            if (!webserialDesired) {
+                updateWebSerialStatus('disconnected');
+                return;
+            }
+
             addSerialLine('WebSerial disconnected - attempting reconnection...');
             console.log('WebSerial WebSocket disconnected');
 
@@ -627,14 +573,14 @@ function initializeWebSerial() {
             const delay = Math.min(1000 * Math.pow(2, webserialReconnectAttempts), 30000);
             webserialReconnectAttempts++;
 
-            setTimeout(() => {
-                if (!webserialConnected) {
+            webserialReconnectTimer = setTimeout(() => {
+                if (webserialDesired && !webserialConnected) {
                     initializeWebSerial();
                 }
             }, delay);
         };
 
-        webserialSocket.onerror = function(error) {
+        socket.onerror = function(error) {
             console.error('WebSerial WebSocket error:', error);
             addSerialLine('WebSerial error - connection unstable');
         };
@@ -643,6 +589,27 @@ function initializeWebSerial() {
         console.error('Failed to initialize WebSerial WebSocket:', error);
         addSerialLine('WebSerial initialization failed - using polling only');
     }
+}
+
+function stopWebSerial() {
+    if (webserialReconnectTimer) {
+        clearTimeout(webserialReconnectTimer);
+        webserialReconnectTimer = null;
+    }
+    stopWebSerialHeartbeat();
+    webserialConnected = false;
+    webserialConnectionTime = null;
+
+    if (webserialSocket) {
+        const socket = webserialSocket;
+        webserialSocket = null;
+        socket.onclose = null;
+        if (socket.readyState !== WebSocket.CLOSED) {
+            socket.close();
+        }
+    }
+
+    updateWebSerialStatus('disconnected');
 }
 
 // WebSocket health monitoring with keepalive pings
