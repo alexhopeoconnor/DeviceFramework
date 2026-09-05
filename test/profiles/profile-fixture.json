@@ -11,5 +11,5 @@
       { "ssid": "profile-fixture-network", "password": "fixture-password" }
     ]
   },
-  "device_password": "profile-fixture-password"
+  "device_password": "default1"
 }

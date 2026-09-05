@@ -24,7 +24,7 @@ void test_device_framework_ui_configuration() {
     TEST_ASSERT_NOT_NULL(stylesheet);
     TEST_ASSERT_NOT_EQUAL(-1, String(stylesheet).indexOf("id='df-web-theme'"));
     TEST_ASSERT_NOT_EQUAL(-1, String(stylesheet).indexOf("--df-accent:#15803d;"));
-    TEST_ASSERT_NOT_EQUAL(-1, String(DeviceFrameworkUI::getAboutNavigation()).indexOf("#about"));
+    TEST_ASSERT_NOT_EQUAL(-1, String(DeviceFrameworkUI::getAboutNavigation()).indexOf("/about"));
     const String about = DeviceFrameworkUI::getAboutSection();
     TEST_ASSERT_NOT_EQUAL(-1, about.indexOf("fixed product About"));
     TEST_ASSERT_NOT_EQUAL(-1, about.indexOf("https://example.test"));

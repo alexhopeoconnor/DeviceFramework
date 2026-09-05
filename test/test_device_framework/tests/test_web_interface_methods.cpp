@@ -11,19 +11,45 @@
 #include <Utils/PrintAdapters.h>
 #include "../test_main.h"
 #include <WebInterface/templates/WebInterfaceHTML.h>
+#include <WebInterface/templates/WebInterfaceJS.h>
 
 namespace {
 
-// ESPAsyncWebServer can provide 1,064-byte response chunks on ESP8266. Keep
-// this verification buffer in BSS: production receives that server-owned
-// buffer, so allocating another one from the fixture heap would test an
-// artificial failure mode and can invoke the ESP8266 core OOM exception.
+// ESPAsyncWebServer can provide 1,064-byte response chunks on ESP8266. The
+// server owns that buffer in production, so exercise the renderer with the
+// same size without permanently reserving a second fake response buffer in
+// the hardware fixture's BSS.
 constexpr size_t kAsyncWebChunkSize = 1064;
-uint8_t asyncWebChunkBuffer[kAsyncWebChunkSize];
+// Matches the production renderer context: ROOT + shell pair + header pair +
+// ABOUT_NAV data placeholder. The header owns its one navigation fragment.
+constexpr size_t kConstrainedWebTemplateStackDepth = 6;
+
+// Both the generated script and the expected marker live in PROGMEM. ESP8266
+// strstr_P accepts a RAM haystack and a PROGMEM needle, so using it for this
+// pair can dereference the flash address as RAM. Keep this assertion bounded
+// and read each byte through the platform's PROGMEM accessor instead.
+bool progmemContains(PGM_P haystack, PGM_P needle) {
+    const size_t needleLength = strlen_P(needle);
+    if (needleLength == 0) {
+        return true;
+    }
+
+    for (size_t offset = 0; pgm_read_byte(haystack + offset) != '\0'; ++offset) {
+        size_t index = 0;
+        while (index < needleLength &&
+               pgm_read_byte(haystack + offset + index) == pgm_read_byte(needle + index)) {
+            ++index;
+        }
+        if (index == needleLength) {
+            return true;
+        }
+    }
+    return false;
+}
 
 void assertTemplateCompletesIntoBuffer(const char* templateData, const char* description,
                                        uint8_t* buffer, size_t bufferSize) {
-    TemplateContext context(6, 128);
+    TemplateContext context(kConstrainedWebTemplateStackDepth, 128);
     TEST_ASSERT_TRUE_MESSAGE(context.isReady(), "Constrained web context should allocate");
     context.setRegistry(DeviceFrameworkTemplatePlaceholders::getRegistry());
     TemplateRenderer::initializeContext(context, templateData);
@@ -61,18 +87,19 @@ void assertTemplateCompletesWithAsyncSizedChunks(const char* templateData,
                                                  const char* description) {
     // ESPAsyncWebServer supplies up to 1,064 payload bytes after chunk framing
     // on ESP8266 (two 536-byte TCP MSS buffers minus eight framing bytes).
+    uint8_t asyncWebChunkBuffer[kAsyncWebChunkSize];
     assertTemplateCompletesIntoBuffer(
         templateData, description, asyncWebChunkBuffer, sizeof(asyncWebChunkBuffer));
 }
 
-void assertTemplateContainsMarkers(const char* templateData, const char* description,
-                                   const char* const* markers, size_t markerCount) {
+void assertTemplateMarkers(const char* templateData, const char* description,
+                           const char* const* markers, size_t markerCount, bool expected) {
     constexpr size_t kWindowCapacity = 256;
     constexpr size_t kMaxMarkers = 16;
     bool found[kMaxMarkers] = {};
     TEST_ASSERT_LESS_OR_EQUAL_UINT32(kMaxMarkers, markerCount);
 
-    TemplateContext context(6, 128);
+    TemplateContext context(kConstrainedWebTemplateStackDepth, 128);
     TEST_ASSERT_TRUE_MESSAGE(context.isReady(), "Constrained web context should allocate");
     context.setRegistry(DeviceFrameworkTemplatePlaceholders::getRegistry());
     TemplateRenderer::initializeContext(context, templateData);
@@ -102,9 +129,61 @@ void assertTemplateContainsMarkers(const char* templateData, const char* descrip
     TEST_ASSERT_FALSE_MESSAGE(TemplateRenderer::hasError(context), description);
     TEST_ASSERT_TRUE_MESSAGE(TemplateRenderer::isComplete(context), description);
     for (size_t marker = 0; marker < markerCount; ++marker) {
-        TEST_ASSERT_TRUE_MESSAGE(found[marker], markers[marker]);
+        if (expected) {
+            TEST_ASSERT_TRUE_MESSAGE(found[marker], markers[marker]);
+        } else {
+            TEST_ASSERT_FALSE_MESSAGE(found[marker], markers[marker]);
+        }
     }
 }
+
+void assertTemplateContainsMarkers(const char* templateData, const char* description,
+                                   const char* const* markers, size_t markerCount) {
+    assertTemplateMarkers(templateData, description, markers, markerCount, true);
+}
+
+void assertTemplateOmitsMarkers(const char* templateData, const char* description,
+                                const char* const* markers, size_t markerCount) {
+    assertTemplateMarkers(templateData, description, markers, markerCount, false);
+}
+
+struct JSONStreamStructure {
+    char stack[16] = {};
+    uint8_t depth = 0;
+    bool inString = false;
+    bool escaped = false;
+    bool invalid = false;
+
+    void consume(const uint8_t* bytes, size_t length) {
+        for (size_t index = 0; index < length; ++index) {
+            const char byte = static_cast<char>(bytes[index]);
+            if (inString) {
+                if (escaped) { escaped = false; continue; }
+                if (byte == 92) { escaped = true; continue; }
+                if (byte == 34) { inString = false; continue; }
+                if (static_cast<uint8_t>(byte) < 0x20) invalid = true;
+                continue;
+            }
+            if (byte == 34) { inString = true; continue; }
+            if (byte == 123 || byte == 91) {
+                if (depth >= sizeof(stack)) { invalid = true; continue; }
+                stack[depth++] = byte;
+                continue;
+            }
+            if (byte == 125 || byte == 93) {
+                const char expected = byte == 125 ? 123 : 91;
+                if (depth == 0 || stack[depth - 1] != expected) { invalid = true; }
+                else { --depth; }
+                continue;
+            }
+            if (static_cast<uint8_t>(byte) < 0x20 && byte != 32 && byte != 9 && byte != 10 && byte != 13) {
+                invalid = true;
+            }
+        }
+    }
+
+    bool complete() const { return !invalid && !inString && !escaped && depth == 0; }
+};
 
 void assertStatusJSONStreamsInSmallChunks() {
     const uint32_t originalCacheInterval = getConfigAPIStatusCacheInterval();
@@ -122,9 +201,11 @@ void assertStatusJSONStreamsInSmallChunks() {
     uint8_t chunk[37];
     size_t streamedBytes = 0;
     uint8_t firstByte = 0;
-    static char serializedJSON[1536];
-    memset(serializedJSON, 0, sizeof(serializedJSON));
     uint8_t lastByte = 0;
+    JSONStreamStructure structure;
+#if !defined(DF_PLATFORM_ESP8266)
+    char serializedJSON[1536] = {};
+#endif
 
     const char* const expectedMarkers[] = {
         "\"name\":\"Status \\\"quoted\\\"\"",
@@ -145,12 +226,15 @@ void assertStatusJSONStreamsInSmallChunks() {
             stream, chunk, sizeof(chunk), DeviceStatusManager::getStatus());
         TEST_ASSERT_GREATER_THAN_UINT32_MESSAGE(0, written,
             "JSON stream must make progress until complete");
+#if !defined(DF_PLATFORM_ESP8266)
         TEST_ASSERT_LESS_OR_EQUAL_UINT32_MESSAGE(sizeof(serializedJSON) - 1, streamedBytes + written,
             "Serialized status must fit the parser regression buffer");
         memcpy(serializedJSON + streamedBytes, chunk, written);
+#endif
         if (streamedBytes == 0) firstByte = chunk[0];
         lastByte = chunk[written - 1];
         streamedBytes += written;
+        structure.consume(chunk, written);
         const size_t retained = written > sizeof(markerWindow) - 1 ? sizeof(markerWindow) - 1 : written;
         if (markerWindowLength + retained > sizeof(markerWindow) - 1) {
             const size_t discard = markerWindowLength + retained - (sizeof(markerWindow) - 1);
@@ -167,10 +251,15 @@ void assertStatusJSONStreamsInSmallChunks() {
             strstr(markerWindow, "\"peak_usage\":") != nullptr ||
             strstr(markerWindow, "\"loop_count\":") != nullptr;
     }
-    serializedJSON[streamedBytes] = '\0';
+#if !defined(DF_PLATFORM_ESP8266)
+    serializedJSON[streamedBytes] = 0;
     JsonDocument parsedStatus;
     const DeserializationError parseError = deserializeJson(parsedStatus, serializedJSON);
     TEST_ASSERT_FALSE_MESSAGE(parseError, parseError.c_str());
+#else
+    TEST_ASSERT_TRUE_MESSAGE(structure.complete(),
+        "ESP8266 status JSON stream must remain structurally valid without a second heap DOM");
+#endif
 
     TEST_ASSERT_TRUE_MESSAGE(stream.complete, "JSON stream should complete in bounded chunks");
     TEST_ASSERT_EQUAL_UINT32(counter.getCount(), streamedBytes);
@@ -205,26 +294,36 @@ void test_web_interface_methods() {
     TEST_ASSERT_FALSE_MESSAGE(DeviceFrameworkWeb::setResourceLimits(resourceLimits),
         "Web resource policy must lock once the interface has started");
 
-    WebStreamPermit* firstPermit = DeviceFrameworkWebAdmissionControl::tryAcquireStreamPermit();
-    WebStreamPermit* secondPermit = DeviceFrameworkWebAdmissionControl::tryAcquireStreamPermit();
-    if (firstPermit == nullptr || secondPermit == nullptr) {
-        if (firstPermit != nullptr) {
-            DeviceFrameworkWebAdmissionControl::releaseStreamPermit(
-                firstPermit, firstPermit->generation);
+    // The configured memory watermark is part of admission, not merely a
+    // diagnostic. On the constrained ESP8266 hardware fixture this test runs
+    // after WiFi, mDNS, MQTT, and the live web server have consumed most of
+    // the heap, so rejection is the correct safety result. ESP32 and any
+    // target with headroom still exercise the configured permit capacity.
+    if (!DeviceFrameworkWebAdmissionControl::canStartDiagnosticWork()) {
+        TEST_ASSERT_NULL_MESSAGE(DeviceFrameworkWebAdmissionControl::tryAcquireStreamPermit(),
+            "Low memory must reject a new streamed response before allocation");
+    } else {
+        WebStreamPermit* firstPermit = DeviceFrameworkWebAdmissionControl::tryAcquireStreamPermit();
+        WebStreamPermit* secondPermit = DeviceFrameworkWebAdmissionControl::tryAcquireStreamPermit();
+        if (firstPermit == nullptr || secondPermit == nullptr) {
+            if (firstPermit != nullptr) {
+                DeviceFrameworkWebAdmissionControl::releaseStreamPermit(
+                    firstPermit, firstPermit->generation);
+            }
+            if (secondPermit != nullptr) {
+                DeviceFrameworkWebAdmissionControl::releaseStreamPermit(
+                    secondPermit, secondPermit->generation);
+            }
+            TEST_FAIL_MESSAGE("Configured stream permits should be acquirable with sufficient memory");
+            return;
         }
-        if (secondPermit != nullptr) {
-            DeviceFrameworkWebAdmissionControl::releaseStreamPermit(
-                secondPermit, secondPermit->generation);
-        }
-        TEST_FAIL_MESSAGE("Configured stream permits should be acquirable");
-        return;
+        TEST_ASSERT_NULL_MESSAGE(DeviceFrameworkWebAdmissionControl::tryAcquireStreamPermit(),
+            "The response controller must reject work above the configured limit");
+        DeviceFrameworkWebAdmissionControl::releaseStreamPermit(firstPermit, firstPermit->generation);
+        DeviceFrameworkWebAdmissionControl::releaseStreamPermit(secondPermit, secondPermit->generation);
+        TEST_ASSERT_EQUAL_UINT8_MESSAGE(0, DeviceFrameworkWeb::getResourceStats().activeStreamResponses,
+            "Released response permits must be returned to the controller");
     }
-    TEST_ASSERT_NULL_MESSAGE(DeviceFrameworkWebAdmissionControl::tryAcquireStreamPermit(),
-        "The response controller must reject work above the configured limit");
-    DeviceFrameworkWebAdmissionControl::releaseStreamPermit(firstPermit, firstPermit->generation);
-    DeviceFrameworkWebAdmissionControl::releaseStreamPermit(secondPermit, secondPermit->generation);
-    TEST_ASSERT_EQUAL_UINT8_MESSAGE(0, DeviceFrameworkWeb::getResourceStats().activeStreamResponses,
-        "Released response permits must be returned to the controller");
     // Test WebInterface enabled status - should be true since it's running in test mode
     bool enabled = DeviceFrameworkWeb::isEnabled();
     TEST_ASSERT_TRUE_MESSAGE(enabled,
@@ -258,14 +357,63 @@ void test_web_interface_methods() {
         "href=\"/assets/deviceframework.css\"",
         "src=\"/assets/deviceframework.js\"",
         "src=\"/assets/deviceframework-logo\"",
-        "href=\"#about\"",
-        "id=\"about\"",
-        "https://example.test",
-        "noopener noreferrer",
+        "href=\"/about\"",
+        "data-df-page=\"status\"",
     };
     assertTemplateContainsMarkers(base_template,
         "Root web template should contain configured UI markers",
         uiMarkers, sizeof(uiMarkers) / sizeof(uiMarkers[0]));
+
+    assertTemplateCompletes(serial_page_template,
+        "Serial page template should finish rendering without an error");
+    assertTemplateCompletesWithAsyncSizedChunks(serial_page_template,
+        "Serial page template should finish with ESPAsyncWebServer-sized chunks");
+    assertTemplateCompletes(controls_page_template,
+        "Controls page template should finish rendering without an error");
+    assertTemplateCompletesWithAsyncSizedChunks(controls_page_template,
+        "Controls page template should finish with ESPAsyncWebServer-sized chunks");
+    assertTemplateCompletes(about_page_template,
+        "About page template should finish rendering without an error");
+    assertTemplateCompletesWithAsyncSizedChunks(about_page_template,
+        "About page template should finish with ESPAsyncWebServer-sized chunks");
+
+    const char* const serialMarkers[] = {
+        "data-df-page=\"serial\"", "id=\"serial-monitor\"", "id=\"webserial-status\"",
+    };
+    assertTemplateContainsMarkers(serial_page_template,
+        "Serial page should contain only its WebSerial controls",
+        serialMarkers, sizeof(serialMarkers) / sizeof(serialMarkers[0]));
+    assertTemplateOmitsMarkers(base_template,
+        "Status page must not render WebSerial DOM",
+        serialMarkers, sizeof(serialMarkers) / sizeof(serialMarkers[0]));
+    const char* const serialExclusions[] = {
+        "id=\"status-content\"", "id=\"control-panel\"",
+    };
+    assertTemplateOmitsMarkers(serial_page_template,
+        "Serial page must not render status or control DOM",
+        serialExclusions, sizeof(serialExclusions) / sizeof(serialExclusions[0]));
+
+    const char* const controlsMarkers[] = {
+        "data-df-page=\"controls\"", "id=\"control-panel\"", "id=\"device-password-form\"",
+    };
+    assertTemplateContainsMarkers(controls_page_template,
+        "Controls page should contain its controls",
+        controlsMarkers, sizeof(controlsMarkers) / sizeof(controlsMarkers[0]));
+    assertTemplateOmitsMarkers(controls_page_template,
+        "Controls page must not render WebSerial DOM",
+        serialMarkers, sizeof(serialMarkers) / sizeof(serialMarkers[0]));
+
+    const char* const aboutMarkers[] = {
+        "data-df-page=\"about\"", "id=\"about\"", "https://example.test", "noopener noreferrer",
+    };
+    assertTemplateContainsMarkers(about_page_template,
+        "About page should render configured attribution",
+        aboutMarkers, sizeof(aboutMarkers) / sizeof(aboutMarkers[0]));
+
+    TEST_ASSERT_TRUE_MESSAGE(progmemContains(js_scripts, PSTR("event.code === 1013")),
+        "WebSerial must recognize the server busy close code");
+    TEST_ASSERT_TRUE_MESSAGE(progmemContains(js_scripts, PSTR("retrying in 10 seconds")),
+        "WebSerial busy handling must avoid rapid reconnect churn");
 
     assertStatusJSONStreamsInSmallChunks();
 

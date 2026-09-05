@@ -6,5 +6,5 @@
     "revision": 1,
     "policy": "bootstrap"
   },
-  "device_password": "profile-fixture-password"
+  "device_password": "default1"
 }

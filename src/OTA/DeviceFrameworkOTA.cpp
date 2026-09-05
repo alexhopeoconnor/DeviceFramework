@@ -1,6 +1,7 @@
 #include "DeviceFrameworkOTA.h"
 #include "../WiFi/DeviceFrameworkWiFi.h"
 #include "../DeviceFramework.h"
+#include <DeviceFrameworkPlatform.h>
 
 void DeviceFrameworkOTA::setup() {
     ArduinoOTA.onStart([]() {
@@ -44,8 +45,15 @@ void DeviceFrameworkOTA::setup() {
         ArduinoOTA.setPassword(DeviceFramework::getDevicePassword());
     }
 
-    // Start OTA
+    // On ESP8266 ArduinoOTA otherwise creates and updates the global mDNS
+    // responder itself. DeviceFramework owns that responder so it can keep the
+    // core's packet parser out of a fragmented heap; OTA remains reachable by
+    // the device hostname or IP on its normal UDP port.
+#ifdef DF_PLATFORM_ESP8266
+    ArduinoOTA.begin(false);
+#else
     ArduinoOTA.begin();
+#endif
     LOG_INFO_SP(F("OTA Initialized with hostname: "), true);
     LOG_INFOLN_SP(String(DeviceFramework::getSanitizedHostname()), false);
 }

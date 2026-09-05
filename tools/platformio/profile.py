@@ -142,6 +142,7 @@ lines = [
     "#define DEVICEFRAMEWORK_PROFILE_ID " + literal(profile_id),
     "#define DEVICEFRAMEWORK_PROFILE_REVISION {}UL".format(revision),
     "#define DEVICEFRAMEWORK_PROFILE_POLICY DEVICEFRAMEWORK_PROFILE_{}".format(policy.upper()),
+    "#define DEVICEFRAMEWORK_PROFILE_IS_RECONCILE {}".format(1 if policy == "reconcile" else 0),
     "#define DEVICEFRAMEWORK_PROFILE_HAS_DEVICE_PASSWORD {}".format(
         1 if "device_password" in document else 0
     ),

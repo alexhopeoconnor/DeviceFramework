@@ -122,6 +122,33 @@ void DeviceFrameworkMDNS::loop() {
         return;
     }
 
+#ifdef DF_PLATFORM_ESP8266
+    const bool shouldProcessMDNS = TimeUtils::hasTimeElapsed(
+        millis(), lastMDNSUpdateAttemptTime, getConfigMDNSUpdateInterval());
+    if (shouldProcessMDNS) {
+        lastMDNSUpdateAttemptTime = millis();
+        // The ESP8266 responder installs a UDP receive path which can allocate
+        // while lwIP is dispatching multicast packets, independently of our
+        // MDNS.update() call below. Merely skipping update() therefore cannot
+        // protect a fragmented, low-heap device. Close the responder before the
+        // allocator becomes unsafe; DeviceFramework calls onNetworkReady() again
+        // on each healthy network loop and will start it when headroom returns.
+        if (!hasMDNSHeapHeadroom(getConfigMDNSMinFreeHeap())) {
+            MDNS.close();
+            initialized = false;
+            currentResolverIP = INADDR_NONE;
+            cachedIP = INADDR_NONE;
+            lastResolvedHostname = "";
+            lastResolutionAttempt = 0;
+            lastPacketDrainTime = 0;
+            isResolving = false;
+            ++mdnsUpdateSkippedForHeapCount;
+            LOG_WARNLN(F("mDNS responder suspended for low heap"));
+            return;
+        }
+    }
+#endif
+
     // Update resolver's local IP if it changes
     #ifndef DF_PLATFORM_ESP32
         // On ESP32, skip resolver IP updates - resolver is not used
@@ -133,15 +160,9 @@ void DeviceFrameworkMDNS::loop() {
         // ESP8266: MDNS.update() parses multicast responses using dynamic allocations.
         // Heap metrics scan allocator state with interrupts disabled, so sample and
         // enter the parser at a bounded rate rather than on every application loop.
-        if (TimeUtils::hasTimeElapsed(millis(), lastMDNSUpdateAttemptTime,
-                                      getConfigMDNSUpdateInterval())) {
-            lastMDNSUpdateAttemptTime = millis();
-            if (hasMDNSHeapHeadroom(getConfigMDNSMinFreeHeap())) {
-                MDNS.update();
-                ++mdnsUpdateCount;
-            } else {
-                ++mdnsUpdateSkippedForHeapCount;
-            }
+        if (shouldProcessMDNS) {
+            MDNS.update();
+            ++mdnsUpdateCount;
         }
         // If memory is low, skip mDNS processing until the next bounded attempt.
     #elif defined(DF_PLATFORM_ESP32)

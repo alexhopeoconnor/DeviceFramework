@@ -56,16 +56,16 @@ void test_device_framework_configuration() {
     TEST_ASSERT_EQUAL_STRING_MESSAGE("testpass", mqttPass,
         "MQTT password should be set to 'testpass'");
 
-    // A profiled fresh V4 record receives its initial seed; ordinary builds
-    // intentionally start open so both modes remain covered.
+    // A profiled fresh V4 record receives its initial seed; unprofiled
+    // development builds retain the shared default.
     const char* devicePassword = DeviceFramework::getDevicePassword();
     TEST_ASSERT_NOT_NULL_MESSAGE(devicePassword, "Device password should not be NULL");
 #if defined(DEVICEFRAMEWORK_HAS_LOCAL_PROFILE) && DEVICEFRAMEWORK_HAS_LOCAL_PROFILE
-    TEST_ASSERT_EQUAL_STRING_MESSAGE("profile-fixture-password", devicePassword,
+    TEST_ASSERT_EQUAL_STRING_MESSAGE("default1", devicePassword,
         "Profiled test firmware should seed its shared device password");
 #else
-    TEST_ASSERT_EQUAL_STRING_MESSAGE("", devicePassword,
-        "Device password should be empty for testing");
+    TEST_ASSERT_EQUAL_STRING_MESSAGE("default1", devicePassword,
+        "Unprofiled development firmware should retain the shared default password");
 #endif
 
     TEST_ASSERT_FALSE_MESSAGE(DeviceFramework::setDevicePassword("short"),

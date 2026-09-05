@@ -4,13 +4,14 @@
 DeviceFramework, so it proves the released package manifest resolves every
 library without an attached microcontroller. Run the normal and safe profiled fixtures for both supported targets before a release:
 
-
 ```bash
 ./scripts/test.sh compile --platform esp8266
 ./scripts/test.sh compile --platform esp8266 --profile-fixture
 ./scripts/test.sh compile --platform esp32
 ./scripts/test.sh compile --platform esp32 --profile-fixture
 ```
+
+With `--profile-fixture`, the consumer build checks three deliberately different profile contracts: bootstrap with Wi-Fi, bootstrap without Wi-Fi, and reconciliation with explicit managed parameters. The framework test target separately proves that a changed reconcile profile ID or revision overwrites only the supplied values and preserves omitted runtime values.
 
 The `hardware` mode runs the Unity/integration suite against a connected device. It
 reads required WiFi and MQTT values from an ignored `test/.env`; copy

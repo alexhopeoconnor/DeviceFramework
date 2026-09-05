@@ -1,7 +1,7 @@
 #include "DeviceFrameworkConfig.h"
 
 // General library configuration
-char CONFIG_devicePassword[32] = "";
+char CONFIG_devicePassword[32] = "default1";
 uint32_t CONFIG_configModeTimeout = 120000;
 uint32_t CONFIG_configLEDToggleRate = 500;
 uint32_t CONFIG_wifiReconnectInterval = 5000;   // Attempt WiFi reconnect every 5 seconds when offline

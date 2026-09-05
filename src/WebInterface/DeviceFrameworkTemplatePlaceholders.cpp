@@ -128,11 +128,14 @@ void DeviceFrameworkTemplatePlaceholders::registerAllPlaceholders() {
     // Register PROGMEM templates (nested templates)
     registry->registerProgmemTemplate("%HEADER%", (const char*)header_template);
     registry->registerProgmemTemplate("%HEADER_404%", (const char*)header_404_template);
-    registry->registerProgmemTemplate("%NAV%", (const char*)nav_template);
     registry->registerProgmemTemplate("%FOOTER%", (const char*)footer_template);
-    registry->registerProgmemTemplate("%SPA_CONTENT%", (const char*)spa_content_template);
+    registry->registerProgmemTemplate("%PAGE_SHELL_START%", (const char*)page_shell_start_template);
+    registry->registerProgmemTemplate("%PAGE_SHELL_END%", (const char*)page_shell_end_template);
+    registry->registerProgmemTemplate("%STATUS_CONTENT%", (const char*)status_content_template);
+    registry->registerProgmemTemplate("%SERIAL_CONTENT%", (const char*)serial_content_template);
+    registry->registerProgmemTemplate("%CONTROLS_CONTENT%", (const char*)controls_content_template);
+    registry->registerProgmemTemplate("%ABOUT_CONTENT%", (const char*)about_content_template);
     registry->registerProgmemTemplate("%404_CONTENT%", (const char*)error404_content_template);
-    registry->registerProgmemTemplate("%CONTENT%", (const char*)spa_content_template);
 }
 
 void DeviceFrameworkTemplatePlaceholders::cleanup() {

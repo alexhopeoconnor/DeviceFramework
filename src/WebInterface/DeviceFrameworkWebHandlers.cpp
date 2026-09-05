@@ -172,9 +172,9 @@ bool resetPending = false;
 DeviceFrameworkResetScope pendingResetScope = DeviceFrameworkResetScope::Factory;
 unsigned long restartAt = 0;
 
-// DeviceFramework's built-in pages nest only a few templates. Keep their
-// per-request renderer allocation deliberately lean on ESP8266 while DFTE
-// retains its larger standalone defaults for callers that need them.
+// Shared pages need ROOT, the shell placeholder/template pair, HEADER's
+// placeholder/template pair, and ABOUT_NAV's data placeholder. Keep the
+// header-owned navigation inline so one response needs exactly six contexts.
 constexpr size_t kWebTemplateStackDepth = 6;
 constexpr size_t kWebTemplateReadBufferSize = 128;
 constexpr size_t kControlRequestBodyLimit = 96;
@@ -193,6 +193,13 @@ void scheduleReset(DeviceFrameworkResetScope scope) {
 
 bool restartDue(unsigned long now) {
     return restartPending && static_cast<long>(now - restartAt) >= 0;
+}
+
+const char* templateForWebPagePath(const String& path) {
+    if (path == F("/serial")) return serial_page_template;
+    if (path == F("/controls")) return controls_page_template;
+    if (path == F("/about")) return about_page_template;
+    return nullptr;
 }
 
 } // namespace
@@ -217,7 +224,50 @@ void DeviceFrameworkWebHandlers::handleWebRoot(AsyncWebServerRequest *request) {
 }
 
 void DeviceFrameworkWebHandlers::handleWebNotFound(AsyncWebServerRequest *request) {
+    const String path = request->url();
+
+    // Preserve the existing unauthenticated favicon behavior while keeping it
+    // out of the persistent route table.
+    if (request->method() == HTTP_GET && path == F("/favicon.ico")) {
+        request->send(204);
+        return;
+    }
+
+    // AsyncWebServer allocates a handler object for each webServer->on() call.
+    // Route all simple fixed endpoints through the one existing fallback
+    // handler; /api/control stays direct because it needs an upload/body hook.
+    // Each forwarded endpoint owns its existing authentication check.
+    if (request->method() == HTTP_GET) {
+        if (path == F("/assets/deviceframework.css")) {
+            handleWebStyles(request);
+            return;
+        }
+        if (path == F("/assets/deviceframework.js")) {
+            handleWebScripts(request);
+            return;
+        }
+        if (path == F("/assets/deviceframework-logo")) {
+            handleWebLogo(request);
+            return;
+        }
+        if (path == F("/api/status")) {
+            handleAPIStatus(request);
+            return;
+        }
+    } else if (request->method() == HTTP_POST && path == F("/api/device-password")) {
+        handleAPIDevicePassword(request);
+        return;
+    }
+
     if (!isAuthenticated(request)) return;
+    if (request->method() == HTTP_GET) {
+        const char* pageTemplate = templateForWebPagePath(path);
+        if (pageTemplate != nullptr) {
+            sendStreamingResponse(request, pageTemplate);
+            return;
+        }
+    }
+
     sendStreamingResponse(request, error404_template);
 }
 

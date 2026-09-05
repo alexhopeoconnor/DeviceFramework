@@ -5,8 +5,8 @@
 
 // JavaScript for DeviceFramework Web Interface
 const char PROGMEM js_scripts[] = R"rawliteral(
-// Modern JavaScript for SPA functionality
-let statusUpdateInterval;
+// Page-aware JavaScript for the server-rendered interface
+let statusUpdateInterval = null;
 let statusRequestInFlight = false;
 let statusErrorShown = false;
 let autoScrollSerial = true;
@@ -17,50 +17,96 @@ let webserialReconnectAttempts = 0;
 let webserialReconnectTimer = null;
 let webserialLastMessageTime = 0;
 let webserialHeartbeatInterval = null;
+let webserialOpenedAt = 0;
+let webserialReceivedMessage = false;
+let serialAvailabilityRequestInFlight = false;
+let serialAvailabilityRetryTimer = null;
+let currentPage = "unknown";
 
-// Initialize the application
-document.addEventListener('DOMContentLoaded', function() {
-    console.log('DeviceFramework Control Panel loaded');
-
-    // Hide page loader once DOM is ready
+// The server renders one complete page at a time. Keep status polling and
+// WebSerial opt-in: a normal status visit must not open a WebSocket.
+document.addEventListener("DOMContentLoaded", function() {
+    const pageRoot = document.querySelector("[data-df-page]");
+    currentPage = pageRoot ? pageRoot.dataset.dfPage : "unknown";
+    console.log("DeviceFramework page loaded:", currentPage);
     hidePageLoader();
+    setupEventListeners();
 
-    // Delay initial load to ensure DOM is fully ready
     setTimeout(() => {
-        loadStatus();
-        setupEventListeners();
-        initializeSerialMonitor();
-        loadSavedIntervals();
-
-        // Handle initial hash navigation
-        handleHashNavigation();
+        if (currentPage === "status") {
+            startStatusPage();
+        } else if (currentPage === "serial") {
+            initializeSerialMonitor();
+            loadSavedIntervals();
+            initializeSerialPage();
+        } else if (currentPage === "controls") {
+            loadSavedIntervals();
+        }
     }, 100);
-
-    // Auto-refresh status every 2 seconds (configurable)
-    statusUpdateInterval = setInterval(loadStatus, 2000);
-
-    // No serial polling needed - WebSocket handles real-time updates
 });
+
+window.addEventListener("pagehide", function() {
+    if (statusUpdateInterval) {
+        clearInterval(statusUpdateInterval);
+        statusUpdateInterval = null;
+    }
+    if (serialAvailabilityRetryTimer) {
+        clearTimeout(serialAvailabilityRetryTimer);
+        serialAvailabilityRetryTimer = null;
+    }
+    stopWebSerial();
+});
+
+function startStatusPage() {
+    loadStatus();
+    statusUpdateInterval = setInterval(loadStatus, getStatusUpdateInterval());
+}
+
+function getStatusUpdateInterval() {
+    const value = parseInt(localStorage.getItem("statusInterval"), 10);
+    return Number.isFinite(value) && value >= 1000 ? value : 2000;
+}
+
+function initializeSerialPage() {
+    if (serialAvailabilityRequestInFlight || currentPage !== "serial") {
+        return;
+    }
+
+    serialAvailabilityRequestInFlight = true;
+    fetch("/api/status")
+        .then(response => {
+            if (!response.ok) throw new Error("Status request failed");
+            return response.json();
+        })
+        .then(data => {
+            const logging = data.runtime && data.runtime.logging;
+            const serialEnabled = !logging || logging.serial_enabled !== false;
+            const webSerialEnabled = logging && logging.web_serial_enabled === true;
+            updateSerialAvailability(serialEnabled);
+            updateWebSocketConnection(serialEnabled, webSerialEnabled);
+        })
+        .catch(error => {
+            // A bounded ESP8266 can briefly return 503 while another page is
+            // streaming. This is not a WebSerial failure: retry the small
+            // capability check rather than leaving the serial page inert.
+            console.info("WebSerial availability check deferred:", error);
+            addSerialLine("Waiting for device status before connecting WebSerial...");
+            updateWebSerialStatus("connecting");
+            serialAvailabilityRetryTimer = setTimeout(initializeSerialPage, 1500);
+        })
+        .finally(() => {
+            serialAvailabilityRequestInFlight = false;
+        });
+}
 
 // Setup event listeners
 function setupEventListeners() {
-    // Handle hash change events
-    window.addEventListener('hashchange', handleHashNavigation);
-
-    // Add click handlers for navigation
-    document.querySelectorAll('.nav-link').forEach(link => {
-        link.addEventListener('click', function(e) {
-            e.preventDefault();
-
-            // Close mobile nav menu when clicking a link
-            closeMobileNav();
-
-            // Update hash
-            const hash = this.getAttribute('href');
-            if (hash && hash.startsWith('#')) {
-                window.location.hash = hash;
-            }
-        });
+    document.querySelectorAll(".nav-link").forEach(link => {
+        if (link.dataset.page === currentPage) {
+            link.classList.add("active");
+            link.setAttribute("aria-current", "page");
+        }
+        link.addEventListener("click", closeMobileNav);
     });
 }
 
@@ -214,8 +260,6 @@ function updateStatusDisplay(data) {
             // Update serial availability based on device configuration
             updateSerialAvailability(logging.serial_enabled !== false);
 
-            // Update WebSocket connection based on serial status
-            updateWebSocketConnection(logging.serial_enabled, logging.web_serial_enabled);
         }
 
     } catch (error) {
@@ -373,86 +417,23 @@ function hidePageLoader() {
 }
 
 
-// Handle hash-based navigation
-function handleHashNavigation() {
-    const hash = window.location.hash.substring(1); // Remove the #
-    const sections = ['device-status', 'serial-output', 'controls'];
-    if (document.getElementById('about')) {
-        sections.push('about');
-    }
-    const visibleSections = sections.filter(sectionId =>
-        sectionId !== 'serial-output' || serialAvailable
-    );
-
-    // If no hash or invalid hash, show all sections and scroll to top
-    if (!hash || !visibleSections.includes(hash)) {
-        // Show all sections
-        sections.forEach(sectionId => {
-            const section = document.getElementById(sectionId);
-            if (section) {
-                section.style.display = visibleSections.includes(sectionId) ? 'block' : 'none';
-            }
-        });
-
-        // Update active nav link to device-status
-        document.querySelectorAll('.nav-link').forEach(link => {
-            link.classList.remove('active');
-            if (link.getAttribute('href') === '#device-status') {
-                link.classList.add('active');
-            }
-        });
-
-        // Scroll to top
-        window.scrollTo({ top: 0, behavior: 'smooth' });
-        return;
-    }
-
-    // Show all sections first
-    sections.forEach(sectionId => {
-        const section = document.getElementById(sectionId);
-        if (section) {
-            section.style.display = visibleSections.includes(sectionId) ? 'block' : 'none';
-        }
-    });
-
-    // Scroll to the target section
-    const targetSection = document.getElementById(hash);
-    if (targetSection) {
-        targetSection.scrollIntoView({ behavior: 'smooth' });
-    }
-
-    // Update active nav link
-    document.querySelectorAll('.nav-link').forEach(link => {
-        link.classList.remove('active');
-        if (link.getAttribute('href') === '#' + hash) {
-            link.classList.add('active');
-        }
-    });
-}
-
-// Update serial availability based on device configuration
+// Update serial navigation visibility from a status or serial-page availability check.
 let serialAvailable = true;
 
 function updateSerialAvailability(serialEnabled) {
-    const serialSection = document.getElementById('serial-output');
-    const serialNavLink = document.querySelector('a[href="#serial-output"]');
-
-    if (!serialSection || !serialNavLink) return;
-
     serialAvailable = serialEnabled !== false;
+    const serialSection = document.getElementById("serial-output");
+    const serialNavLink = document.querySelector("a[data-page=\"serial\"]");
 
-    // Hide serial section and nav link if serial is disabled for this device
-    if (!serialAvailable) {
-        serialSection.style.display = 'none';
-        serialNavLink.style.display = 'none';
+    if (serialSection) {
+        serialSection.style.display = serialAvailable ? "block" : "none";
+    }
+    if (serialNavLink) {
+        serialNavLink.style.display = serialAvailable ? "block" : "none";
+    }
 
-        // If we're currently on serial-output, redirect to top of page
-        if (window.location.hash === '#serial-output') {
-            window.location.hash = '';
-        }
-    } else {
-        serialSection.style.display = 'block';
-        serialNavLink.style.display = 'block';
+    if (!serialAvailable && currentPage === "serial") {
+        updateWebSocketConnection(false, false);
     }
 }
 
@@ -531,6 +512,8 @@ function initializeWebSerial() {
             webserialConnected = true;
             webserialReconnectAttempts = 0;
             webserialLastMessageTime = Date.now();
+            webserialOpenedAt = webserialLastMessageTime;
+            webserialReceivedMessage = false;
             webserialConnectionTime = Date.now();
             addSerialLine('WebSerial connected - real-time output enabled');
             console.log('WebSerial WebSocket connected');
@@ -545,6 +528,7 @@ function initializeWebSerial() {
         socket.onmessage = function(event) {
             // Update last message time for health monitoring
             webserialLastMessageTime = Date.now();
+            webserialReceivedMessage = true;
 
             // Handle incoming serial data with buffering
             processWebSocketMessage(event.data);
@@ -558,18 +542,39 @@ function initializeWebSerial() {
             webserialConnectionTime = null;
             stopWebSerialHeartbeat();
 
+            // ESPAsyncWebServer on ESP8266 may abort a close issued from its
+            // connect callback before the 1013 frame reaches the browser. A
+            // socket that opens then closes without a message is still a
+            // capacity rejection in that path; throttle it just like 1013.
+            const elapsedSinceOpen = webserialOpenedAt ? Date.now() - webserialOpenedAt : 0;
+            const immediateRejection = elapsedSinceOpen > 0 && elapsedSinceOpen < 1000 &&
+                !webserialReceivedMessage;
+            webserialOpenedAt = 0;
+
             if (!webserialDesired) {
                 updateWebSerialStatus('disconnected');
+                return;
+            }
+
+            // The server uses 1013 when its bounded WebSerial capacity is full
+            // or diagnostic work is unsafe. onopen can fire before that close,
+            // so do not reset into a one-second reconnect loop under pressure.
+            updateWebSerialStatus('disconnected');
+            if (event.code === 1013 || immediateRejection) {
+                addSerialLine('WebSerial is temporarily unavailable - retrying in 10 seconds...');
+                console.info('WebSerial WebSocket busy; retrying later');
+                webserialReconnectTimer = setTimeout(() => {
+                    if (webserialDesired && !webserialConnected) {
+                        initializeWebSerial();
+                    }
+                }, 10000);
                 return;
             }
 
             addSerialLine('WebSerial disconnected - attempting reconnection...');
             console.log('WebSerial WebSocket disconnected');
 
-            // Update connection status indicator
-            updateWebSerialStatus('disconnected');
-
-            // Exponential backoff for reconnection
+            // Exponential backoff for an unexpected connection loss.
             const delay = Math.min(1000 * Math.pow(2, webserialReconnectAttempts), 30000);
             webserialReconnectAttempts++;
 
@@ -581,8 +586,9 @@ function initializeWebSerial() {
         };
 
         socket.onerror = function(error) {
-            console.error('WebSerial WebSocket error:', error);
-            addSerialLine('WebSerial error - connection unstable');
+            // A close event follows transport errors and carries the policy code.
+            // Keep the console clean for expected 1013 capacity rejection.
+            console.debug('WebSerial WebSocket transport error:', error);
         };
 
     } catch (error) {
@@ -1035,11 +1041,16 @@ function refreshStatus() {
 
 // Update status interval
 function updateStatusInterval(interval) {
-    if (statusUpdateInterval) {
-        clearInterval(statusUpdateInterval);
-    }
-    statusUpdateInterval = setInterval(loadStatus, parseInt(interval));
-    localStorage.setItem('statusInterval', interval);
+    const selectedInterval = parseInt(interval, 10);
+    const validInterval = Number.isFinite(selectedInterval) && selectedInterval >= 1000
+        ? selectedInterval : 2000;
+    localStorage.setItem("statusInterval", String(validInterval));
+
+    // The setting is edited on Controls but only starts polling on Status.
+    // This prevents a background API loop on a page with no status elements.
+    if (currentPage !== "status") return;
+    if (statusUpdateInterval) clearInterval(statusUpdateInterval);
+    statusUpdateInterval = setInterval(loadStatus, validInterval);
 }
 
 // Serial interval removed - WebSocket provides real-time updates
@@ -1048,9 +1059,9 @@ function updateStatusInterval(interval) {
 function loadSavedIntervals() {
     const savedStatusInterval = localStorage.getItem('statusInterval');
 
-    if (savedStatusInterval) {
-        document.getElementById('status-interval').value = savedStatusInterval;
-        updateStatusInterval(savedStatusInterval);
+    const statusIntervalSelect = document.getElementById("status-interval");
+    if (savedStatusInterval && statusIntervalSelect) {
+        statusIntervalSelect.value = savedStatusInterval;
     }
 
     // Load serial monitor settings

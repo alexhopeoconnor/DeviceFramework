@@ -106,18 +106,12 @@ void DeviceFrameworkWeb::setup() {
 
     // Set up routes
     webServer->on("/", HTTP_GET, DeviceFrameworkWebHandlers::handleWebRoot);
-    webServer->on("/assets/deviceframework.css", HTTP_GET, DeviceFrameworkWebHandlers::handleWebStyles);
-    webServer->on("/assets/deviceframework.js", HTTP_GET, DeviceFrameworkWebHandlers::handleWebScripts);
-    webServer->on("/assets/deviceframework-logo", HTTP_GET, DeviceFrameworkWebHandlers::handleWebLogo);
-    // Browsers request this immediately after "/"; avoid streaming a full 404 HTML page (heap + TCP load).
-    webServer->on("/favicon.ico", HTTP_GET, [](AsyncWebServerRequest* request) {
-        request->send(204);
-    });
-    webServer->on("/api/status", HTTP_GET, DeviceFrameworkWebHandlers::handleAPIStatus);
+    // Keep only handlers that require AsyncWebServer-specific behavior.
+    // Simple assets and fixed GET/POST endpoints share the fallback dispatcher
+    // below, avoiding one permanent heap allocation per endpoint on ESP8266.
     webServer->on("/api/control", HTTP_POST, DeviceFrameworkWebHandlers::handleAPIControl,
                   nullptr, DeviceFrameworkWebHandlers::handleAPIControlBody);
     webServer->onNotFound(DeviceFrameworkWebHandlers::handleWebNotFound);
-    webServer->on("/api/device-password", HTTP_POST, DeviceFrameworkWebHandlers::handleAPIDevicePassword);
 
     // Initialize WebSerial transport (read-only serial output)
     DeviceFrameworkWebSerial::begin(webServer, "/webserial");

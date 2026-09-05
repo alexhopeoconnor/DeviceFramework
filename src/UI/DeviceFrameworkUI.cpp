@@ -268,7 +268,7 @@ void DeviceFrameworkUI::rebuildAboutContent() {
     // These small strings are built before WiFi and the web server start,
     // alongside the configured theme, so rendering does not fragment ESP8266
     // heap during a request.
-    aboutNavigation = F("<a href=\"#about\" class=\"nav-link\">About</a>");
+    aboutNavigation = F("<a href=\"/about\" class=\"nav-link\" data-page=\"about\">About</a>");
     aboutSection = F("<section class=\"card about-card\" id=\"about\"><h2>About</h2>");
     if (!about.summary.empty()) {
         aboutSection += F("<p class=\"about-summary\">");

@@ -48,7 +48,7 @@ Build [Portal First](examples/01-portal-first/) for the complete project. On a c
 
 ```ini
 lib_deps =
-    DeviceFramework=https://github.com/alexhopeoconnor/DeviceFramework.git#v2.6.0
+    DeviceFramework=https://github.com/alexhopeoconnor/DeviceFramework.git#v2.7.0
 ```
 
 PlatformIO clones the repository and checks out the release tag after `#`. The package resolves the compatible WiFiManager, DFTE, ArduinoHA, web, and target-specific dependencies.

@@ -59,21 +59,19 @@ refresh_clean_consumer_dependency() {
 if [[ "$mode" == "hardware" && "$profile_fixture" == "true" ]]; then
     environment="${platform}_profile_hardware"
 fi
-if [[ "$mode" == "compile" && "$profile_fixture" == "true" ]]; then
-    pio run -d test/compile-project -e "$environment" -t clean >/dev/null
-    pio run -d test/compile-project -e "${platform}_profile_no_wifi" -t clean >/dev/null
-fi
 if [[ "$mode" == "compile" ]]; then
-    refresh_clean_consumer_dependency "$environment"
-    pio run -d test/compile-project -e "$environment"
+    consumer_environments=("$environment")
     if [[ "$profile_fixture" == "true" ]]; then
-        local_profile_environment="${platform}_profile_no_wifi"
-        refresh_clean_consumer_dependency "$local_profile_environment"
-        pio run -d test/compile-project -e "$local_profile_environment"
+        consumer_environments+=("${platform}_profile_no_wifi" "${platform}_profile_reconcile")
     else
-        refresh_clean_consumer_dependency "${platform}_default_ui"
-        pio run -d test/compile-project -e "${platform}_default_ui"
+        consumer_environments+=("${platform}_default_ui")
     fi
+
+    for consumer_environment in "${consumer_environments[@]}"; do
+        pio run -d test/compile-project -e "$consumer_environment" -t clean >/dev/null
+        refresh_clean_consumer_dependency "$consumer_environment"
+        pio run -d test/compile-project -e "$consumer_environment"
+    done
     if [[ "$profile_fixture" == "false" && "$platform" == "esp8266" ]]; then
         # Prove that callers can omit the optional local web interface.
         refresh_clean_consumer_dependency esp8266_no_web
@@ -111,8 +109,9 @@ write_profile() {
     local target="$1"
     local profile_id="$2"
     local policy="$3"
-
     local password="$4"
+    local managed_device_name="${5:-}"
+
     {
         printf "%s\n" "{"
         printf "%s\n" "  \"format\": 2,"
@@ -122,7 +121,13 @@ write_profile() {
         printf "%s\n" "  \"wifi\": { \"profiles\": ["
         printf "%s\n" "    { \"ssid\": \"df-test-primary-unavailable\", \"password\": \"\" },"
         printf "    { \"ssid\": \"%s\", \"password\": \"%s\" }\n" "$(escape_c_string "$DEVICEFRAMEWORK_TEST_WIFI_SSID")" "$(escape_c_string "$DEVICEFRAMEWORK_TEST_WIFI_PASSWORD")"
-        printf "%s\n" "  ] }"
+        if [[ -n "$managed_device_name" ]]; then
+            printf "%s\n" "  ] },"
+            printf "  \"parameters\": { \"device\": \"%s\", \"loglevel\": \"Info\" }\n" \
+                "$(escape_c_string "$managed_device_name")"
+        else
+            printf "%s\n" "  ] }"
+        fi
         printf "%s\n" "}"
     } > "$target"
 }
@@ -131,8 +136,8 @@ write_hardware_profile() {
     hardware_profile="$(mktemp -p /tmp deviceframework-profile.XXXXXX)"
     hardware_smoke_profile="$(mktemp -p /tmp deviceframework-smoke-profile.XXXXXX)"
     chmod 600 "$hardware_profile" "$hardware_smoke_profile"
-    write_profile "$hardware_profile" "hardware-${platform}-bootstrap" "bootstrap" "profile-fixture-password"
-    write_profile "$hardware_smoke_profile" "hardware-${platform}-smoke" "reconcile" "profile-reconcile-password"
+    write_profile "$hardware_profile" "hardware-${platform}-bootstrap" "bootstrap" "default1"
+    write_profile "$hardware_smoke_profile" "hardware-${platform}-smoke" "reconcile" "profile-reconcile-password" "Hardware Reconciled"
 }
 
 
@@ -273,7 +278,7 @@ wait_for_password_restart() {
 verify_web_interface() {
     local default_host
     if [[ "$profile_fixture" == "true" ]]; then
-        default_host="df-test-${platform}.local"
+        default_host="hardware-reconciled.local"
     else
         default_host="${platform}-controller.local"
     fi
@@ -301,15 +306,23 @@ verify_web_interface() {
         local profile_source="${hardware_smoke_profile:-test/profiles/profile-fixture.json}"
         profile_password="$(sed -nE 's/^[[:space:]]*"device_password"[[:space:]]*:[[:space:]]*"([^"]*)"[[:space:]]*,?[[:space:]]*$/\1/p' "$profile_source")"
         [[ -n "$profile_password" ]] || { echo "Profile fixture has no device_password" >&2; return 1; }
-        assert_http_endpoint "superseded bootstrap password" "/api/status" 401 "profile-fixture-password"
+        assert_http_endpoint "superseded bootstrap password" "/api/status" 401 "default1"
         assert_http_endpoint "unauthenticated API status" "/api/status" 401 ""
         assert_http_endpoint "unauthenticated stylesheet" "/assets/deviceframework.css" 401 ""
         assert_http_endpoint "unauthenticated logo" "/assets/deviceframework-logo" 401 ""
     fi
 
-    assert_http_endpoint "API status" "/api/status" 200 "$profile_password" runtime chip_id version
+    if [[ "$profile_fixture" == "true" ]]; then
+        assert_http_endpoint "reconciled API status" "/api/status" 200 "$profile_password" \
+            runtime chip_id version "Hardware Reconciled" "$DEVICEFRAMEWORK_TEST_MQTT_SERVER"
+    else
+        assert_http_endpoint "API status" "/api/status" 200 "$profile_password" runtime chip_id version
+    fi
     for page_pass in 1 2; do
-        assert_http_endpoint "web interface root (pass $page_pass)" "/" 200 "$profile_password" "<!DOCTYPE html>" "Device Status" "System Controls" "deviceframework.css" "deviceframework.js" "DeviceFramework UI Test" "Test Lab" "df-web-theme" "--df-accent:#15803d" "</html>"
+        assert_http_endpoint "web interface status page (pass $page_pass)" "/" 200 "$profile_password" "<!DOCTYPE html>" "Device Status" "data-df-page=\"status\"" "deviceframework.css" "deviceframework.js" "DeviceFramework UI Test" "Test Lab" "df-web-theme" "--df-accent:#15803d" "</html>"
+        assert_http_endpoint "web interface serial page (pass $page_pass)" "/serial" 200 "$profile_password" "Serial Monitor" "data-df-page=\"serial\"" "serial-monitor" "</html>"
+        assert_http_endpoint "web interface controls page (pass $page_pass)" "/controls" 200 "$profile_password" "System Controls" "data-df-page=\"controls\"" "device-password-form" "</html>"
+        assert_http_endpoint "web interface about page (pass $page_pass)" "/about" 200 "$profile_password" "About" "data-df-page=\"about\"" "https://example.test" "</html>"
         if [[ "$page_pass" == "1" ]]; then
             assert_http_endpoint "web interface stylesheet" "/assets/deviceframework.css" 200 "$profile_password" "Modern CSS Reset" ".page-loader"
             assert_http_endpoint "web interface script" "/assets/deviceframework.js" 200 "$profile_password" "function refreshStatus" "initializeWebSerial"

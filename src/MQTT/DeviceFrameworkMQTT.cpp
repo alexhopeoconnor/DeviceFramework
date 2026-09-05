@@ -17,6 +17,11 @@ std::map<String, CommandHandler> DeviceFrameworkMQTT::commandHandlers;
 // connection attempts after that point.
 bool DeviceFrameworkMQTT::mqttBegun = false;
 bool DeviceFrameworkMQTT::mqttReconfigurationRequested = false;
+unsigned long DeviceFrameworkMQTT::mqttReconfiguredAt = 0;
+
+namespace {
+constexpr unsigned long kMqttReconfigurationStabilizationMs = 1500UL;
+}
 
 // MQTT connection state tracking
 bool DeviceFrameworkMQTT::wasConnected = false;
@@ -311,6 +316,7 @@ void DeviceFrameworkMQTT::loop() {
         return;
     }
 
+    const unsigned long now = millis();
     if (mqttReconfigurationRequested) {
         mqttReconfigurationRequested = false;
         if (mqttBegun) {
@@ -319,15 +325,24 @@ void DeviceFrameworkMQTT::loop() {
         }
         mqttBegun = false;
         wasConnected = false;
+        // ESP8266 can still be releasing the old TCP PCB after disconnect().
+        // Do not immediately create a replacement socket in the same Wi-Fi
+        // service turn; this mirrors the first-connection stabilization window.
+        mqttReconfiguredAt = now;
         return;
     }
+
+    if (mqttReconfiguredAt != 0 &&
+        (now - mqttReconfiguredAt) < kMqttReconfigurationStabilizationMs) {
+        return;
+    }
+    mqttReconfiguredAt = 0;
 
     // Defer the one-time setup until WiFi and broker resolution are ready.
     if (!beginMqtt()) {
         return;
     }
 
-    const unsigned long now = millis();
 
     // Process MQTT client tasks
     mqttClient->loop();

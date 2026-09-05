@@ -49,8 +49,10 @@ TestCase tests[] = {
     TEST_ENTRY(test_storage_falls_back_to_prior_valid_slot),
     TEST_ENTRY(test_storage_foreign_application_is_distinguished),
     TEST_ENTRY(test_storage_incompatible_schema_retains_device_password),
+    TEST_ENTRY(test_storage_migration_runs_before_profile_reconciliation),
     TEST_ENTRY(test_storage_station_profiles_round_trip),
     TEST_ENTRY(test_profile_password_is_persistent_without_reprovisioning),
+    TEST_ENTRY(test_reconcile_profile_updates_only_explicit_values_once),
 
     // Group 4: Network-Dependent
     TEST_ENTRY(test_wifi_manager_state),
@@ -135,6 +137,49 @@ void printExceptionInfo() {
 }
 #endif
 
+namespace {
+
+// Keep this realistic stack-local configuration in a short setup scope. The
+// framework copies it in setUIConfig(), so it must not remain live while the
+// WiFi, MQTT, and web-server setup stack is active on the small ESP8266 cont
+// stack. This exercises the public API without masking its ownership model.
+void configureSharedUI() {
+    DeviceFrameworkUIConfig ui;
+    ui.branding.brandName = DeviceFrameworkText::ram("Test Lab");
+    ui.branding.productName = DeviceFrameworkText::ram("DeviceFramework UI Test");
+    ui.branding.provisioningTitle = DeviceFrameworkText::ram("Set up DeviceFramework UI Test");
+    ui.branding.provisioningTagline = DeviceFrameworkText::ram("Connected-device portal and web UI verification.");
+    ui.branding.logoAltText = DeviceFrameworkText::ram("Test Lab");
+    ui.about.summary = DeviceFrameworkText::ram("Test firmware validates the fixed product About area.");
+    ui.about.primaryLink = {DeviceFrameworkText::ram("Test Lab"),
+                            DeviceFrameworkText::ram("https://example.test")};
+    ui.about.creditLink = {DeviceFrameworkText::ram("Credits"),
+                           DeviceFrameworkText::ram("https://example.test/credits")};
+    ui.theme.pageStart = DeviceFrameworkText::ram("#14532d");
+    ui.theme.pageEnd = DeviceFrameworkText::ram("#166534");
+    ui.theme.surface = DeviceFrameworkText::ram("#f0fdf4");
+    ui.theme.text = DeviceFrameworkText::ram("#052e16");
+    ui.theme.mutedText = DeviceFrameworkText::ram("#166534");
+    ui.theme.border = DeviceFrameworkText::ram("#bbf7d0");
+    ui.theme.accent = DeviceFrameworkText::ram("#15803d");
+    ui.theme.accentHover = DeviceFrameworkText::ram("#166534");
+    ui.theme.accentText = DeviceFrameworkText::ram("#ffffff");
+    ui.theme.success = DeviceFrameworkText::ram("#16a34a");
+    ui.theme.danger = DeviceFrameworkText::ram("#dc2626");
+    DeviceFramework::setUIConfig(ui);
+}
+
+void configureWebResourceLimits() {
+    // A consuming sketch configures web policy before framework setup. Give
+    // this test firmware room for two ordinary concurrent status responses.
+    DeviceFrameworkWebResourceLimits webResourceLimits =
+        DeviceFrameworkWeb::defaultResourceLimits();
+    webResourceLimits.maxConcurrentStreamResponses = 2;
+    resourceLimitsConfigured = DeviceFrameworkWeb::setResourceLimits(webResourceLimits);
+}
+
+}  // namespace
+
 // Arduino setup and loop functions (required by framework)
 void setup() {
     #ifdef DF_PLATFORM_ESP32
@@ -180,42 +225,19 @@ void setup() {
     #endif
     Serial.println("[TEST]   EEPROM cleared");
     Serial.println("[TEST]     Configuring shared UI...");
+#ifdef ENABLE_MEMORY_LOGGING
+    Serial.print("[TEST] [MEMORY] test setup start - ");
+    logTestMemory("test setup", "START");
+#endif
 
     // Simulate a real sketch setup and register custom parameters.
     Serial.println("[TEST]   Configuring test parameters...");
 
-    Serial.println("[TEST]     Calling DeviceFramework::beforeSetup()...");
-    DeviceFrameworkUIConfig ui;
-    ui.branding.brandName = DeviceFrameworkText::ram("Test Lab");
-    ui.branding.productName = DeviceFrameworkText::ram("DeviceFramework UI Test");
-    ui.branding.provisioningTitle = DeviceFrameworkText::ram("Set up DeviceFramework UI Test");
-    ui.branding.provisioningTagline = DeviceFrameworkText::ram("Connected-device portal and web UI verification.");
-    ui.branding.logoAltText = DeviceFrameworkText::ram("Test Lab");
-    ui.about.summary = DeviceFrameworkText::ram("Test firmware validates the fixed product About area.");
-    ui.about.primaryLink = {DeviceFrameworkText::ram("Test Lab"),
-                            DeviceFrameworkText::ram("https://example.test")};
-    ui.about.creditLink = {DeviceFrameworkText::ram("Credits"),
-                           DeviceFrameworkText::ram("https://example.test/credits")};
-    ui.theme.pageStart = DeviceFrameworkText::ram("#14532d");
-    ui.theme.pageEnd = DeviceFrameworkText::ram("#166534");
-    ui.theme.surface = DeviceFrameworkText::ram("#f0fdf4");
-    ui.theme.text = DeviceFrameworkText::ram("#052e16");
-    ui.theme.mutedText = DeviceFrameworkText::ram("#166534");
-    ui.theme.border = DeviceFrameworkText::ram("#bbf7d0");
-    ui.theme.accent = DeviceFrameworkText::ram("#15803d");
-    ui.theme.accentHover = DeviceFrameworkText::ram("#166534");
-    ui.theme.accentText = DeviceFrameworkText::ram("#ffffff");
-    ui.theme.success = DeviceFrameworkText::ram("#16a34a");
-    ui.theme.danger = DeviceFrameworkText::ram("#dc2626");
-    DeviceFramework::setUIConfig(ui);
+    configureSharedUI();
     Serial.println("[TEST]     Shared UI configured");
+    configureWebResourceLimits();
 
-    // A consuming sketch configures web policy before framework setup. Give
-    // this test firmware room for two ordinary concurrent status responses.
-    DeviceFrameworkWebResourceLimits webResourceLimits =
-        DeviceFrameworkWeb::defaultResourceLimits();
-    webResourceLimits.maxConcurrentStreamResponses = 2;
-    resourceLimitsConfigured = DeviceFrameworkWeb::setResourceLimits(webResourceLimits);
+    Serial.println("[TEST]     Calling DeviceFramework::beforeSetup()...");
 
     Serial.println("[TEST]     Registering parameters...");
 
@@ -252,6 +274,10 @@ void setup() {
     Serial.println("[TEST]   Setting up DeviceFramework...");
     DeviceFramework::setup();
     frameworkSetup = true;
+#ifdef ENABLE_MEMORY_LOGGING
+    Serial.print("[TEST] [MEMORY] after DeviceFramework setup - ");
+    logTestMemory("DeviceFramework::setup", "AFTER");
+#endif
     Serial.println("[TEST]   DeviceFramework setup completed");
 
     // Set test parameters after DeviceFramework setup (to override any defaults loaded from EEPROM)

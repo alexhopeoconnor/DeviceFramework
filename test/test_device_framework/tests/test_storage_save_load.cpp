@@ -2,8 +2,70 @@
 #include <Arduino.h>
 #include <DeviceFramework.h>
 #include <Configuration/DeviceFrameworkConfig.h>
+#include <Configuration/DeviceFrameworkIdentity.h>
+#include <Configuration/DeviceFrameworkParameters.h>
 #include <Storage/DeviceFrameworkStorage.h>
 #include <EEPROM.h>
+
+namespace {
+bool migrateTestDeviceName(uint16_t fromSchema, DeviceFrameworkConfigMigration& migration) {
+    (void)fromSchema;
+    return migration.remove("testdevicename") &&
+           migration.setIfMissing("testdevicename", "Migrated Device Name");
+}
+}
+
+void test_storage_migration_runs_before_profile_reconciliation() {
+    const DeviceFrameworkApplicationIdentity originalIdentity = DeviceFramework::getApplicationIdentity();
+    DeviceFrameworkParameterRegistry& registry = DeviceFrameworkParameters::getRegistry();
+    const String originalDeviceName(DeviceFramework::getDeviceName());
+    const String originalTestDeviceName(registry.getValue("testdevicename"));
+    const String originalPassword(DeviceFramework::getDevicePassword());
+    const DeviceFrameworkProvisioningState originalProvisioning =
+        DeviceFrameworkStorage::getProvisioningState();
+    const WiFiManagerStationProfiles originalProfiles = DeviceFrameworkStorage::getStationProfiles();
+
+    TEST_ASSERT_TRUE_MESSAGE(DeviceFrameworkStorage::reset(),
+        "Migration test should start with empty storage");
+    TEST_ASSERT_TRUE(DeviceFramework::configureApplication(
+        originalIdentity.applicationId.c_str(), "migration-test-old",
+        originalIdentity.configurationSchema));
+    TEST_ASSERT_TRUE(registry.setValue("testdevicename", "Pre-migration value"));
+    TEST_ASSERT_TRUE_MESSAGE(DeviceFrameworkStorage::save(),
+        "Older-schema test record should save");
+
+    TEST_ASSERT_TRUE(DeviceFramework::configureApplication(
+        originalIdentity.applicationId.c_str(), "migration-test-new",
+        static_cast<uint16_t>(originalIdentity.configurationSchema + 1U),
+        migrateTestDeviceName));
+    TEST_ASSERT_TRUE(registry.setValue("testdevicename", "Runtime value"));
+
+    const DeviceFrameworkStorageLoadResult migrated = DeviceFrameworkStorage::load();
+    TEST_ASSERT_EQUAL_MESSAGE(static_cast<int>(DeviceFrameworkStorageLoadStatus::Migrated),
+        static_cast<int>(migrated.status),
+        "Older storage must migrate before any later provisioning reconcile");
+    TEST_ASSERT_TRUE_MESSAGE(migrated.requiresSave,
+        "A migrated record must be saved at the active schema after boot");
+    TEST_ASSERT_EQUAL_STRING("Migrated Device Name", registry.getValue("testdevicename").c_str());
+
+    TEST_ASSERT_TRUE(DeviceFrameworkStorage::save());
+    const DeviceFrameworkStorageLoadResult reloaded = DeviceFrameworkStorage::load();
+    TEST_ASSERT_EQUAL_MESSAGE(static_cast<int>(DeviceFrameworkStorageLoadStatus::Loaded),
+        static_cast<int>(reloaded.status),
+        "The saved migration result must reload without running migration again");
+    TEST_ASSERT_FALSE(reloaded.requiresSave);
+
+    TEST_ASSERT_TRUE(DeviceFramework::configureApplication(
+        originalIdentity.applicationId.c_str(), originalIdentity.firmwareVersion.c_str(),
+        originalIdentity.configurationSchema, originalIdentity.migration));
+    TEST_ASSERT_TRUE(registry.setValue("testdevicename", originalTestDeviceName.c_str()));
+    DeviceFramework::setDeviceName(originalDeviceName.c_str());
+    TEST_ASSERT_TRUE(setConfigDevicePassword(originalPassword.c_str()));
+    DeviceFrameworkStorage::setProvisioningState(originalProvisioning);
+    DeviceFrameworkStorage::setStationProfiles(originalProfiles);
+    TEST_ASSERT_TRUE_MESSAGE(DeviceFrameworkStorage::save(),
+        "Migration test cleanup should restore the prior runtime configuration");
+}
 
 void test_storage_save_load() {
     Serial.println("[TEST]   Testing V4 storage save/load/reset...");

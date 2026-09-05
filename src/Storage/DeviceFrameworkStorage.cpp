@@ -6,7 +6,6 @@
 #include "../DeviceFrameworkDebug.h"
 #include "../Utils/CRC32Utils.h"
 
-#include <vector>
 
 namespace {
 constexpr uint32_t kMagic = 0x44464334UL;  // DFC4
@@ -162,32 +161,58 @@ bool appendStationProfiles(const WiFiManagerStationProfiles& profiles, PayloadWr
     return payload.appendByte(profiles.preferredSlot) && payload.appendByte(profiles.lastSuccessfulSlot);
 }
 
-bool decodeStationProfiles(const uint8_t* data, size_t size, size_t& offset,
-                           WiFiManagerStationProfiles& profiles) {
+class PayloadReader {
+public:
+    PayloadReader(uint16_t base, uint16_t length) : _base(base), _length(length), _offset(0) {}
+
+    bool readByte(uint8_t& value) {
+        if (_offset >= _length) return false;
+        value = EEPROM.read(_base + _offset++);
+        return true;
+    }
+
+    bool readBytes(char* destination, size_t length) {
+        if (!destination || length > remaining()) return false;
+        for (size_t index = 0; index < length; ++index) {
+            destination[index] = static_cast<char>(EEPROM.read(_base + _offset++));
+        }
+        return true;
+    }
+
+    bool skip(size_t length) {
+        if (length > remaining()) return false;
+        _offset += length;
+        return true;
+    }
+
+    size_t remaining() const { return _length - _offset; }
+
+private:
+    uint16_t _base;
+    uint16_t _length;
+    uint16_t _offset;
+};
+
+bool decodeStationProfiles(PayloadReader& reader, WiFiManagerStationProfiles& profiles) {
     profiles = WiFiManagerStationProfiles();
     for (uint8_t slot = 0; slot < WM_STATION_PROFILE_COUNT; ++slot) {
-        if (offset + 3 > size) return false;
-        const uint8_t flags = data[offset++];
-        if ((flags & ~0x03) != 0) return false;
-        const uint8_t ssidLength = data[offset++];
-        if (ssidLength > 32 || offset + ssidLength + 1 > size) return false;
+        uint8_t flags = 0;
+        uint8_t ssidLength = 0;
+        if (!reader.readByte(flags) || !reader.readByte(ssidLength) || (flags & ~0x03) != 0) return false;
+        if (ssidLength > 32 || reader.remaining() < static_cast<size_t>(ssidLength) + 1) return false;
         WiFiManagerStationProfile& profile = profiles.slots[slot];
-        if (ssidLength > 0 && memchr(data + offset, 0, ssidLength) != nullptr) return false;
-        memcpy(profile.ssid, data + offset, ssidLength);
-        offset += ssidLength;
-        const uint8_t passwordLength = data[offset++];
-        if (passwordLength > 64 || offset + passwordLength > size) return false;
-        if (passwordLength > 0 && memchr(data + offset, 0, passwordLength) != nullptr) return false;
-        memcpy(profile.password, data + offset, passwordLength);
-        offset += passwordLength;
+        if (!reader.readBytes(profile.ssid, ssidLength) ||
+            (ssidLength > 0 && memchr(profile.ssid, 0, ssidLength) != nullptr)) return false;
+        uint8_t passwordLength = 0;
+        if (!reader.readByte(passwordLength) || passwordLength > 64 || reader.remaining() < passwordLength) return false;
+        if (!reader.readBytes(profile.password, passwordLength) ||
+            (passwordLength > 0 && memchr(profile.password, 0, passwordLength) != nullptr)) return false;
         profile.enabled = (flags & 0x01) != 0;
         profile.hasPassword = (flags & 0x02) != 0;
         if ((!profile.enabled && (ssidLength != 0 || passwordLength != 0 || profile.hasPassword)) ||
             (profile.enabled && ssidLength == 0) || (!profile.hasPassword && passwordLength != 0)) return false;
     }
-    if (offset + 2 > size) return false;
-    profiles.preferredSlot = data[offset++];
-    profiles.lastSuccessfulSlot = data[offset++];
+    if (!reader.readByte(profiles.preferredSlot) || !reader.readByte(profiles.lastSuccessfulSlot)) return false;
     return profiles.preferredSlot < WM_STATION_PROFILE_COUNT &&
            (profiles.lastSuccessfulSlot == WM_NO_STATION_PROFILE ||
             (profiles.lastSuccessfulSlot < WM_STATION_PROFILE_COUNT &&
@@ -213,37 +238,51 @@ bool writePayload(uint16_t base, uint16_t capacity,
     return true;
 }
 
-bool decodeParameterEntries(const uint8_t* data, size_t size, std::map<String, String>& values) {
-    size_t offset = 0;
-    while (offset < size) {
-        const uint8_t idLength = data[offset++];
-        if (idLength == 0 || offset + idLength + 2 > size) return false;
+bool decodeParameterEntries(PayloadReader& reader, std::map<String, String>& values) {
+    while (reader.remaining() > 0) {
+        uint8_t idLength = 0;
+        if (!reader.readByte(idLength) || idLength == 0 || reader.remaining() < static_cast<size_t>(idLength) + 2) return false;
         String id;
-        for (uint8_t i = 0; i < idLength; ++i) id += static_cast<char>(data[offset++]);
-        const uint16_t valueLength = readU16(data + offset);
-        offset += 2;
-        if (offset + valueLength > size) return false;
+        if (!id.reserve(idLength)) return false;
+        for (uint8_t index = 0; index < idLength; ++index) {
+            uint8_t byte = 0;
+            if (!reader.readByte(byte) || !id.concat(static_cast<char>(byte))) return false;
+        }
+        uint8_t valueLow = 0;
+        uint8_t valueHigh = 0;
+        if (!reader.readByte(valueLow) || !reader.readByte(valueHigh)) return false;
+        const uint16_t valueLength = static_cast<uint16_t>(valueLow) |
+            (static_cast<uint16_t>(valueHigh) << 8);
+        if (reader.remaining() < valueLength) return false;
         String value;
-        for (uint16_t i = 0; i < valueLength; ++i) value += static_cast<char>(data[offset++]);
+        if (!value.reserve(valueLength)) return false;
+        for (uint16_t index = 0; index < valueLength; ++index) {
+            uint8_t byte = 0;
+            if (!reader.readByte(byte) || !value.concat(static_cast<char>(byte))) return false;
+        }
         values[id] = value;
     }
     return true;
 }
 
-bool decodePayload(const std::vector<uint8_t>& payload, String& password,
+bool decodePayload(uint16_t base, uint16_t length, String& password,
                    WiFiManagerStationProfiles& profiles,
                    std::map<String, String>& values) {
-    if (payload.size() < 2 || payload[0] != kPayloadVersion) return false;
-    size_t offset = 1;
-    const uint8_t passwordLength = payload[offset++];
-    if (passwordLength >= sizeof(CONFIG_devicePassword) ||
-        payload.size() < offset + static_cast<size_t>(passwordLength)) return false;
+    PayloadReader reader(base, length);
+    uint8_t payloadVersion = 0;
+    uint8_t passwordLength = 0;
+    if (!reader.readByte(payloadVersion) || payloadVersion != kPayloadVersion ||
+        !reader.readByte(passwordLength) || passwordLength >= sizeof(CONFIG_devicePassword) ||
+        reader.remaining() < passwordLength) return false;
     password = "";
-    for (uint8_t i = 0; i < passwordLength; ++i) password += static_cast<char>(payload[offset + i]);
-    offset += passwordLength;
+    if (!password.reserve(passwordLength)) return false;
+    for (uint8_t index = 0; index < passwordLength; ++index) {
+        uint8_t byte = 0;
+        if (!reader.readByte(byte) || !password.concat(static_cast<char>(byte))) return false;
+    }
     if (!isConfigDevicePasswordValid(password.c_str())) return false;
-    if (!decodeStationProfiles(payload.data(), payload.size(), offset, profiles)) return false;
-    return decodeParameterEntries(payload.data() + offset, payload.size() - offset, values);
+    if (!decodeStationProfiles(reader, profiles)) return false;
+    return decodeParameterEntries(reader, values);
 }
 
 
@@ -319,10 +358,8 @@ bool readSlot(uint8_t slot, std::map<String, String>& values, String& password,
     const uint16_t base = slotBase(slot);
     if (!readHeader(base, header)) return false;
     if (header.applicationHash != applicationHash(DeviceFrameworkIdentity::getApplication().applicationId)) return false;
-    std::vector<uint8_t> payload(header.payloadLength);
-    for (uint16_t i = 0; i < header.payloadLength; ++i) payload[i] = EEPROM.read(base + kHeaderSize + i);
-    if (CRC32Utils::calculate(payload.data(), payload.size()) != header.payloadCrc) return false;
-    if (!decodePayload(payload, password, profiles, values)) return false;
+    if (!slotPayloadCrcMatches(base, header)) return false;
+    if (!decodePayload(base + kHeaderSize, header.payloadLength, password, profiles, values)) return false;
     schema = header.schema;
     generation = header.generation;
     if (provisioning) {
@@ -340,16 +377,11 @@ bool hasForeignApplicationData() {
         const uint16_t base = slotBase(slot);
         if (!readHeader(base, header) || header.applicationHash == expectedApplicationHash) continue;
 
-        std::vector<uint8_t> payload(header.payloadLength);
-        for (uint16_t index = 0; index < header.payloadLength; ++index) {
-            payload[index] = EEPROM.read(base + kHeaderSize + index);
-        }
-        if (CRC32Utils::calculate(payload.data(), payload.size()) != header.payloadCrc) continue;
-
-        std::map<String, String> values;
-        String password;
-        WiFiManagerStationProfiles profiles;
-        if (decodePayload(payload, password, profiles, values)) return true;
+        // A complete V4 header and payload CRC identify a record written by
+        // another application. Its parameters are intentionally opaque here:
+        // decoding them would allocate transient maps solely to classify data
+        // we must not load.
+        if (slotPayloadCrcMatches(base, header)) return true;
     }
     return false;
 }

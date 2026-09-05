@@ -31,6 +31,9 @@ def reset_and_capture(port, output, timeout_seconds):
             captured.extend(data)
             if b"\nOK\r\n" in captured or b"\nOK\n" in captured:
                 return 0
+            if b"\nFAIL\r\n" in captured or b"\nFAIL\n" in captured:
+                sys.stderr.write("Unity reported test failures.\n")
+                return 1
             if b"last failed alloc" in captured or b"\nException (" in captured:
                 sys.stderr.write("Target reset after an allocator or exception failure.\n")
                 return 1

@@ -1,0 +1,14 @@
+{
+  "format": 2,
+  "application": "deviceframework",
+  "profile": {
+    "id": "deviceframework-profile-reconcile-fixture",
+    "revision": 2,
+    "policy": "reconcile"
+  },
+  "device_password": "default1",
+  "parameters": {
+    "device": "Profile Managed Device",
+    "loglevel": "Info"
+  }
+}

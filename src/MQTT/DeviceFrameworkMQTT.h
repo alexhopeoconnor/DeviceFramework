@@ -29,6 +29,7 @@ private:
     // Its loop then owns the connection and reconnection lifecycle.
     static bool mqttBegun;
     static bool mqttReconfigurationRequested;
+    static unsigned long mqttReconfiguredAt;
 
     // MQTT connection state tracking
     static bool wasConnected;

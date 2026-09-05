@@ -8,6 +8,23 @@ Each consuming firmware declares three separate values in `include/FirmwareIdent
 
 Adding, removing, or reordering parameter IDs does not need a schema bump: V4 storage is keyed by parameter ID. Increase the schema only for a rename, conversion, clamp, or another incompatible interpretation.
 
+## Configuration lifecycle
+
+Configuration has one normal runtime owner: the current V4 storage record. Framework and sketch parameter defaults are used only while that record is absent or when a newly registered parameter has no stored value. Portal, web, API, and Home Assistant updates change that record; they are not reapplied from a profile on an ordinary reboot.
+
+A selected local profile is a firmware-build input with a deliberately narrower role. PlatformIO compiles it into the image, DeviceFramework evaluates it once at boot, and editing the JSON later has no effect until that new image is uploaded. The order is therefore:
+
+```cpp
+registerParametersWithDefaults();  // framework and sketch defaults
+loadPersistentStorage();           // matching stored configuration; migrate if needed
+applyProfileIfEligible();          // optional bootstrap or changed reconcile revision
+startWiFiMqttWebServices();
+```
+
+The actual implementation performs the storage migration inside `loadPersistentStorage()` before it evaluates the profile.
+
+Use `CONFIGURATION_SCHEMA` only when an existing value changes meaning or representation. Use a profile revision only to roll out explicit deployment values.
+
 ## Optional local profile
 
 A profile is an opt-in build input owned by the consuming firmware. Keep its safe template beside that firmware and its actual device values in an ignored sibling directory:
@@ -20,7 +37,7 @@ your-firmware/
 └── profiles.local/home.json          # ignored real profile
 ```
 
-The ignored `platformio.local.ini.<machine>` only selects a local profile or OTA endpoint; real values remain in the JSON profile. A consuming project may point DeviceFramework at a local checkout, but PlatformIO still resolves that checkout's manifest Git refs, so coordinated untagged dependency work belongs in the framework root project. DeviceFramework's package hook uses PlatformIO/SCons and Python’s standard library to generate a C++ header only under `.pio`. Sketches do not declare `extra_scripts`, manage Python, or parse credentials. With no `custom_device_profile`, the hook does nothing.
+The ignored `platformio.local.ini.<machine>` only selects a local profile or OTA endpoint; real values remain in the JSON profile. A consuming project may point DeviceFramework at a local checkout through `lib_extra_dirs`; when it does not, PlatformIO resolves the tracked Git-tag dependencies. Keep coordinated untagged dependency work in the framework root project. DeviceFramework's package hook uses PlatformIO/SCons and Python’s standard library to generate a C++ header only under `.pio`. Sketches do not declare `extra_scripts`, manage Python, or parse credentials. With no `custom_device_profile`, the hook does nothing.
 
 ## Profile contract
 
@@ -42,7 +59,7 @@ The compiler requires `format: 2` and rejects unknown keys at every profile leve
 }
 ```
 
-A profile that supplies `wifi.profiles` needs one primary WiFi object; the second object is an optional fallback. The controller verifies a new candidate before it persists the profile set, then prefers the last successful network on later boots. Omit the entire `wifi` object when a profile should seed only non-network settings and intentionally open the interactive WiFiManager portal:
+A profile that supplies `wifi.profiles` needs one primary WiFi object; the second object is an optional fallback. The controller verifies a new candidate before it persists the profile set, then prefers the last successful network on later boots. Omit the entire `wifi` object when a profile should seed only non-network settings. It never erases an existing saved WiFi profile; the interactive WiFiManager portal opens when no valid saved station profile exists (for example, on a new board or after a WiFi/factory reset):
 
 ```json
 {
@@ -57,15 +74,31 @@ A profile overrides only the parameter IDs it names. On a new or reset device, o
 
 `bootstrap` is the safe default for a new device. It applies to empty storage, a valid record belonging to another `APPLICATION_ID`, or recognised DFC2 or DFC3 storage; it does not overwrite matching-application configuration or corrupt/unverified V4 data. This allows explicit erase-free handover between applications or from recognised 2.0.x storage.
 
+## Reconciliation updates
+
+`reconcile` applies supplied managed values once when either the profile ID or revision changes. It intentionally preserves every omitted value. To roll out a required replacement for an existing portal-managed setting, include that field and increase the revision:
+
+```json
+{
+  "format": 2,
+  "application": "your-firmware",
+  "profile": { "id": "home-temperature", "revision": 6, "policy": "reconcile" },
+  "parameters": {
+    "mqttserver": "mqtt-new.local",
+    "device": "Workshop monitor"
+  }
+}
+```
+
+The first boot of revision 6 writes those two values. A later portal edit remains intact on a normal reboot or another upload of revision 6. Do not use a profile revision to rename, transform, or reinterpret stored data: that is an application schema migration. A permanently fixed value should be sketch logic rather than an editable parameter that a profile rewrites repeatedly.
+
 ## Upgrade from DeviceFramework 2.1.x
 
 DeviceFramework 2.1.x records are DFC3. They are deliberately not decoded by 2.2.x. Select the same ignored local deployment profile, including a primary WiFi candidate, and perform one normal authenticated USB or OTA update: the profile seeds a DFC4 record, verifies its primary/fallback WiFi candidate, and then stores the verified profiles. There is no special erase firmware. A profile-free 2.2.x build treats DFC3 as unsupported and opens provisioning instead of guessing at an incompatible layout.
 
-`reconcile` deliberately applies supplied managed values once per profile ID/revision and records the attempt before Wi-Fi connects. Increase `profile.revision` after changing a reconciliation profile. Use it only when profile values are intended to take precedence over existing portal-managed values.
-
 ## One shared device password
 
-`device_password` is optional. A `bootstrap` profile seeds it only for a new or recovery configuration. A `reconcile` profile that explicitly supplies it writes that value once when its profile ID or revision changes, alongside its other managed values. Omit the field from a reconcile profile to leave the existing password untouched; explicitly supply `""` to clear it. In every case, the saved value restores on ordinary boots and OTA updates without the profile becoming a second runtime authority.
+`device_password` is optional. DeviceFramework uses `default1` as its development default; set an application-specific value in an ignored local profile before deployment. A `bootstrap` profile seeds it only for a new or recovery configuration. A `reconcile` profile that explicitly supplies it writes that value once when its profile ID or revision changes, alongside its other managed values. Omit the field from a reconcile profile to leave the existing password untouched; explicitly supply `""` to clear it. In every case, the saved value restores on ordinary boots and OTA updates without the profile becoming a second runtime authority.
 
 Use the public API to rotate it at runtime:
 
@@ -79,7 +112,7 @@ The optional web interface provides the same operation at **System Controls → 
 
 ## ESP8266 mDNS heap guard
 
-The ESP8266 core allocates from its Wi-Fi system context while probing and parsing multicast mDNS traffic. DeviceFramework therefore starts the responder, calls its parser, and drains resolver packets only when it has both 4 KB free heap and a 4 KB contiguous heap block; this avoids an allocator reset when otherwise-adequate free heap is fragmented. A numeric endpoint such as an MQTT broker IP bypasses mDNS resolution while the responder is deferred. The guard is sampled at most every 25 ms, rather than every application-loop iteration, because the ESP8266 heap-stat query itself scans allocator state. These are conservative defaults. Leave them unchanged unless measurement on the target device shows a different trade-off is required.
+The ESP8266 core allocates from its Wi-Fi system context while probing and parsing multicast mDNS traffic. DeviceFramework therefore starts and keeps the responder active only when it has both 4 KB free heap and a 4 KB contiguous heap block. When headroom drops, it closes the responder before lwIP can parse another multicast packet; the normal network loop starts it again once headroom returns. On ESP8266, DeviceFramework also starts ArduinoOTA without its independent mDNS path, so this remains the single responder lifecycle. OTA remains available at its normal UDP port by IP at all times, and by the configured hostname while the responder has headroom. This avoids an allocator reset when otherwise-adequate free heap is fragmented. A numeric endpoint such as an MQTT broker IP bypasses mDNS resolution while the responder is deferred. The guard is sampled at most every 25 ms, rather than every application-loop iteration, because the ESP8266 heap-stat query itself scans allocator state. These are conservative defaults. Leave them unchanged unless measurement on the target device shows a different trade-off is required.
 
 ```cpp
 setConfigMDNSMinFreeHeap(5120);      // Require 5 KB total free heap before mDNS work.
@@ -94,7 +127,7 @@ operation is expected; it should stop rising once the contiguous heap recovers.
 
 ## Normal builds, migration, and reset
 
-A normal build has no `custom_device_profile`: it never generates private source, seeds, or overwrites stored configuration. It loads a matching V4 record, including its password, or follows normal WiFiManager provisioning. A selected profile that omits `wifi` behaves the same way for networking while still seeding its permitted password and parameters. A valid foreign application record remains isolated. Recognised DFC2 or DFC3 is never silently decoded or erased; an explicit profile can replace it.
+A normal build has no `custom_device_profile`: it never generates private source, seeds, or overwrites stored configuration. It loads a matching V4 record, including its password, or follows normal WiFiManager provisioning. A selected profile that omits `wifi` never clears a saved station profile; it opens interactive provisioning only when no valid saved profile exists, while still seeding its permitted password and parameters. A valid foreign application record remains isolated. Recognised DFC2 or DFC3 is never silently decoded or erased; an explicit profile can replace it.
 
 Use a migration callback only after increasing `CONFIGURATION_SCHEMA` for a semantic change:
 
@@ -114,6 +147,6 @@ inline bool configure() {
 
 Return `false` when a previous schema cannot be transformed safely. Firmware never loads a saved schema newer than it understands.
 
-**Reset Configuration** keeps Wi-Fi credentials and the active device password while restoring framework parameters. **Factory Reset** clears Wi-Fi, password, and both transactional slots. Current releases write DFC4, introduced in DeviceFramework 2.2.0. DFC2 and DFC3 are recognised only as unsupported markers so a selected profile can replace them; their values are not decoded or migrated.
+**Reset Configuration** keeps Wi-Fi credentials and the active device password while restoring framework parameters. **Factory Reset** clears Wi-Fi and both transactional slots, then restores the shared `default1` development password. Current releases write DFC4, introduced in DeviceFramework 2.2.0. DFC2 and DFC3 are recognised only as unsupported markers so a selected profile can replace them; their values are not decoded or migrated.
 
 Next: [testing](TESTING.md) · [development and releases](DEVELOPMENT.md) · [documentation map](README.md).

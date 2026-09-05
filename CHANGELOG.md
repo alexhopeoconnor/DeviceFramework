@@ -1,5 +1,13 @@
 # Changelog
 
+## 2.7.0
+
+- Add a precise configuration lifecycle contract: defaults, transactional storage, optional profiles, runtime edits, and schema migration each have one clear ownership boundary.
+- Add revisioned reconcile-profile fixtures, direct migration/reconciliation coverage, and a real two-upload hardware regression on ESP8266 and ESP32.
+- Defer MQTT and mDNS activity until a usable station connection exists, so a portal-only device does not block on broker resolution.
+- Stream DFC4 payload decoding directly from EEPROM, removing the transient full-payload heap allocation; strengthen corrupted/foreign-record handling.
+- Restore the shared `default1` development password after a factory reset, pin WiFiManager 3.2.1 and DFTE 1.2.0, and document organised local profile/test-input workflows.
+
 ## 2.6.0
 
 - Add a platform-aware `DeviceFrameworkWebResourceLimits` policy, configured before setup, for bounded streamed responses, WebSerial capacity, memory headroom, and admission behavior.

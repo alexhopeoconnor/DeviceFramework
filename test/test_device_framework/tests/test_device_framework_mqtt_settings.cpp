@@ -6,7 +6,33 @@
 
 // Test MQTT settings and functionality (third test - after parameter setup)
 void test_device_framework_mqtt_settings() {
-    // Test MQTT connection status - should be connected since we wait for it
+    // Earlier storage cases intentionally commit several EEPROM transactions.
+    // On ESP8266 a flash write can invalidate the existing TCP PCB. PubSubClient
+    // can briefly report the newly opened replacement socket as connected before
+    // its next service turn observes the old peer has closed it. Exercise the
+    // production recovery path and require a continuously healthy connection,
+    // rather than accepting that transient state.
+    constexpr unsigned long reconnectTimeoutMs = 20000UL;
+    constexpr unsigned long stableConnectionMs = 250UL;
+    const unsigned long reconnectDeadline = millis() + reconnectTimeoutMs;
+    unsigned long connectedSince = 0;
+    while (static_cast<long>(millis() - reconnectDeadline) < 0) {
+        DeviceFramework::loop();
+
+        if (DeviceFrameworkMQTT::isConnected()) {
+            if (connectedSince == 0) {
+                connectedSince = millis();
+            } else if (millis() - connectedSince >= stableConnectionMs) {
+                break;
+            }
+        } else {
+            connectedSince = 0;
+        }
+
+        delay(25);
+    }
+
+    // Test MQTT connection status after the bounded, stable reconnect wait.
     bool mqttConnected = DeviceFrameworkMQTT::isConnected();
     TEST_ASSERT_TRUE_MESSAGE(mqttConnected,
         "MQTT should be connected after waiting for connection");

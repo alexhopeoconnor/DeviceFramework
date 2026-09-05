@@ -32,7 +32,7 @@ const char kAccent[] PROGMEM = "#347a45";
 const char kAccentText[] PROGMEM = "#ffffff";
 }
 
-void setup() {
+void configureUI() {
     DeviceFrameworkUIConfig ui;
     ui.branding.brandName = DeviceFrameworkText::progmem(kBrand);
     ui.branding.productName = DeviceFrameworkText::progmem(kProduct);
@@ -49,12 +49,16 @@ void setup() {
     ui.theme.cornerRadiusPx = 10;
 
     DeviceFramework::setUIConfig(ui);
+}
+
+void setup() {
+    configureUI();
     DeviceFramework::beforeSetup([] { /* register parameters */ });
     DeviceFramework::setup();
 }
 ```
 
-The small `ui` object may be local because the fields it refers to are static. The framework copies pointer-sized values, validates semantic theme values, prepares bounded escaped/style text before WiFi and web services start, and locks configuration before WiFiManager or web services start. `setUIConfig()` returns `false` after that point.
+The small `ui` object may be local **inside a short configuration helper** because the fields it refers to are static. The framework copies pointer-sized values, validates semantic theme values, prepares bounded escaped/style text before WiFi and web services start, and locks configuration before WiFiManager or web services start. On ESP8266, do not keep a large local UI configuration live across `DeviceFramework::setup()` in the same long-running `setup()` frame: the Arduino continuation stack is deliberately small. `setUIConfig()` returns `false` after setup has begun.
 
 ## What appears where
 
@@ -89,6 +93,19 @@ ui.about.primaryLink = {
 ```
 
 Links are optional, but a label and URL must be provided together. URLs must use `https://` and are validated before setup; labels and summary are HTML-escaped once before WiFi and web services begin. The resulting anchors always use `target="_blank" rel="noopener noreferrer"`. This deliberately is not a custom-page or arbitrary-markup API.
+
+## Built-in pages and browser work
+
+The built-in web interface is server-rendered rather than a single-page application:
+
+| Path | Purpose | Browser work |
+| --- | --- | --- |
+| `/` | Device status | Refreshes the status API only while this page is open. |
+| `/serial` | WebSerial diagnostics | Opens WebSerial only after the page loads; leaving the page closes it. |
+| `/controls` | Restart, reset, and device-password controls | No status polling or WebSerial connection. |
+| `/about` | Firmware and product information | No status polling or WebSerial connection. |
+
+This keeps normal status and control visits free of recurring diagnostic socket traffic. A bounded ESP8266 may return HTTP `503` when a second streamed page arrives before the first response is finished; that is the configured protection against fragmentation, not a restart. The existing [web resource limits](WEB_RESOURCES.md) API lets a consuming sketch select a higher response capacity after it has measured its own heap. When WebSerial is busy, the client receives the server's `1013` close and retries calmly after ten seconds rather than rapidly reconnecting.
 
 ## Editable default logo
 

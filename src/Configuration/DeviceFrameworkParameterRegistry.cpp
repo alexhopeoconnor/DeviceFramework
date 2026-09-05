@@ -1138,7 +1138,11 @@ void DeviceFrameworkParameterRegistry::scheduleFullHASync() {
 
     haResyncPending = true;
     haResyncNextIndex = 0;
-    lastHAResyncAt = 0;
+    // ArduinoHA publishes aggregate device discovery synchronously while it
+    // transitions to connected.  Do not immediately add a parameter-state
+    // publish to that same service turn: honour the configured pacing interval
+    // before the first resync as well as between later entries.
+    lastHAResyncAt = millis();
 
     LOG_DEBUGLN(F("MQTT became ready - scheduling paced HA parameter resync"));
     LOG_DEBUG_SP(F("Pending HA resync count: "), true);

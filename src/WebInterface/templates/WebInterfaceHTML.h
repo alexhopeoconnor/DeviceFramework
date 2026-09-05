@@ -19,7 +19,19 @@ const char PROGMEM header_template[] = R"rawliteral(
             <h1>%PAGE_TITLE%</h1>
         </div>
     </div>
-    %NAV%
+    <nav class="nav">
+        <button class="nav-toggle" onclick="toggleNav()" aria-label="Toggle navigation">
+            <span></span>
+            <span></span>
+            <span></span>
+        </button>
+        <div class="nav-menu" id="nav-menu">
+            <a href="/" class="nav-link" data-page="status">Device Status</a>
+            <a href="/serial" class="nav-link" data-page="serial">Serial Output</a>
+            <a href="/controls" class="nav-link" data-page="controls">Controls</a>
+            %ABOUT_NAV%
+        </div>
+    </nav>
 </header>
 )rawliteral";
 
@@ -36,23 +48,6 @@ const char PROGMEM header_404_template[] = R"rawliteral(
 </header>
 )rawliteral";
 
-// Navigation template
-const char PROGMEM nav_template[] = R"rawliteral(
-<nav class="nav">
-    <button class="nav-toggle" onclick="toggleNav()" aria-label="Toggle navigation">
-        <span></span>
-        <span></span>
-        <span></span>
-    </button>
-    <div class="nav-menu" id="nav-menu">
-        <a href="#device-status" class="nav-link active">Device Status</a>
-        <a href="#serial-output" class="nav-link">Serial Output</a>
-        <a href="#controls" class="nav-link">Controls</a>
-        %ABOUT_NAV%
-    </div>
-</nav>
-)rawliteral";
-
 // Footer template
 const char PROGMEM footer_template[] = R"rawliteral(
 <footer class="footer">
@@ -64,9 +59,9 @@ const char PROGMEM footer_template[] = R"rawliteral(
 // CONTENT TEMPLATES
 // ============================================================================
 
-// SPA Content template (main page content)
-const char PROGMEM spa_content_template[] = R"rawliteral(
-<div class="card" id="device-status">
+// Status page content
+const char PROGMEM status_content_template[] = R"rawliteral(
+<div class="card" id="device-status" data-df-page="status">
     <h2>Device Status</h2>
     <div id="status-content">
         <div class="status-grid">
@@ -140,8 +135,11 @@ const char PROGMEM spa_content_template[] = R"rawliteral(
         </div>
     </div>
 </div>
+)rawliteral";
 
-<div class="card" id="serial-output">
+// Serial page content. WebSerial is initialized only when this page is open.
+const char PROGMEM serial_content_template[] = R"rawliteral(
+<div class="card" id="serial-output" data-df-page="serial">
     <div class="terminal-header">
         <div class="terminal-title">
             <span class="terminal-label">Serial Monitor</span>
@@ -178,8 +176,11 @@ const char PROGMEM spa_content_template[] = R"rawliteral(
         </div>
     </div>
 </div>
+)rawliteral";
 
-<div class="card" id="controls">
+// Controls page content
+const char PROGMEM controls_content_template[] = R"rawliteral(
+<div class="card" id="controls" data-df-page="controls">
     <h2>System Controls</h2>
     <div id="control-panel">
         <div class="control-grid">
@@ -225,8 +226,11 @@ const char PROGMEM spa_content_template[] = R"rawliteral(
         </div>
     </div>
 </div>
+)rawliteral";
 
-%ABOUT_SECTION%
+// About page content. The configured section is empty when an application does not supply About details.
+const char PROGMEM about_content_template[] = R"rawliteral(
+<div data-df-page="about">%ABOUT_SECTION%</div>
 )rawliteral";
 
 // 404 Content template
@@ -249,8 +253,8 @@ const char PROGMEM error404_content_template[] = R"rawliteral(
 // PAGE TEMPLATES
 // ============================================================================
 
-// Base template (used by all pages)
-const char PROGMEM base_template[] = R"rawliteral(
+// Common page shell. Page-specific templates below only select a body section, so the shared document chrome remains defined once.
+const char PROGMEM page_shell_start_template[] = R"rawliteral(
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -270,12 +274,39 @@ const char PROGMEM base_template[] = R"rawliteral(
     </div>
     %HEADER%
     <main class="container">
-        %CONTENT%
+)rawliteral";
+
+const char PROGMEM page_shell_end_template[] = R"rawliteral(
     </main>
     %FOOTER%
     <script src="/assets/deviceframework.js" defer></script>
 </body>
 </html>
+)rawliteral";
+
+// Status page remains the root URL for existing device links.
+const char PROGMEM base_template[] = R"rawliteral(
+%PAGE_SHELL_START%
+%STATUS_CONTENT%
+%PAGE_SHELL_END%
+)rawliteral";
+
+const char PROGMEM serial_page_template[] = R"rawliteral(
+%PAGE_SHELL_START%
+%SERIAL_CONTENT%
+%PAGE_SHELL_END%
+)rawliteral";
+
+const char PROGMEM controls_page_template[] = R"rawliteral(
+%PAGE_SHELL_START%
+%CONTROLS_CONTENT%
+%PAGE_SHELL_END%
+)rawliteral";
+
+const char PROGMEM about_page_template[] = R"rawliteral(
+%PAGE_SHELL_START%
+%ABOUT_CONTENT%
+%PAGE_SHELL_END%
 )rawliteral";
 
 // 404 page template (simplified without navbar)

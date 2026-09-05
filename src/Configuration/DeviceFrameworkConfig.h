@@ -52,7 +52,7 @@ extern uint16_t CONFIG_templateProgmemChunkSize;
 extern uint16_t CONFIG_templateRamChunkSize;
 // Template engine configuration defaults
 #define CONFIG_templatePlaceholderNameSize_default 24   // Allows %X% style (min 3)
-#define CONFIG_maxTemplatePlaceholders_default 20       // Current usage is 17
+#define CONFIG_maxTemplatePlaceholders_default 20       // Current usage is 18
 #define CONFIG_templateStackDepth_default 16            // Max nested template depth
 #define CONFIG_templateBufferSize_default 512          // Template read buffer size
 #define CONFIG_templateMaxIterations_default 50         // Max iterations per render chunk (safety limit)

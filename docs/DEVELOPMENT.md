@@ -8,7 +8,6 @@ set, including each platform-specific asynchronous TCP package. The clean
 consumer and framework test project both use LDF `deep+` so PlatformIO follows
 framework-library headers as well as source files.
 
-
 ## Build without hardware
 
 PlatformIO and Python 3 are required. The compile checks build a minimal clean
@@ -21,6 +20,8 @@ firmware, so no board or credentials are needed:
 ./scripts/test.sh compile --platform esp32
 ./scripts/test.sh compile --platform esp32 --profile-fixture
 ```
+
+The `--profile-fixture` command compiles bootstrap, no-Wi-Fi, and reconcile-profile consumers. The physical profile run additionally proves the reconcile image changes its explicit device value while retaining the broker setting persisted by the preceding firmware; the fixture test also proves profile-ID and revision changes independently.
 
 The runner refreshes its generated PlatformIO package cache before each check, so
 CI and local runs compile the current source rather than a stale `.pio` copy.
@@ -117,7 +118,6 @@ application dependency needs to change.
    ```bash
    ./scripts/prepare-release.sh vMAJOR.MINOR.PATCH --tag
    ```
-
 
 6. Push the branch and tag. The tag workflow repeats the compile checks, validates release metadata and the PlatformIO package, and creates the GitHub Release from that tag.
 The `#vMAJOR.MINOR.PATCH` portion of a PlatformIO Git dependency is a Git ref:

@@ -11,7 +11,7 @@ board = d1_mini
 framework = arduino
 lib_ldf_mode = deep+
 lib_deps =
-    DeviceFramework=https://github.com/alexhopeoconnor/DeviceFramework.git#v2.6.0
+    DeviceFramework=https://github.com/alexhopeoconnor/DeviceFramework.git#v2.7.0
 ```
 
 Use `#vMAJOR.MINOR.PATCH` for released firmware. PlatformIO checks out that Git tag; it does not download a GitHub Release asset.

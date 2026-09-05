@@ -411,10 +411,10 @@ void DeviceFramework::reset(DeviceFrameworkResetScope scope) {
             DeviceFrameworkStorage::setStationProfiles(existingProfiles);
             DeviceFrameworkStorage::saveWithDevicePassword(existingPassword.c_str());
         } else {
-            // Factory reset is deliberately unseeded. On the next boot a
-            // selected profile may create its initial V4 record; otherwise
-            // normal provisioning determines the new local configuration.
-            setConfigDevicePassword("");
+            // A factory reset restores the shared development password. A
+            // selected profile may replace it while creating the new V4
+            // record on the next boot.
+            setConfigDevicePassword("default1");
         }
     }
 }

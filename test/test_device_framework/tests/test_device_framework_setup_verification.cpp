@@ -4,8 +4,14 @@
 #include <OTA/DeviceFrameworkOTA.h>
 #include <MDNS/DeviceFrameworkMDNS.h>
 #include <Storage/DeviceFrameworkStorage.h>
+#include <Provisioning/DeviceFrameworkProvisioning.h>
 #include <ArduinoOTA.h>
 #include <Configuration/DeviceFrameworkParameterRegistry.h>
+#include <Utils/HostnameUtils.h>
+
+#if defined(DEVICEFRAMEWORK_HAS_LOCAL_PROFILE) && DEVICEFRAMEWORK_HAS_LOCAL_PROFILE
+#include <DeviceFrameworkLocalProfile.h>
+#endif
 
 // Test DeviceFramework setup verification - verify all subsystems initialized correctly
 void test_device_framework_setup_verification() {
@@ -16,12 +22,31 @@ void test_device_framework_setup_verification() {
     TEST_ASSERT_FALSE_MESSAGE(otaHostname.isEmpty(),
         "OTA hostname should be set after DeviceFramework::setup()");
 
-    // Verify OTA hostname matches sanitized hostname
-    const char* sanitizedHostname = DeviceFramework::getSanitizedHostname();
-    TEST_ASSERT_NOT_NULL_MESSAGE(sanitizedHostname,
-        "Sanitized hostname should not be NULL");
-    TEST_ASSERT_EQUAL_STRING_MESSAGE(sanitizedHostname, otaHostname.c_str(),
-        "OTA hostname should match DeviceFramework sanitized hostname");
+    // OTA advertises the device name that existed while setup initialized it.
+    // A later runtime display-name edit is persisted for the next boot; it does
+    // not rename mDNS/OTA in place. Profiles may supply that startup name.
+#if defined(DEVICEFRAMEWORK_HAS_LOCAL_PROFILE) && DEVICEFRAMEWORK_HAS_LOCAL_PROFILE
+    const char* profileDeviceName = nullptr;
+    for (size_t index = 0; index < DEVICEFRAMEWORK_PROFILE_PARAMETER_COUNT; ++index) {
+        const DeviceFrameworkProvisionedParameter& parameter = DEVICEFRAMEWORK_PROFILE_PARAMETERS[index];
+        if (strcmp(parameter.id, "device") == 0) {
+            profileDeviceName = parameter.value;
+            break;
+        }
+    }
+    if (profileDeviceName) {
+        const String expectedHostname = HostnameUtils::sanitizeHostname(profileDeviceName);
+        TEST_ASSERT_EQUAL_STRING_MESSAGE(expectedHostname.c_str(), otaHostname.c_str(),
+            "OTA hostname should use the profile device name selected at setup");
+    } else
+#endif
+    {
+        const char* sanitizedHostname = DeviceFramework::getSanitizedHostname();
+        TEST_ASSERT_NOT_NULL_MESSAGE(sanitizedHostname,
+            "Sanitized hostname should not be NULL");
+        TEST_ASSERT_EQUAL_STRING_MESSAGE(sanitizedHostname, otaHostname.c_str(),
+            "OTA hostname should match DeviceFramework sanitized hostname");
+    }
 
     // mDNS starts only after a stable usable network and adequate heap. A fixed
     // numeric endpoint must still work while that optional responder is deferred.
