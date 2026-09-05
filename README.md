@@ -22,9 +22,10 @@ void loop() {
 }
 ```
 
-Build [Portal First](examples/01-portal-first/) for the complete project. On a clean board it opens the WiFiManager portal; after setup it exposes the existing device web interface and services.
+Build [Portal First](examples/01-portal-first/) for the complete project. On a clean board it starts the WiFiManager provisioning portal. After you enter valid Wi-Fi details, the device saves them and restarts; later boots reconnect and run mDNS, OTA, MQTT, and—when built with `ENABLE_WEB_INTERFACE`—the existing local web interface. This skeleton provides the shared lifecycle only: add your own parameters, sensors, controls, and Home Assistant entities for device-specific behaviour.
 
 - **Measured web resilience:** platform-aware response and WebSerial limits keep a busy ESP8266 responsive while remaining configurable by a consuming sketch.
+
 ## What it provides
 
 - **One device lifecycle:** configuration, provisioning, Wi-Fi, mDNS, OTA, MQTT, Home Assistant, and the existing web UI work together without repeated sketch boilerplate.
