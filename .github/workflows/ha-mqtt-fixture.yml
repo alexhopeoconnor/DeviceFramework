@@ -43,6 +43,8 @@ jobs:
           path: .ha-testkit
           sparse-checkout: test-support/ha-mqtt-contract
       - run: mkdir -p "$RUNNER_TEMP/deviceframework-ha-artifacts"
+      - name: Load pinned visual-test image
+        run: cat tests/ha-hardware/ui/visual-versions.env >> "$GITHUB_ENV"
       - name: Start broker and Home Assistant
         run: docker compose up -d mqtt homeassistant
       - name: Bootstrap Home Assistant MQTT integration
