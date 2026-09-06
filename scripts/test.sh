@@ -1,12 +1,14 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+project_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "$project_dir"
 usage() {
     cat <<'EOF'
 Usage:
   ./scripts/test.sh compile  --platform esp8266|esp32 [--profile-fixture]
   ./scripts/test.sh examples --platform esp8266|esp32
-  ./scripts/test.sh hardware --platform esp8266|esp32 --port /dev/ttyUSB0 [--env-file test/.env] [--profile-fixture]
+  ./scripts/test.sh hardware --platform esp8266|esp32 --port /dev/ttyUSB0 [--env-file test/.env] [--profile-fixture] [--ha-e2e]
 EOF
     exit 2
 }
@@ -18,20 +20,32 @@ mode="${1:-}"
 shift
 platform=""
 profile_fixture=false
+ha_e2e=false
 port=""
 env_file="test/.env"
 while [[ $# -gt 0 ]]; do
     case "$1" in
-        --platform) platform="${2:-}"; shift 2 ;;
+        --platform) [[ $# -ge 2 ]] || usage; platform="${2:-}"; shift 2 ;;
         --profile-fixture) profile_fixture=true; shift ;;
-        --port) port="${2:-}"; shift 2 ;;
-        --env-file) env_file="${2:-}"; shift 2 ;;
+        --ha-e2e) ha_e2e=true; shift ;;
+        --port) [[ $# -ge 2 ]] || usage; port="${2:-}"; shift 2 ;;
+        --env-file) [[ $# -ge 2 ]] || usage; env_file="${2:-}"; shift 2 ;;
         *) usage ;;
     esac
 done
 [[ "$platform" == "esp8266" || "$platform" == "esp32" ]] || usage
 [[ "$mode" != "hardware" || -n "$port" ]] || usage
 [[ "$mode" != "hardware" || "$profile_fixture" == "false" || -f "$env_file" ]] || usage
+[[ "$ha_e2e" == "false" || "$mode" == "hardware" ]] || { echo "--ha-e2e is only valid with hardware mode" >&2; exit 2; }
+[[ "$ha_e2e" == "false" || "$profile_fixture" == "false" ]] || { echo "--ha-e2e cannot be combined with --profile-fixture" >&2; exit 2; }
+
+# Hardware runs share the generated credential header and PlatformIO build tree.
+# Serialize them locally so a second invocation cannot delete either mid-build.
+if [[ "$mode" == "hardware" ]]; then
+    hardware_lock_file="${TMPDIR:-/tmp}/deviceframework-hardware-test.lock"
+    exec {hardware_lock_fd}>"$hardware_lock_file"
+    flock "$hardware_lock_fd"
+fi
 
 if [[ "$mode" == "examples" ]]; then
     mapfile -t examples < <(find examples -mindepth 1 -maxdepth 1 -type d -name '[0-9][0-9]-*' -print | sort)
@@ -59,6 +73,9 @@ refresh_clean_consumer_dependency() {
 if [[ "$mode" == "hardware" && "$profile_fixture" == "true" ]]; then
     environment="${platform}_profile_hardware"
 fi
+if [[ "$mode" == "hardware" && "$ha_e2e" == "true" ]]; then
+    environment="${platform}_ha_e2e"
+fi
 if [[ "$mode" == "compile" ]]; then
     consumer_environments=("$environment")
     if [[ "$profile_fixture" == "true" ]]; then
@@ -84,11 +101,16 @@ set -a
 # shellcheck disable=SC1090
 source "$env_file"
 set +a
-for key in DEVICEFRAMEWORK_TEST_WIFI_SSID DEVICEFRAMEWORK_TEST_WIFI_PASSWORD DEVICEFRAMEWORK_TEST_MQTT_SERVER DEVICEFRAMEWORK_TEST_MQTT_USER DEVICEFRAMEWORK_TEST_MQTT_PASSWORD; do
+for key in DEVICEFRAMEWORK_TEST_WIFI_SSID DEVICEFRAMEWORK_TEST_WIFI_PASSWORD DEVICEFRAMEWORK_TEST_MQTT_SERVER; do
     [[ -n "${!key:-}" ]] || { echo "$key is required in $env_file" >&2; exit 1; }
 done
 
 config_file="test/test_device_framework/test_config.generated.h"
+test_filter="test_device_framework"
+if [[ "$ha_e2e" == "true" ]]; then
+    config_file="test/test_ha_e2e/test_config.generated.h"
+    test_filter="test_ha_e2e"
+fi
 
 escape_c_string() { printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g'; }
 write_config() {
@@ -96,8 +118,8 @@ write_config() {
     printf '#define TEST_WIFI_SSID "%s"\n' "$(escape_c_string "$DEVICEFRAMEWORK_TEST_WIFI_SSID")" >> "$config_file"
     printf '#define TEST_WIFI_PASSWORD "%s"\n' "$(escape_c_string "$DEVICEFRAMEWORK_TEST_WIFI_PASSWORD")" >> "$config_file"
     printf '#define TEST_MQTT_SERVER "%s"\n' "$(escape_c_string "$DEVICEFRAMEWORK_TEST_MQTT_SERVER")" >> "$config_file"
-    printf '#define TEST_MQTT_USER "%s"\n' "$(escape_c_string "$DEVICEFRAMEWORK_TEST_MQTT_USER")" >> "$config_file"
-    printf '#define TEST_MQTT_PASSWORD "%s"\n' "$(escape_c_string "$DEVICEFRAMEWORK_TEST_MQTT_PASSWORD")" >> "$config_file"
+    printf '#define TEST_MQTT_USER "%s"\n' "$(escape_c_string "${DEVICEFRAMEWORK_TEST_MQTT_USER:-}")" >> "$config_file"
+    printf '#define TEST_MQTT_PASSWORD "%s"\n' "$(escape_c_string "${DEVICEFRAMEWORK_TEST_MQTT_PASSWORD:-}")" >> "$config_file"
     if [[ "$profile_fixture" == "true" ]]; then
         printf "%s\n" "#define TEST_EXPECT_WIFI_FALLBACK 1" >> "$config_file"
     fi
@@ -105,6 +127,8 @@ write_config() {
 
 hardware_profile=""
 hardware_smoke_profile=""
+ha_e2e_device_id=""
+ha_e2e_device_ip=""
 write_profile() {
     local target="$1"
     local profile_id="$2"
@@ -145,16 +169,13 @@ run_unity_hardware_test() {
     local output_file
     output_file="$(mktemp -p /tmp deviceframework-unity.XXXXXX)"
 
-    # The generated credential header is intentionally ignored, so force the
-    # test translation units that include it to rebuild for every hardware run.
-    pio run -e "$environment" -t clean >/dev/null
     if [[ "$profile_fixture" == "true" ]]; then
-        if ! DEVICEFRAMEWORK_HARDWARE_PROFILE="$hardware_profile" pio test -e "$environment" --filter test_device_framework --upload-port "$port" --without-testing >"$output_file" 2>&1; then
+        if ! DEVICEFRAMEWORK_HARDWARE_PROFILE="$hardware_profile" pio test -e "$environment" --filter "$test_filter" --upload-port "$port" --without-testing >"$output_file" 2>&1; then
             cat "$output_file"
             rm -f "$output_file"
             return 1
         fi
-    elif ! pio test -e "$environment" --filter test_device_framework --upload-port "$port" --without-testing >"$output_file" 2>&1; then
+    elif ! pio test -e "$environment" --filter "$test_filter" --upload-port "$port" --without-testing >"$output_file" 2>&1; then
         cat "$output_file"
         rm -f "$output_file"
         return 1
@@ -164,6 +185,16 @@ run_unity_hardware_test() {
         cat "$output_file"
         rm -f "$output_file"
         return 1
+    fi
+    if [[ "$ha_e2e" == "true" ]]; then
+        ha_e2e_device_id="$(sed -nE 's/^HA_E2E_DEVICE_ID=([^[:space:]]+)$/\1/p' "$output_file" | tail -n 1)"
+        ha_e2e_device_ip="$(sed -nE 's/^HA_E2E_DEVICE_IP=([^[:space:]]+)$/\1/p' "$output_file" | tail -n 1)"
+        if [[ -z "$ha_e2e_device_id" || -z "$ha_e2e_device_ip" ]]; then
+            echo "HA E2E firmware did not emit its device ID and IPv4 address" >&2
+            cat "$output_file"
+            rm -f "$output_file"
+            return 1
+        fi
     fi
     cat "$output_file"
     rm -f "$output_file"
@@ -282,7 +313,7 @@ verify_web_interface() {
     else
         default_host="${platform}-controller.local"
     fi
-    device_host="${DEVICEFRAMEWORK_TEST_DEVICE_HOST:-$default_host}"
+    device_host="${DEVICEFRAMEWORK_TEST_DEVICE_HOST:-${ha_e2e_device_ip:-$default_host}}"
     if [[ "$device_host" == *.local ]]; then
         command -v avahi-resolve >/dev/null || {
             echo "avahi-resolve is required for automatic .local discovery; set DEVICEFRAMEWORK_TEST_DEVICE_HOST to an IP address instead" >&2
@@ -351,4 +382,10 @@ if [[ "$profile_fixture" == "true" ]]; then
 else
     run_unity_hardware_test
 fi
-verify_web_interface
+if [[ "$ha_e2e" == "false" ]]; then
+    verify_web_interface
+fi
+if [[ "$ha_e2e" == "true" ]]; then
+    printf 'HA_E2E_DEVICE_ID=%s\n' "$ha_e2e_device_id"
+    printf 'HA_E2E_DEVICE_IP=%s\n' "$ha_e2e_device_ip"
+fi

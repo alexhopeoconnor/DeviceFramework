@@ -16,11 +16,14 @@ With `--profile-fixture`, the consumer build checks three deliberately different
 The `hardware` mode runs the Unity/integration suite against a connected device. It
 reads required WiFi and MQTT values from an ignored `test/.env`; copy
 `test/.env.example` and fill it locally. The runner generates an ignored C++ header
-only for the duration of the run, then removes it. With `--profile-fixture`, it
-runs Unity with a bootstrap profile, owns the serial port while it injects an
-RTS-only reset after the selected board’s esptool upload, and requires a
-non-empty zero-failure result. This keeps USB-UART adapters from producing a
-false green result when PlatformIO’s non-interactive monitor does not reset them.
+only for the duration of the run, then removes it. Hardware invocations take an
+exclusive local lock before they generate that header or touch the shared PlatformIO
+build tree, so a second local hardware run waits rather than racing the active one.
+With `--profile-fixture`, it runs Unity with a bootstrap profile, owns the serial
+port while it injects an RTS-only reset after the selected board’s esptool upload,
+and requires a non-empty zero-failure result. This keeps USB-UART adapters from
+producing a false green result when PlatformIO’s non-interactive monitor does not
+reset them.
 
 It then flashes a minimal, separate consuming application with a distinct
 one-time reconcile profile and a different device password. This proves a real
@@ -35,6 +38,11 @@ unauthenticated rejection plus authenticated status, root-page, static assets,
 and 404 responses. Finally it checks that the profiled password persists across
 the password endpoint’s reboot. Set `DEVICEFRAMEWORK_TEST_DEVICE_HOST` in the
 ignored env file to use a known IP instead of Avahi/mDNS.
+
+
+For a Docker-backed Home Assistant/Mosquitto test of a physical board, use the [local HA hardware contract](HA_HARDWARE_TESTING.md). It uses the same ignored Wi-Fi credentials, but supplies an isolated anonymous MQTT broker and verifies Home Assistant discovery, services, return state, and restarts. Its Docker-only retained fixture is also the intentionally small CI coverage for current HA behavior.
+
+Run `./scripts/check-docs.sh` after changing Markdown, examples, or generated web assets. It verifies local documentation links, required guides, web assets, and that every numbered example remains a buildable project shape.
 
 CI always runs both compile-only variants. Hardware tests remain an explicit
 local gate because they require LAN access, a board, and test credentials.

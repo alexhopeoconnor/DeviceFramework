@@ -1,0 +1,456 @@
+#!/usr/bin/env bash
+# Bash-first local Home Assistant hardware integration harness.
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+HARNESS_DIR="$PROJECT_DIR/tests/ha-hardware"
+NETWORK_HELPER="$SCRIPT_DIR/ha-hardware-network"
+DEFAULT_AHA_DIR="$PROJECT_DIR/../arduino-home-assistant"
+DFHA_STATE_ROOT="${XDG_STATE_HOME:-${HOME}/.local/state}/deviceframework-ha-hardware"
+
+usage() {
+    cat <<'EOF'
+Usage:
+  ./tools/ha-hardware doctor [--ap-interface IFACE] [--arduinoha-path PATH]
+  ./tools/ha-hardware compile --platform esp8266|esp32 [--arduinoha-path PATH]
+  ./tools/ha-hardware up [--network managed-ap --ap-interface IFACE] [--keep]
+  ./tools/ha-hardware run --platform esp8266|esp32 --port DEVICE [options]
+  ./tools/ha-hardware down
+  ./tools/ha-hardware reset
+
+Options for up/run:
+  --network existing|managed-ap       existing is the default
+  --mqtt-bind-ip ADDRESS              existing-network host address reachable by the board
+  --ap-interface IFACE                required for managed-ap
+  --uplink-interface IFACE            optional safety assertion / existing Wi-Fi interface
+  --firewall check|allow|manual       default: check; allow is temporary and may use sudo
+  --env-file FILE                     Wi-Fi credentials (default test/.env)
+  --arduinoha-path PATH               compile firmware against this sibling-stack ArduinoHA checkout
+  --ha-version VERSION                Home Assistant image tag (default stable)
+  --keep                              preserve the stack/AP for interactive inspection
+
+The broker is anonymous by design and for local development only. Do not
+port-forward it or expose this test stack to the internet.
+EOF
+    exit 2
+}
+
+command_name="${1:-}"
+[[ -n "$command_name" ]] || usage
+shift
+
+network="existing"
+mqtt_bind_ip=""
+ap_interface=""
+uplink_interface=""
+firewall="check"
+env_file="$PROJECT_DIR/test/.env"
+arduinoha_path=""
+ha_version="stable"
+platform=""
+port=""
+keep=false
+session_persisted=false
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --network) network="${2:-}"; shift 2 ;;
+        --mqtt-bind-ip) mqtt_bind_ip="${2:-}"; shift 2 ;;
+        --ap-interface) ap_interface="${2:-}"; shift 2 ;;
+        --uplink-interface) uplink_interface="${2:-}"; shift 2 ;;
+        --firewall) firewall="${2:-}"; shift 2 ;;
+        --env-file) env_file="${2:-}"; shift 2 ;;
+        --arduinoha-path) arduinoha_path="${2:-}"; shift 2 ;;
+        --ha-version) ha_version="${2:-}"; shift 2 ;;
+        --platform) platform="${2:-}"; shift 2 ;;
+        --port) port="${2:-}"; shift 2 ;;
+        --keep) keep=true; shift ;;
+        -h|--help) usage ;;
+        *) echo "Unknown option: $1" >&2; usage ;;
+    esac
+done
+
+[[ "$network" == "existing" || "$network" == "managed-ap" ]] || usage
+[[ "$firewall" == "check" || "$firewall" == "allow" || "$firewall" == "manual" ]] || usage
+# `up` is explicitly an interactive lifecycle command, so it must retain its
+# state even when the caller did not spell --keep.
+[[ "$command_name" != "up" ]] || keep=true
+
+if [[ -z "$arduinoha_path" && -d "$DEFAULT_AHA_DIR/test-support/ha-mqtt-contract" ]]; then
+    arduinoha_path="$DEFAULT_AHA_DIR"
+fi
+testkit_path="${AHA_TESTKIT_PATH:-${arduinoha_path:+$arduinoha_path/test-support/ha-mqtt-contract}}"
+
+require_common() {
+    command -v docker >/dev/null || { echo "docker is required" >&2; exit 1; }
+    docker compose version >/dev/null || { echo "Docker Compose v2 is required" >&2; exit 1; }
+    [[ -n "$testkit_path" && -f "$testkit_path/pyproject.toml" ]] || {
+        echo "Set --arduinoha-path (or AHA_TESTKIT_PATH) to an ArduinoHA checkout containing test-support/ha-mqtt-contract" >&2
+        exit 1
+    }
+}
+
+require_local_dependency_stack() {
+    [[ -n "$arduinoha_path" ]] || return 0
+    local stack_root
+    stack_root="$(cd "$arduinoha_path/.." && pwd)"
+    for library in "$arduinoha_path" "$stack_root/WiFiManager" "$stack_root/DFTE"; do
+        [[ -f "$library/library.json" ]] || {
+            echo "--arduinoha-path requires the normal sibling source stack (ArduinoHA, WiFiManager, and DFTE): missing $library/library.json" >&2
+            exit 1
+        }
+    done
+}
+
+ensure_no_retained_session() {
+    local state_file="$DFHA_STATE_ROOT/session.env"
+    if [[ -f "$state_file" ]]; then
+        echo "A retained DeviceFramework HA session already exists; run ./tools/ha-hardware down first." >&2
+        exit 1
+    fi
+}
+
+
+default_uplink() {
+    command -v ip >/dev/null || return 1
+    ip route show default | awk 'NR == 1 { for (i = 1; i <= NF; ++i) if ($i == "dev") { print $(i + 1); exit } }'
+}
+
+host_ipv4_on() {
+    local interface="$1"
+    command -v ip >/dev/null || return 1
+    ip -4 -o addr show dev "$interface" scope global | awk 'NR == 1 { split($4, address, "/"); print address[1] }'
+}
+
+doctor() {
+    require_common
+    command -v pio >/dev/null || echo "warning: PlatformIO is unavailable; run will not be able to flash a board" >&2
+    echo "Docker Compose: $(docker compose version --short)"
+    echo "HA testkit: $testkit_path"
+    if [[ -n "$arduinoha_path" ]]; then
+        require_local_dependency_stack
+        git -C "$arduinoha_path" rev-parse --short HEAD 2>/dev/null | sed 's/^/ArduinoHA revision: /' || true
+    else
+        echo "ArduinoHA firmware source: released PlatformIO dependency"
+    fi
+    if [[ -n "$ap_interface" ]]; then
+        command -v nmcli >/dev/null || { echo "nmcli is required for managed AP mode" >&2; exit 1; }
+        nmcli -g GENERAL.STATE device show "$ap_interface" | sed "s/^/AP interface ${ap_interface}: /"
+    fi
+    if command -v ufw >/dev/null; then
+        sudo -n ufw status 2>/dev/null | head -n 1 || echo "UFW present; no password was requested for this read-only doctor check"
+    fi
+}
+
+runtime_dir=""
+artifact_dir=""
+compose_project=""
+connection_uuid=""
+ap_gateway=""
+temporary_env=""
+platformio_override=""
+compile_config=""
+existing_firewall_connection=""
+
+compose() {
+    docker compose --project-name "$compose_project" -f "$HARNESS_DIR/compose.yaml" "$@"
+}
+
+write_test_env() {
+    local ssid="$1"
+    local password="$2"
+    local server="$3"
+    {
+        printf 'DEVICEFRAMEWORK_TEST_WIFI_SSID=%q\n' "$ssid"
+        printf 'DEVICEFRAMEWORK_TEST_WIFI_PASSWORD=%q\n' "$password"
+        printf 'DEVICEFRAMEWORK_TEST_MQTT_SERVER=%q\n' "$server"
+        printf 'DEVICEFRAMEWORK_TEST_MQTT_USER=%q\n' ""
+        printf 'DEVICEFRAMEWORK_TEST_MQTT_PASSWORD=%q\n' ""
+        printf 'DEVICEFRAMEWORK_TEST_DEVICE_HOST=%q\n' ""
+    } > "$temporary_env"
+    chmod 600 "$temporary_env"
+}
+
+configure_existing_firewall() {
+    [[ "$network" == "existing" ]] || return 0
+    command -v ufw >/dev/null || return 0
+    local comment="deviceframework-ha-${compose_project}"
+    case "$firewall" in
+        check)
+            if sudo -n ufw status 2>/dev/null | head -n 1 | grep -q '^Status: active'; then
+                echo "UFW is active. If the board cannot reach MQTT at $MQTT_BIND_IP:1883, retry with --firewall allow or add a scoped rule manually." >&2
+            fi
+            ;;
+        manual)
+            echo "If UFW is active, allow TCP/1883 in on $uplink_interface while this local harness runs." >&2
+            ;;
+        allow)
+            sudo -v
+            if sudo ufw status | head -n 1 | grep -q '^Status: active'; then
+                sudo ufw allow in on "$uplink_interface" to any port 1883 proto tcp comment "$comment"
+                existing_firewall_connection="$compose_project"
+            else
+                echo "UFW is inactive; no temporary firewall rule was added."
+            fi
+            ;;
+    esac
+}
+
+remove_existing_firewall() {
+    [[ -n "$existing_firewall_connection" ]] || return 0
+    command -v ufw >/dev/null || return 0
+    local comment="deviceframework-ha-${existing_firewall_connection}"
+    sudo ufw delete allow in on "$uplink_interface" to any port 1883 proto tcp comment "$comment" >/dev/null 2>&1 || true
+    existing_firewall_connection=""
+}
+
+write_state() {
+    $keep || return 0
+    mkdir -p "$DFHA_STATE_ROOT"
+    chmod 700 "$DFHA_STATE_ROOT"
+    local state_file="$DFHA_STATE_ROOT/session.env"
+    {
+        printf 'DFHA_PROJECT=%q\n' "$compose_project"
+        printf 'DFHA_TESTKIT=%q\n' "$testkit_path"
+        printf 'DFHA_CONNECTION=%q\n' "$connection_uuid"
+        printf 'DFHA_AP_INTERFACE=%q\n' "$ap_interface"
+        printf 'DFHA_UPLINK_INTERFACE=%q\n' "$uplink_interface"
+        printf 'DFHA_FIREWALL=%q\n' "$firewall"
+        printf 'DFHA_EXISTING_FIREWALL=%q\n' "$existing_firewall_connection"
+        printf 'DFHA_COMPOSE_FILE=%q\n' "$HARNESS_DIR/compose.yaml"
+    } > "$state_file"
+    chmod 600 "$state_file"
+    session_persisted=true
+}
+
+cleanup() {
+    local result=$?
+    trap - EXIT INT TERM HUP
+    if [[ -n "$compose_project" && "$session_persisted" != true ]]; then
+        compose logs --no-color >"$artifact_dir/compose.log" 2>&1 || true
+        compose down -v --remove-orphans >/dev/null 2>&1 || true
+    fi
+    if [[ -n "$connection_uuid" && "$session_persisted" != true ]]; then
+        "$NETWORK_HELPER" destroy --connection "$connection_uuid" --ap-interface "$ap_interface" \
+            --uplink-interface "$uplink_interface" --firewall "$firewall" || true
+    fi
+    if [[ "$session_persisted" != true ]]; then
+        remove_existing_firewall || true
+    fi
+    # These are always process-local: --keep retains only the intentionally
+    # inspectable Docker/AP session, never a generated project override.
+    [[ -z "$platformio_override" ]] || rm -f "$platformio_override"
+    [[ -z "$compile_config" ]] || rm -f "$compile_config"
+    [[ -z "$runtime_dir" ]] || rm -rf "$runtime_dir"
+    exit "$result"
+}
+
+start_network() {
+    if [[ "$network" == "managed-ap" ]]; then
+        [[ -z "$mqtt_bind_ip" ]] || { echo "--mqtt-bind-ip is only for --network existing" >&2; exit 2; }
+        [[ -n "$ap_interface" ]] || { echo "--ap-interface is required for managed-ap" >&2; exit 2; }
+        local net_output
+        net_output="$($NETWORK_HELPER create --ap-interface "$ap_interface" --uplink-interface "$uplink_interface" --firewall "$firewall")"
+        connection_uuid="$(awk -F= '/^CONNECTION_UUID=/{print $2}' <<<"$net_output")"
+        ap_gateway="$(awk -F= '/^AP_GATEWAY=/{print $2}' <<<"$net_output")"
+        local ssid password
+        ssid="$(awk -F= '/^WIFI_SSID=/{print $2}' <<<"$net_output")"
+        password="$(awk -F= '/^WIFI_PASSWORD=/{print $2}' <<<"$net_output")"
+        uplink_interface="$(awk -F= '/^UPLINK_INTERFACE=/{print $2}' <<<"$net_output")"
+        MQTT_BIND_IP="$ap_gateway"
+        write_test_env "$ssid" "$password" "$ap_gateway"
+    else
+        [[ -f "$env_file" ]] || { echo "Missing $env_file; copy test/.env.example first" >&2; exit 1; }
+        # Local ignored input: only Wi-Fi credentials are reused; the harness
+        # always points test firmware at its disposable anonymous broker.
+        # shellcheck disable=SC1090
+        source "$env_file"
+        : "${DEVICEFRAMEWORK_TEST_WIFI_SSID:?missing DEVICEFRAMEWORK_TEST_WIFI_SSID}"
+        : "${DEVICEFRAMEWORK_TEST_WIFI_PASSWORD:?missing DEVICEFRAMEWORK_TEST_WIFI_PASSWORD}"
+        if [[ -z "$uplink_interface" ]]; then
+            uplink_interface="$(default_uplink)" || { echo "iproute2 is required to detect the existing Wi-Fi interface" >&2; exit 1; }
+        fi
+        [[ -n "$uplink_interface" ]] || { echo "Could not determine the default-route interface; pass --uplink-interface" >&2; exit 1; }
+        if [[ -z "$mqtt_bind_ip" ]]; then
+            mqtt_bind_ip="$(host_ipv4_on "$uplink_interface")" || {
+                echo "Could not detect an IPv4 address on $uplink_interface; pass --mqtt-bind-ip" >&2
+                exit 1
+            }
+        fi
+        [[ "$mqtt_bind_ip" != 127.* && "$mqtt_bind_ip" != "0.0.0.0" ]] || {
+            echo "--mqtt-bind-ip must be a host LAN address that the board can reach" >&2
+            exit 1
+        }
+        MQTT_BIND_IP="$mqtt_bind_ip"
+        write_test_env "$DEVICEFRAMEWORK_TEST_WIFI_SSID" "$DEVICEFRAMEWORK_TEST_WIFI_PASSWORD" "$MQTT_BIND_IP"
+        configure_existing_firewall
+    fi
+}
+
+configure_local_dependency_stack() {
+    [[ -n "$arduinoha_path" ]] || return 0
+    require_local_dependency_stack
+    local stack_root
+    stack_root="$(cd "$arduinoha_path/.." && pwd)"
+    platformio_override="$PROJECT_DIR/platformio.local.ini.zz-ha-hardware-$$"
+    [[ ! -e "$platformio_override" ]] || { echo "Refusing to overwrite $platformio_override" >&2; exit 1; }
+    {
+        printf '%s\n' '; Generated by tools/ha-hardware; removed by its cleanup trap.'
+        printf '%s\n' '[common]'
+        printf 'lib_extra_dirs =\n    %s\n' "$stack_root"
+        printf '%s\n' 'lib_deps ='
+        printf '%s\n' '    madpilot/mDNSResolver@^0.3.0'
+        printf '%s\n' '    knolleary/PubSubClient@2.8.0'
+        printf '%s\n' '    ESP32Async/ESPAsyncWebServer@3.9.1'
+        printf '%s\n' '    bblanchon/ArduinoJson@7.4.2'
+        printf '%s\n' ''
+        printf '%s\n' '[env:esp8266_ha_e2e]'
+        printf '%s\n' 'lib_deps ='
+        printf '%s\n' '    ${env:esp8266.lib_deps}'
+        printf '%s\n' '    throwtheswitch/Unity@^2.6.1'
+        printf '%s\n' ''
+        printf '%s\n' '[env:esp32_ha_e2e]'
+        printf '%s\n' 'lib_deps ='
+        printf '%s\n' '    ${env:esp32.lib_deps}'
+        printf '%s\n' '    throwtheswitch/Unity@^2.6.1'
+    } > "$platformio_override"
+    chmod 600 "$platformio_override"
+    echo "Firmware will use local ArduinoHA/WiFiManager/DFTE from $stack_root"
+}
+
+start_stack() {
+    export AHA_TESTKIT_PATH="$testkit_path"
+    export ARTIFACT_DIR="$artifact_dir"
+    export MQTT_BIND_IP
+    export HA_VERSION="$ha_version"
+    export LOCAL_UID="$(id -u)"
+    export LOCAL_GID="$(id -g)"
+    compose up -d mqtt homeassistant
+    compose run --rm bootstrap
+}
+
+wait_for_mqtt() {
+    local attempt
+    for attempt in {1..30}; do
+        if compose exec -T mqtt mosquitto_sub -h localhost -t '$SYS/broker/version' -C 1 -W 1 >/dev/null 2>&1; then
+            return 0
+        fi
+        sleep 1
+    done
+    echo "MQTT broker did not become ready after restart" >&2
+    return 1
+}
+
+write_compile_config() {
+    compile_config="$PROJECT_DIR/test/test_ha_e2e/test_config.generated.h"
+    if [[ -e "$compile_config" ]]; then
+        echo "Refusing to overwrite an existing generated hardware test config" >&2
+        exit 1
+    fi
+    {
+        printf '%s\n' '#pragma once'
+        printf '%s\n' '#define TEST_WIFI_SSID "compile-only"'
+        printf '%s\n' '#define TEST_WIFI_PASSWORD ""'
+        printf '%s\n' '#define TEST_MQTT_SERVER "127.0.0.1"'
+        printf '%s\n' '#define TEST_MQTT_USER ""'
+        printf '%s\n' '#define TEST_MQTT_PASSWORD ""'
+    } > "$compile_config"
+    chmod 600 "$compile_config"
+}
+
+compile_hardware_fixture() {
+    [[ "$platform" == "esp8266" || "$platform" == "esp32" ]] || usage
+    command -v pio >/dev/null || { echo "PlatformIO is required for compile" >&2; return 1; }
+    configure_local_dependency_stack
+    write_compile_config
+    pio test -e "${platform}_ha_e2e" --filter test_ha_e2e --without-uploading --without-testing
+}
+
+run_hardware() {
+    [[ "$platform" == "esp8266" || "$platform" == "esp32" ]] || usage
+    [[ -n "$port" ]] || usage
+    command -v pio >/dev/null || { echo "PlatformIO is required for run" >&2; return 1; }
+    configure_local_dependency_stack
+    local serial_log="$artifact_dir/serial.log"
+    set +e
+    "$PROJECT_DIR/scripts/test.sh" hardware --platform "$platform" --port "$port" \
+        --env-file "$temporary_env" --ha-e2e 2>&1 | tee "$serial_log"
+    local test_status=${PIPESTATUS[0]}
+    set -e
+    [[ "$test_status" == 0 ]] || return "$test_status"
+    local device_id
+    device_id="$(sed -nE 's/^HA_E2E_DEVICE_ID=([^[:space:]]+)$/\1/p' "$serial_log" | tail -n 1)"
+    [[ -n "$device_id" ]] || { echo "Hardware firmware did not emit HA_E2E_DEVICE_ID" >&2; return 1; }
+    export E2E_EXPECTED_DEVICE_ID="$device_id"
+    export E2E_MODE=hardware
+    compose run --rm --user "$(id -u):$(id -g)" verifier
+    compose restart homeassistant
+    export E2E_MODE=ha-restart
+    compose run --rm --user "$(id -u):$(id -g)" verifier
+    compose restart mqtt
+    wait_for_mqtt
+    export E2E_MODE=mqtt-restart
+    compose run --rm --user "$(id -u):$(id -g)" verifier
+    printf '{"platform":"%s","device_id":"%s","arduinoha_path":"%s","ha_version":"%s","mqtt_bind_ip":"%s"}\n' \
+        "$platform" "$device_id" "${arduinoha_path:-released-dependency}" "$ha_version" "$MQTT_BIND_IP" > "$artifact_dir/summary.json"
+}
+
+load_state_and_down() {
+    local state_file="$DFHA_STATE_ROOT/session.env"
+    [[ -f "$state_file" ]] || { echo "No retained DeviceFramework HA session" >&2; return 0; }
+    # This file is generated by write_state with 0600 permissions.
+    # shellcheck disable=SC1090
+    source "$state_file"
+    compose_project="$DFHA_PROJECT"
+    testkit_path="$DFHA_TESTKIT"
+    export AHA_TESTKIT_PATH="$testkit_path"
+    connection_uuid="$DFHA_CONNECTION"
+    ap_interface="$DFHA_AP_INTERFACE"
+    uplink_interface="$DFHA_UPLINK_INTERFACE"
+    firewall="$DFHA_FIREWALL"
+    existing_firewall_connection="$DFHA_EXISTING_FIREWALL"
+    docker compose --project-name "$compose_project" -f "$DFHA_COMPOSE_FILE" down -v --remove-orphans || true
+    if [[ -n "$connection_uuid" ]]; then
+        "$NETWORK_HELPER" destroy --connection "$connection_uuid" --ap-interface "$ap_interface" \
+            --uplink-interface "$uplink_interface" --firewall "$firewall" || true
+    fi
+    remove_existing_firewall || true
+    rm -f "$state_file"
+}
+
+case "$command_name" in
+    doctor)
+        doctor
+        ;;
+    compile)
+        runtime_dir="$(mktemp -d "${TMPDIR:-/tmp}/deviceframework-ha-hardware.XXXXXX")"
+        trap cleanup EXIT INT TERM HUP
+        compile_hardware_fixture
+        ;;
+    up|run)
+
+        require_common
+        ensure_no_retained_session
+        runtime_dir="$(mktemp -d "${TMPDIR:-/tmp}/deviceframework-ha-hardware.XXXXXX")"
+        artifact_dir="$PROJECT_DIR/artifacts/ha-hardware/$(date -u +%Y%m%dT%H%M%SZ)"
+        mkdir -p "$artifact_dir"
+        temporary_env="$runtime_dir/test.env"
+        compose_project="dfha$(date +%s)"
+        trap cleanup EXIT INT TERM HUP
+        start_network
+        start_stack
+        write_state
+        if [[ "$command_name" == "run" ]]; then
+            run_hardware
+        else
+            echo "Home Assistant stack retained. Visit http://127.0.0.1:${HA_PORT:-8125} and run ./tools/ha-hardware down when finished."
+        fi
+        ;;
+    down|reset)
+        load_state_and_down
+        ;;
+    *)
+        usage
+        ;;
+esac

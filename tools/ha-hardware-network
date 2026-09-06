@@ -1,0 +1,160 @@
+#!/usr/bin/env bash
+# Optional Linux NetworkManager helper for the DeviceFramework HA hardware rig.
+set -euo pipefail
+
+usage() {
+    cat <<'EOF'
+Usage:
+  ha-hardware-network create --ap-interface IFACE [--uplink-interface IFACE] [--firewall check|allow|manual]
+  ha-hardware-network destroy --connection UUID --ap-interface IFACE [--uplink-interface IFACE] [--firewall check|allow|manual]
+EOF
+    exit 2
+}
+
+command_name="${1:-}"
+[[ "$command_name" == "create" || "$command_name" == "destroy" ]] || usage
+shift
+
+ap_interface=""
+uplink_interface=""
+firewall="check"
+connection=""
+connection_name=""
+created_connection=false
+
+cleanup_failed_create() {
+    local result=$?
+    trap - EXIT INT TERM HUP
+    if [[ "$command_name" == "create" && "$created_connection" == true ]]; then
+        if [[ -n "$connection" ]]; then
+            sudo nmcli connection down uuid "$connection" >/dev/null 2>&1 || true
+            sudo nmcli connection delete uuid "$connection" >/dev/null 2>&1 || true
+        elif [[ -n "$connection_name" ]]; then
+            sudo nmcli connection down "$connection_name" >/dev/null 2>&1 || true
+            sudo nmcli connection delete "$connection_name" >/dev/null 2>&1 || true
+        fi
+        remove_firewall || true
+    fi
+    exit "$result"
+}
+trap cleanup_failed_create EXIT INT TERM HUP
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --ap-interface) ap_interface="${2:-}"; shift 2 ;;
+        --uplink-interface) uplink_interface="${2:-}"; shift 2 ;;
+        --firewall) firewall="${2:-}"; shift 2 ;;
+        --connection) connection="${2:-}"; shift 2 ;;
+        *) usage ;;
+    esac
+done
+
+[[ -n "$ap_interface" ]] || usage
+[[ "$firewall" == "check" || "$firewall" == "allow" || "$firewall" == "manual" ]] || usage
+command -v nmcli >/dev/null || { echo "NetworkManager/nmcli is required for --network managed-ap" >&2; exit 1; }
+command -v ip >/dev/null || { echo "iproute2 is required for --network managed-ap" >&2; exit 1; }
+
+default_uplink() {
+    ip route show default | awk 'NR == 1 { for (i = 1; i <= NF; ++i) if ($i == "dev") { print $(i + 1); exit } }'
+}
+
+if [[ -z "$uplink_interface" ]]; then
+    uplink_interface="$(default_uplink)"
+fi
+[[ -n "$uplink_interface" ]] || { echo "Could not determine the default-route interface" >&2; exit 1; }
+[[ "$ap_interface" != "$uplink_interface" ]] || { echo "Refusing to turn the default-route interface into the test AP" >&2; exit 1; }
+
+check_ufw() {
+    command -v ufw >/dev/null || return 0
+    if sudo ufw status | head -n 1 | grep -q '^Status: active'; then
+        case "$firewall" in
+            check)
+                echo "UFW is active. If a board cannot get DHCP, MQTT, or internet, retry with --firewall allow or use --firewall manual." >&2
+                ;;
+            manual)
+                cat >&2 <<EOF
+UFW is active. Allow DHCP/DNS/MQTT on ${ap_interface} and forwarding from ${ap_interface} to ${uplink_interface}, then retry.
+EOF
+                ;;
+        esac
+    fi
+}
+
+allow_firewall() {
+    [[ "$firewall" == "allow" ]] || return 0
+    command -v ufw >/dev/null || { echo "--firewall allow requires ufw" >&2; exit 1; }
+    local comment="deviceframework-ha-${connection}"
+    sudo ufw allow in on "$ap_interface" to any port 67 proto udp comment "$comment"
+    sudo ufw allow in on "$ap_interface" to any port 53 proto udp comment "$comment"
+    sudo ufw allow in on "$ap_interface" to any port 53 proto tcp comment "$comment"
+    sudo ufw allow in on "$ap_interface" to any port 1883 proto tcp comment "$comment"
+    sudo ufw route allow in on "$ap_interface" out on "$uplink_interface" comment "$comment"
+}
+
+remove_firewall() {
+    [[ "$firewall" == "allow" ]] || return 0
+    command -v ufw >/dev/null || return 0
+    local comment="deviceframework-ha-${connection}"
+    sudo ufw delete allow in on "$ap_interface" to any port 67 proto udp comment "$comment" >/dev/null 2>&1 || true
+    sudo ufw delete allow in on "$ap_interface" to any port 53 proto udp comment "$comment" >/dev/null 2>&1 || true
+    sudo ufw delete allow in on "$ap_interface" to any port 53 proto tcp comment "$comment" >/dev/null 2>&1 || true
+    sudo ufw delete allow in on "$ap_interface" to any port 1883 proto tcp comment "$comment" >/dev/null 2>&1 || true
+    sudo ufw delete route allow in on "$ap_interface" out on "$uplink_interface" comment "$comment" >/dev/null 2>&1 || true
+}
+
+if [[ "$command_name" == "destroy" ]]; then
+    [[ -n "$connection" ]] || usage
+    sudo -v
+    sudo nmcli connection down uuid "$connection" >/dev/null 2>&1 || true
+    sudo nmcli connection delete uuid "$connection" >/dev/null 2>&1 || true
+    remove_firewall
+    echo "Removed temporary DeviceFramework HA AP connection $connection"
+    exit 0
+fi
+
+[[ "$(nmcli -g GENERAL.CONNECTION device show "$ap_interface" 2>/dev/null || true)" =~ ^(--)?$ ]] || {
+    echo "Refusing to reuse active adapter $ap_interface; choose a dedicated USB Wi-Fi adapter" >&2
+    exit 1
+}
+
+if command -v iw >/dev/null && ! iw list | awk '/Supported interface modes:/ { modes=1; next } modes && /^[[:space:]]*\*/ { if ($2 == "AP") found=1 } END { exit !found }'; then
+    echo "The available Wi-Fi driver does not advertise AP mode" >&2
+    exit 1
+fi
+
+sudo -v
+check_ufw
+
+subnet_octet="42"
+while ip route show | awk -v prefix="10.42.${subnet_octet}." '$1 ~ "^" prefix { found=1 } END { exit !found }'; do
+    subnet_octet="$((subnet_octet + 1))"
+    [[ "$subnet_octet" -lt 250 ]] || { echo "Could not find an unused 10.42.x.0/24 test subnet" >&2; exit 1; }
+done
+gateway="10.42.${subnet_octet}.1"
+session="$(date +%s)-$(od -An -N4 -tx1 /dev/urandom | tr -d ' \n')"
+connection_name="deviceframework-ha-${session}"
+ssid="DF-HA-${session: -6}"
+password="$(od -An -N12 -tx1 /dev/urandom | tr -d ' \n')"
+
+sudo nmcli connection add type wifi ifname "$ap_interface" con-name "$connection_name" autoconnect no ssid "$ssid" >/dev/null
+created_connection=true
+connection="$(sudo nmcli -g UUID connection show "$connection_name")"
+sudo nmcli connection modify uuid "$connection" \
+    802-11-wireless.mode ap \
+    802-11-wireless.band bg \
+    802-11-wireless.channel 6 \
+    wifi-sec.key-mgmt wpa-psk \
+    wifi-sec.psk "$password" \
+    ipv4.method shared \
+    ipv4.addresses "${gateway}/24" \
+    ipv6.method ignore
+sudo nmcli connection up uuid "$connection" >/dev/null
+allow_firewall
+trap - EXIT INT TERM HUP
+
+printf 'CONNECTION_UUID=%s\n' "$connection"
+printf 'AP_INTERFACE=%s\n' "$ap_interface"
+printf 'UPLINK_INTERFACE=%s\n' "$uplink_interface"
+printf 'AP_GATEWAY=%s\n' "$gateway"
+printf 'WIFI_SSID=%s\n' "$ssid"
+printf 'WIFI_PASSWORD=%s\n' "$password"

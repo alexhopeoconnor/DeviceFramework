@@ -2,6 +2,7 @@
 platformio.local.ini.*
 test/.env
 test/test_device_framework/test_config.generated.h
+test/test_ha_e2e/test_config.generated.h
 compile_commands.json
 .clangd
 .cache/
@@ -9,3 +10,4 @@ scripts/endpoint-fetcher/bin/
 scripts/endpoint-fetcher/obj/
 *.tar.gz
 __pycache__/
+artifacts/ha-hardware/

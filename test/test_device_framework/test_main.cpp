@@ -263,6 +263,7 @@ void setup() {
         haSwitchMeta.haDeviceType = HAConfigDeviceType::SWITCH;
         paramRegistry.registerParameter(haSwitchMeta);
         Serial.println("[TEST]     Custom HA parameter registered: testhaswitch");
+
     });
 
     // DeviceFramework 2.2 owns station connection through the profile controller.
@@ -322,6 +323,7 @@ void setup() {
     testSwitch.setName("Test Switch");
     testSwitch.setIcon("mdi:toggle-switch");
 
+
     Serial.println("[TEST]   Test framework configured with automatic ArduinoHA entity registration");
 
     UNITY_BEGIN(); // Start Unity test framework
@@ -347,8 +349,12 @@ void loop() {
             Serial.println("\n[TEST] --- WiFi Connected ---");
             Serial.print("[TEST] IP: ");
             Serial.println(WiFi.localIP());
+#if defined(DEVICEFRAMEWORK_HA_E2E)
+            Serial.println("[TEST] SSID: [HIDDEN]");
+#else
             Serial.print("[TEST] SSID: ");
             Serial.println(WiFi.SSID());
+#endif
         }
 
         // Update MQTT connection status

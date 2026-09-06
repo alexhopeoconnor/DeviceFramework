@@ -1,0 +1,30 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "DeviceFramework Home Assistant retained discovery fixture",
+  "type": "object",
+  "required": ["topic", "payload", "expect"],
+  "properties": {
+    "topic": {"type": "string", "pattern": "^homeassistant/device/.+/config$"},
+    "payload": {"type": "object"},
+    "retain": {"type": "boolean"},
+    "expect": {
+      "type": "object",
+      "required": ["device_identifier", "entities"],
+      "properties": {
+        "device_identifier": {"type": "string"},
+        "entities": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "required": ["domain", "unique_id"],
+            "properties": {
+              "domain": {"type": "string"},
+              "unique_id": {"type": "string"}
+            }
+          }
+        }
+      }
+    }
+  }
+}

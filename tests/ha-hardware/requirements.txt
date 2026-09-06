@@ -1,0 +1,1 @@
+# Generic HA/MQTT dependencies are supplied by the ArduinoHA-owned testkit.

@@ -95,12 +95,8 @@ void test_device_framework_configuration() {
         DeviceFramework::setMqttServer(originalMqttServer.c_str());
     }
     DeviceFramework::setMqttPort(originalMqttPort);
-    if (originalMqttUser.length() > 0) {
-        DeviceFramework::setMqttUser(originalMqttUser.c_str());
-    }
-    if (originalMqttPassword.length() > 0) {
-        DeviceFramework::setMqttPass(originalMqttPassword.c_str());
-    }
+    DeviceFramework::setMqttUser(originalMqttUser.c_str());
+    DeviceFramework::setMqttPass(originalMqttPassword.c_str());
     TEST_ASSERT_TRUE_MESSAGE(DeviceFramework::setDevicePassword(originalDevicePassword.c_str()),
         "The original device password should restore transactionally");
 

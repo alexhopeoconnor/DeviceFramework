@@ -1,0 +1,74 @@
+name: Home Assistant MQTT fixture
+
+on:
+  pull_request:
+    paths:
+      - tests/ha-hardware/**
+      - .github/workflows/ha-mqtt-fixture.yml
+  push:
+    branches: [main]
+    paths:
+      - tests/ha-hardware/**
+      - .github/workflows/ha-mqtt-fixture.yml
+  workflow_dispatch:
+  schedule:
+    - cron: "41 3 * * 2"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  fixture:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        home_assistant: [stable]
+    env:
+      HA_VERSION: ${{ matrix.home_assistant }}
+      AHA_TESTKIT_PATH: ${{ github.workspace }}/.ha-testkit/test-support/ha-mqtt-contract
+      ARTIFACT_DIR: ${{ runner.temp }}/deviceframework-ha-artifacts
+      COMPOSE_FILE: tests/ha-hardware/compose.yaml
+    steps:
+      - uses: actions/checkout@v4
+      # The schema-neutral transport testkit lives with ArduinoHA. Keep this
+      # checkout sparse so DeviceFramework CI does not duplicate its library tests.
+      - uses: actions/checkout@v4
+        with:
+          repository: alexhopeoconnor/arduino-home-assistant
+          ref: main
+          path: .ha-testkit
+          sparse-checkout: test-support/ha-mqtt-contract
+      - run: mkdir -p "$ARTIFACT_DIR"
+      - name: Start broker and Home Assistant
+        run: docker compose up -d mqtt homeassistant
+      - name: Bootstrap Home Assistant MQTT integration
+        run: docker compose run --rm bootstrap
+      - name: Check DeviceFramework retained discovery fixture
+        run: docker compose run --rm verifier
+      - name: Restart Home Assistant from retained discovery
+        run: docker compose restart homeassistant
+      - name: Check retained fixture after Home Assistant restart
+        run: docker compose run --rm -e E2E_MODE=fixture-restart verifier
+      - name: Restart non-persistent MQTT broker and republish fixture
+        run: |
+          docker compose restart mqtt
+          docker compose up -d --wait mqtt
+      - name: Check fresh fixture after MQTT restart
+        run: docker compose run --rm -e E2E_MODE=fixture-after-mqtt-restart verifier
+      - name: Collect artifacts on failure
+        if: failure()
+        run: docker compose logs --no-color homeassistant mqtt > "$ARTIFACT_DIR/compose.log" || true
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: home-assistant-fixture-${{ matrix.home_assistant }}
+          path: ${{ runner.temp }}/deviceframework-ha-artifacts
+          if-no-files-found: ignore
+      - name: Remove fixture volumes
+        if: always()
+        run: docker compose down -v
