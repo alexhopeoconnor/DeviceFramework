@@ -1,4 +1,14 @@
 services:
+  config-init:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      additional_contexts:
+        ha_testkit: ${AHA_TESTKIT_PATH:?Set AHA_TESTKIT_PATH to ha-mqtt-contract}
+    command: ["python", "config_init.py"]
+    volumes:
+      - ha_config:/config
+
   mqtt:
     image: eclipse-mosquitto:2
     command: ["mosquitto", "-c", "/mosquitto/config/mosquitto.conf"]
@@ -43,6 +53,24 @@ services:
       homeassistant:
         condition: service_started
 
+  dashboard-setup:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      additional_contexts:
+        ha_testkit: ${AHA_TESTKIT_PATH:?Set AHA_TESTKIT_PATH to ha-mqtt-contract}
+    command: ["python", "dashboard_setup.py"]
+    environment:
+      HA_URL: http://homeassistant:8123
+      E2E_MODE: ${E2E_MODE:-fixture}
+      E2E_EXPECTED_DEVICE_ID: ${E2E_EXPECTED_DEVICE_ID:-}
+    volumes:
+      - test_state:/state
+      - ha_config:/config
+    depends_on:
+      homeassistant:
+        condition: service_started
+
   verifier:
     build:
       context: .
@@ -62,6 +90,32 @@ services:
     depends_on:
       mqtt:
         condition: service_healthy
+      homeassistant:
+        condition: service_started
+
+  ui:
+    build:
+      context: ./ui
+      dockerfile: Dockerfile
+      args:
+        PLAYWRIGHT_IMAGE: ${PLAYWRIGHT_IMAGE:?Set PLAYWRIGHT_IMAGE from ui/visual-versions.env}
+    environment:
+      HA_URL: http://homeassistant:8123
+      UI_MANIFEST: /state/ui-manifest.json
+      UI_RESULT: /artifacts/ui-result.json
+      ARTIFACT_DIR: /artifacts
+      HA_TEST_USERNAME: deviceframework-hardware
+      HA_TEST_PASSWORD: deviceframework-hardware-password
+      UI_EXPECT_INTERACTION: ${UI_EXPECT_INTERACTION:-0}
+      PLAYWRIGHT_UPDATE_SNAPSHOTS: ${PLAYWRIGHT_UPDATE_SNAPSHOTS:-0}
+      HOME: /tmp
+      XDG_CACHE_HOME: /tmp
+    volumes:
+      - test_state:/state
+      - ${ARTIFACT_DIR:-./artifacts}:/artifacts
+      - ./ui:/work
+    shm_size: 1gb
+    depends_on:
       homeassistant:
         condition: service_started
 

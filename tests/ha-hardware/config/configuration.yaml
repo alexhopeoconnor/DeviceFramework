@@ -1,0 +1,10 @@
+# DeviceFramework HA hardware harness
+default_config:
+
+lovelace:
+  dashboards:
+    deviceframework-e2e:
+      mode: yaml
+      filename: deviceframework-e2e-dashboard.yaml
+      title: DeviceFramework E2E
+      show_in_sidebar: false

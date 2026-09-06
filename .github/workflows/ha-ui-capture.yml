@@ -1,0 +1,34 @@
+name: Home Assistant visual dashboard
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  visual-fixture:
+    runs-on: ubuntu-latest
+    env:
+      AHA_TESTKIT_PATH: ${{ github.workspace }}/.ha-testkit/test-support/ha-mqtt-contract
+    steps:
+      - uses: actions/checkout@v4
+      # Keep the generic ArduinoHA contract support in its owning repository.
+      - uses: actions/checkout@v4
+        with:
+          repository: alexhopeoconnor/arduino-home-assistant
+          ref: main
+          path: .ha-testkit
+          sparse-checkout: test-support/ha-mqtt-contract
+      - name: Run pinned HA dashboard visual contract
+        run: ./tools/ha-hardware fixture --ui-capture
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: home-assistant-visual-dashboard
+          path: artifacts/ha-hardware
+          if-no-files-found: ignore

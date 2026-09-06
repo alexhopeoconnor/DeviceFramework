@@ -4,8 +4,9 @@ from __future__ import annotations
 
 import json
 import os
+import time
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 from ha_mqtt_contract import (
     ContractError,
@@ -89,6 +90,27 @@ def write_snapshot(client: HomeAssistantClient, observer: MqttObserver, *, devic
         write_json_artifact(ARTIFACTS, "ha-states.json", states)
 
 
+def publish_fixture_states(publisher: RetainedPublisher, fixture: dict[str, Any]) -> None:
+    """Publish retained state before discovery so HA renders a known initial state."""
+    for state in fixture.get("states", []):
+        payload = state["payload"]
+        publisher.publish(
+            state["topic"],
+            payload if isinstance(payload, str) else json.dumps(payload),
+            retain=state.get("retain", True),
+        )
+
+
+def assert_fixture_states(client: HomeAssistantClient, entities: dict[str, dict[str, Any]]) -> None:
+    """Ensure retained MQTT states have reached HA before visual capture."""
+    by_domain = {entity_domain(entry): entry for entry in entities.values()}
+    client.wait_for_state(by_domain["sensor"]["entity_id"], "1", timeout=90)
+    client.wait_for_state(by_domain["switch"]["entity_id"], "off", timeout=90)
+    wait_for_numeric_state(client, by_domain["number"]["entity_id"], 7)
+    client.wait_for_state(by_domain["select"]["entity_id"], "normal", timeout=90)
+    client.wait_for_state(by_domain["text"]["entity_id"], "ready", timeout=90)
+
+
 def fixture_contract(*, republish: bool = True, identifier_suffix: str = "") -> None:
     fixture = load_fixture()
     if identifier_suffix:
@@ -104,11 +126,13 @@ def fixture_contract(*, republish: bool = True, identifier_suffix: str = "") -> 
     publisher = RetainedPublisher(MQTT_HOST, MQTT_PORT) if republish else None
     try:
         if publisher is not None:
+            publish_fixture_states(publisher, fixture)
             payload = fixture["payload"]
             publisher.publish(fixture["topic"], json.dumps(payload), retain=fixture.get("retain", True))
         expected = fixture["expect"]
         device = wait_for_device(client, expected["device_identifier"])
-        assert_entities(client, device, expected["entities"])
+        entities = assert_entities(client, device, expected["entities"])
+        assert_fixture_states(client, entities)
         observer.wait_for_topic(fixture["topic"])
         write_snapshot(client, observer, device=device)
     finally:
@@ -128,7 +152,13 @@ def expected_hardware_entities(device_id: str) -> list[dict[str, str]]:
     ]
 
 
-def wait_for_numeric_state(client: HomeAssistantClient, entity_id: str, expected: float) -> dict[str, Any]:
+def wait_for_numeric_state(
+    client: HomeAssistantClient,
+    entity_id: str,
+    expected: float,
+    *,
+    timeout: int = 90,
+) -> dict[str, Any]:
     def matches() -> dict[str, Any] | None:
         value = client.state(entity_id)
         if value is None:
@@ -138,7 +168,29 @@ def wait_for_numeric_state(client: HomeAssistantClient, entity_id: str, expected
         except (TypeError, ValueError):
             return None
 
-    return wait_until(f"Home Assistant state {entity_id}={expected}", matches, timeout=90)
+    return wait_until(f"Home Assistant state {entity_id}={expected}", matches, timeout=timeout)
+
+
+def call_service_until_state(
+    client: HomeAssistantClient,
+    domain: str,
+    service: str,
+    data: dict[str, Any],
+    wait_for_result: Callable[[int], Any],
+    description: str,
+) -> None:
+    """Retry a command while HA's MQTT client reconnects after a broker restart."""
+    last_error: ContractError | None = None
+    for attempt in range(1, 4):
+        client.call_service(domain, service, data)
+        try:
+            wait_for_result(30)
+            return
+        except ContractError as error:
+            last_error = error
+            if attempt < 3:
+                time.sleep(3)
+    raise ContractError(f"{description} did not converge after 3 service attempts") from last_error
 
 
 def assert_command_round_trips(client: HomeAssistantClient, entities: dict[str, dict[str, Any]], device_id: str) -> None:
@@ -158,6 +210,76 @@ def assert_command_round_trips(client: HomeAssistantClient, entities: dict[str, 
     text = entities[f"{device_id}_e2etext"]
     client.call_service("text", "set_value", {"entity_id": text["entity_id"], "value": "checked"})
     client.wait_for_state(text["entity_id"], "checked", timeout=90)
+
+
+def prepare_visual_states(
+    client: HomeAssistantClient,
+    entities: dict[str, dict[str, Any]],
+    device_id: str,
+) -> None:
+    """Give fixture and hardware dashboards the same reviewed screenshot state."""
+    switch = entities[f"{device_id}_e2e_switch"]
+    call_service_until_state(
+        client, "switch", "turn_off", {"entity_id": switch["entity_id"]},
+        lambda timeout: client.wait_for_state(switch["entity_id"], "off", timeout=timeout),
+        "switch baseline",
+    )
+
+    number = entities[f"{device_id}_e2enumber"]
+    call_service_until_state(
+        client, "number", "set_value", {"entity_id": number["entity_id"], "value": 7},
+        lambda timeout: wait_for_numeric_state(client, number["entity_id"], 7, timeout=timeout),
+        "number baseline",
+    )
+
+    select = entities[f"{device_id}_e2eselect"]
+    call_service_until_state(
+        client, "select", "select_option", {"entity_id": select["entity_id"], "option": "normal"},
+        lambda timeout: client.wait_for_state(select["entity_id"], "normal", timeout=timeout),
+        "select baseline",
+    )
+
+    text = entities[f"{device_id}_e2etext"]
+    call_service_until_state(
+        client, "text", "set_value", {"entity_id": text["entity_id"], "value": "ready"},
+        lambda timeout: client.wait_for_state(text["entity_id"], "ready", timeout=timeout),
+        "text baseline",
+    )
+
+
+def prepare_visual_state_contract() -> None:
+    device_id = os.environ.get("E2E_EXPECTED_DEVICE_ID", "").strip()
+    if not device_id:
+        raise ContractError("E2E_EXPECTED_DEVICE_ID is required to prepare hardware UI state")
+    client = HomeAssistantClient.from_state(HA_URL, STATE)
+    try:
+        device = wait_for_device(client, device_id)
+        entities = assert_entities(client, device, expected_hardware_entities(device_id))
+        prepare_visual_states(client, entities, device_id)
+        write_json_artifact(
+            ARTIFACTS,
+            "ui-expected-state.json",
+            {"switch": "off", "number": 7, "select": "normal", "text": "ready"},
+        )
+    finally:
+        client.close()
+
+
+def assert_browser_switch_round_trip() -> None:
+    result_path = ARTIFACTS / "ui-result.json"
+    if not result_path.exists():
+        raise ContractError("browser visual test did not write its switch result")
+    result = json.loads(result_path.read_text(encoding="utf-8"))
+    entity_id = result.get("entity_id")
+    expected_state = result.get("expected_state")
+    if not isinstance(entity_id, str) or not isinstance(expected_state, str):
+        raise ContractError(f"browser visual result is invalid: {result}")
+    client = HomeAssistantClient.from_state(HA_URL, STATE)
+    try:
+        client.wait_for_state(entity_id, expected_state, timeout=90)
+        write_json_artifact(ARTIFACTS, "ui-browser-round-trip.json", result)
+    finally:
+        client.close()
 
 
 def normalize(value: Any, device_id: str) -> Any:
@@ -208,6 +330,12 @@ def main() -> None:
         hardware_contract()
     elif MODE in {"ha-restart", "mqtt-restart"}:
         hardware_contract(restart_only=True)
+    elif MODE == "visual-state":
+        prepare_visual_state_contract()
+    elif MODE == "ready":
+        pass
+    elif MODE == "ui-after-browser":
+        assert_browser_switch_round_trip()
     else:
         raise ContractError(f"unknown E2E_MODE: {MODE}")
     print(f"DeviceFramework HA hardware contract mode {MODE} passed")

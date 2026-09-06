@@ -42,6 +42,8 @@ ignored env file to use a known IP instead of Avahi/mDNS.
 
 For a Docker-backed Home Assistant/Mosquitto test of a physical board, use the [local HA hardware contract](HA_HARDWARE_TESTING.md). It uses the same ignored Wi-Fi credentials, but supplies an isolated anonymous MQTT broker and verifies Home Assistant discovery, services, return state, and restarts. Its Docker-only retained fixture is also the intentionally small CI coverage for current HA behavior.
 
+For a deterministic current-HA dashboard check with no board, run `./tools/ha-hardware fixture --ui-capture`. A physical `run ... --ui-capture` additionally proves a headless browser switch action reaches the board and returns through MQTT; see the hardware guide for reviewed screenshot baselines and failure artifacts.
+
 Run `./scripts/check-docs.sh` after changing Markdown, examples, or generated web assets. It verifies local documentation links, required guides, web assets, and that every numbered example remains a buildable project shape.
 
 CI always runs both compile-only variants. Hardware tests remain an explicit

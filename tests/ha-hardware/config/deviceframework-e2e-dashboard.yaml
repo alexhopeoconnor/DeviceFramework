@@ -1,0 +1,7 @@
+views:
+  - title: Controls
+    path: controls
+    cards:
+      - type: markdown
+        title: DeviceFramework HA E2E
+        content: Waiting for DeviceFramework discovery.

@@ -117,9 +117,44 @@ retained discovery contract for Docker/CI. It proves the current Home Assistant
 discovery shape and retained HA restart behavior without a board. It does not
 pretend to replace the physical service-command round trip.
 
-This provides structured artifacts that can later feed screenshot or UI
-documentation work, but it deliberately does not automate screenshots or HA
-dashboard setup yet.
+## Visual dashboard contract
+
+The optional visual contract uses the same disposable Home Assistant and
+Mosquitto stack, plus a pinned headless Playwright container. It has no host
+Node.js, browser, or Python dependency. It seeds a harness-owned HA configuration
+volume and a small YAML dashboard, so it never merges into a developer's normal HA
+configuration. The browser remains on Docker's internal network.
+
+Run the board-free visual contract first:
+
+```bash
+./tools/ha-hardware fixture --ui-capture
+```
+
+This replays retained discovery and state for a sensor, switch, number, select,
+and text entity; restarts HA and Mosquitto; then captures the rendered dashboard.
+A physical run adds the opposite-direction check: Playwright clicks the switch in
+HA, the command travels through MQTT to the board, and the verifier waits for the
+board's returned `on` state:
+
+```bash
+./tools/ha-hardware run --platform esp8266 --port /dev/ttyUSB0 --ui-capture
+```
+
+Reviewed baseline PNGs live in `tests/ha-hardware/ui/tests/snapshots/`. Their HA
+and Playwright versions are pinned in `tests/ha-hardware/ui/visual-versions.env`.
+On a mismatch, Playwright retains expected, actual, diff, trace, and JSON report
+artifacts under the ignored `artifacts/ha-hardware/<timestamp>/playwright/` path.
+Inspect those artifacts before deliberately replacing a baseline:
+
+```bash
+./tools/ha-hardware fixture --ui-capture --update-snapshots
+```
+
+An explicit HA version other than the pinned visual version also requires
+`--update-snapshots`, making screenshot changes a reviewed source change rather
+than an accidental result of the rolling `stable` image. The ordinary protocol
+harness continues to use `stable`.
 
 Back to [testing](TESTING.md) · [development](DEVELOPMENT.md) ·
 [documentation](README.md).

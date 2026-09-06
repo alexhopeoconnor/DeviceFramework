@@ -10,16 +10,17 @@ DEFAULT_AHA_DIR="$PROJECT_DIR/../arduino-home-assistant"
 DFHA_STATE_ROOT="${XDG_STATE_HOME:-${HOME}/.local/state}/deviceframework-ha-hardware"
 
 usage() {
-    cat <<'EOF'
+    cat <<'USAGE'
 Usage:
   ./tools/ha-hardware doctor [--ap-interface IFACE] [--arduinoha-path PATH]
   ./tools/ha-hardware compile --platform esp8266|esp32 [--arduinoha-path PATH]
   ./tools/ha-hardware up [--network managed-ap --ap-interface IFACE] [--keep]
+  ./tools/ha-hardware fixture [--ui-capture] [--update-snapshots] [--ha-version VERSION]
   ./tools/ha-hardware run --platform esp8266|esp32 --port DEVICE [options]
   ./tools/ha-hardware down
   ./tools/ha-hardware reset
 
-Options for up/run:
+Options for run:
   --network existing|managed-ap       existing is the default
   --mqtt-bind-ip ADDRESS              existing-network host address reachable by the board
   --ap-interface IFACE                required for managed-ap
@@ -27,12 +28,14 @@ Options for up/run:
   --firewall check|allow|manual       default: check; allow is temporary and may use sudo
   --env-file FILE                     Wi-Fi credentials (default test/.env)
   --arduinoha-path PATH               compile firmware against this sibling-stack ArduinoHA checkout
-  --ha-version VERSION                Home Assistant image tag (default stable)
+  --ha-version VERSION                Home Assistant image tag (default stable; visual mode is pinned)
+  --ui-capture                        run the Docker-only Playwright visual contract after protocol checks
+  --update-snapshots                  explicitly regenerate reviewed Playwright snapshots (requires --ui-capture)
   --keep                              preserve the stack/AP for interactive inspection
 
 The broker is anonymous by design and for local development only. Do not
 port-forward it or expose this test stack to the internet.
-EOF
+USAGE
     exit 2
 }
 
@@ -48,10 +51,14 @@ firewall="check"
 env_file="$PROJECT_DIR/test/.env"
 arduinoha_path=""
 ha_version="stable"
+ha_version_explicit=false
 platform=""
 port=""
 keep=false
+ui_capture=false
+update_snapshots=false
 session_persisted=false
+ui_version_file="$HARNESS_DIR/ui/visual-versions.env"
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -62,9 +69,11 @@ while [[ $# -gt 0 ]]; do
         --firewall) firewall="${2:-}"; shift 2 ;;
         --env-file) env_file="${2:-}"; shift 2 ;;
         --arduinoha-path) arduinoha_path="${2:-}"; shift 2 ;;
-        --ha-version) ha_version="${2:-}"; shift 2 ;;
+        --ha-version) ha_version="${2:-}"; ha_version_explicit=true; shift 2 ;;
         --platform) platform="${2:-}"; shift 2 ;;
         --port) port="${2:-}"; shift 2 ;;
+        --ui-capture) ui_capture=true; shift ;;
+        --update-snapshots) update_snapshots=true; shift ;;
         --keep) keep=true; shift ;;
         -h|--help) usage ;;
         *) echo "Unknown option: $1" >&2; usage ;;
@@ -73,6 +82,12 @@ done
 
 [[ "$network" == "existing" || "$network" == "managed-ap" ]] || usage
 [[ "$firewall" == "check" || "$firewall" == "allow" || "$firewall" == "manual" ]] || usage
+$update_snapshots && ! $ui_capture && { echo "--update-snapshots requires --ui-capture" >&2; exit 2; }
+$ui_capture && [[ "$command_name" != "run" && "$command_name" != "fixture" ]] && {
+    echo "--ui-capture is supported by fixture and run" >&2
+    exit 2
+}
+[[ "$command_name" != "fixture" || "$keep" == false ]] || { echo "fixture always cleans up; use up for interactive inspection" >&2; exit 2; }
 # `up` is explicitly an interactive lifecycle command, so it must retain its
 # state even when the caller did not spell --keep.
 [[ "$command_name" != "up" ]] || keep=true
@@ -82,6 +97,23 @@ if [[ -z "$arduinoha_path" && -d "$DEFAULT_AHA_DIR/test-support/ha-mqtt-contract
 fi
 testkit_path="${AHA_TESTKIT_PATH:-${arduinoha_path:+$arduinoha_path/test-support/ha-mqtt-contract}}"
 
+# Docker Compose interpolates every declared service, including the optional UI
+# service, before running a non-visual command. Keep this its sole version source.
+[[ -f "$ui_version_file" ]] || { echo "Missing visual test version file: $ui_version_file" >&2; exit 1; }
+# shellcheck disable=SC1090
+source "$ui_version_file"
+: "${PLAYWRIGHT_IMAGE:?visual version file must define PLAYWRIGHT_IMAGE}"
+export PLAYWRIGHT_IMAGE
+
+if $ui_capture; then
+    : "${HA_UI_VERSION:?visual version file must define HA_UI_VERSION}"
+    if ! $ha_version_explicit; then
+        ha_version="$HA_UI_VERSION"
+    elif [[ "$ha_version" != "$HA_UI_VERSION" && "$update_snapshots" != true ]]; then
+        echo "--ui-capture compares reviewed snapshots for HA $HA_UI_VERSION; use --update-snapshots to adopt $ha_version" >&2
+        exit 2
+    fi
+fi
 require_common() {
     command -v docker >/dev/null || { echo "docker is required" >&2; exit 1; }
     docker compose version >/dev/null || { echo "Docker Compose v2 is required" >&2; exit 1; }
@@ -326,6 +358,7 @@ start_stack() {
     export HA_VERSION="$ha_version"
     export LOCAL_UID="$(id -u)"
     export LOCAL_GID="$(id -g)"
+    compose run --rm config-init
     compose up -d mqtt homeassistant
     compose run --rm bootstrap
 }
@@ -342,6 +375,47 @@ wait_for_mqtt() {
     return 1
 }
 
+run_visual_contract() {
+    local mode="$1"
+    export E2E_MODE="$mode"
+    if [[ "$mode" == "hardware" ]]; then
+        export E2E_MODE=visual-state
+        compose run --rm --user "$(id -u):$(id -g)" verifier
+        export E2E_MODE=hardware
+    fi
+    compose run --rm dashboard-setup
+    compose restart homeassistant
+    if [[ "$mode" == "fixture" ]]; then
+        export E2E_MODE=fixture
+    else
+        export E2E_MODE=ready
+    fi
+    compose run --rm --user "$(id -u):$(id -g)" verifier
+    export UI_EXPECT_INTERACTION=0
+    [[ "$mode" != "hardware" ]] || UI_EXPECT_INTERACTION=1
+    export PLAYWRIGHT_UPDATE_SNAPSHOTS=0
+    $update_snapshots && PLAYWRIGHT_UPDATE_SNAPSHOTS=1
+    compose run --rm --user "$(id -u):$(id -g)" ui
+    if [[ "$mode" == "hardware" ]]; then
+        export E2E_MODE=ui-after-browser
+        compose run --rm --user "$(id -u):$(id -g)" verifier
+    fi
+}
+
+run_fixture() {
+    export E2E_MODE=fixture
+    compose run --rm --user "$(id -u):$(id -g)" verifier
+    compose restart homeassistant
+    export E2E_MODE=fixture-restart
+    compose run --rm --user "$(id -u):$(id -g)" verifier
+    compose restart mqtt
+    wait_for_mqtt
+    export E2E_MODE=fixture-after-mqtt-restart
+    compose run --rm --user "$(id -u):$(id -g)" verifier
+    $ui_capture && run_visual_contract fixture
+    printf '{"mode":"fixture","ha_version":"%s","ui_capture":%s}\n' \
+        "$ha_version" "$ui_capture" > "$artifact_dir/summary.json"
+}
 write_compile_config() {
     compile_config="$PROJECT_DIR/test/test_ha_e2e/test_config.generated.h"
     if [[ -e "$compile_config" ]]; then
@@ -392,10 +466,10 @@ run_hardware() {
     wait_for_mqtt
     export E2E_MODE=mqtt-restart
     compose run --rm --user "$(id -u):$(id -g)" verifier
-    printf '{"platform":"%s","device_id":"%s","arduinoha_path":"%s","ha_version":"%s","mqtt_bind_ip":"%s"}\n' \
-        "$platform" "$device_id" "${arduinoha_path:-released-dependency}" "$ha_version" "$MQTT_BIND_IP" > "$artifact_dir/summary.json"
+    $ui_capture && run_visual_contract hardware
+    printf '{"platform":"%s","device_id":"%s","arduinoha_path":"%s","ha_version":"%s","mqtt_bind_ip":"%s","ui_capture":%s}\n' \
+        "$platform" "$device_id" "${arduinoha_path:-released-dependency}" "$ha_version" "$MQTT_BIND_IP" "$ui_capture" > "$artifact_dir/summary.json"
 }
-
 load_state_and_down() {
     local state_file="$DFHA_STATE_ROOT/session.env"
     [[ -f "$state_file" ]] || { echo "No retained DeviceFramework HA session" >&2; return 0; }
@@ -428,23 +502,28 @@ case "$command_name" in
         trap cleanup EXIT INT TERM HUP
         compile_hardware_fixture
         ;;
-    up|run)
-
+    up|run|fixture)
         require_common
         ensure_no_retained_session
         runtime_dir="$(mktemp -d "${TMPDIR:-/tmp}/deviceframework-ha-hardware.XXXXXX")"
         artifact_dir="$PROJECT_DIR/artifacts/ha-hardware/$(date -u +%Y%m%dT%H%M%SZ)"
         mkdir -p "$artifact_dir"
-        temporary_env="$runtime_dir/test.env"
         compose_project="dfha$(date +%s)"
         trap cleanup EXIT INT TERM HUP
-        start_network
-        start_stack
-        write_state
-        if [[ "$command_name" == "run" ]]; then
-            run_hardware
+        if [[ "$command_name" == "fixture" ]]; then
+            MQTT_BIND_IP=127.0.0.1
+            start_stack
+            run_fixture
         else
-            echo "Home Assistant stack retained. Visit http://127.0.0.1:${HA_PORT:-8125} and run ./tools/ha-hardware down when finished."
+            temporary_env="$runtime_dir/test.env"
+            start_network
+            start_stack
+            write_state
+            if [[ "$command_name" == "run" ]]; then
+                run_hardware
+            else
+                echo "Home Assistant stack retained. Visit http://127.0.0.1:${HA_PORT:-8125} and run ./tools/ha-hardware down when finished."
+            fi
         fi
         ;;
     down|reset)

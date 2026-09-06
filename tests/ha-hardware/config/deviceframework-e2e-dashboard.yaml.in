@@ -1,0 +1,22 @@
+views:
+  - title: Controls
+    path: controls
+    cards:
+      - type: markdown
+        title: DeviceFramework HA E2E
+        content: Visual integration contract
+
+      - type: entities
+        title: Device controls
+        show_header_toggle: false
+        entities:
+          - entity: __SENSOR_ENTITY_ID__
+            name: E2E Sensor
+          - entity: __SWITCH_ENTITY_ID__
+            name: E2E Switch
+          - entity: __NUMBER_ENTITY_ID__
+            name: E2E Number
+          - entity: __SELECT_ENTITY_ID__
+            name: E2E Select
+          - entity: __TEXT_ENTITY_ID__
+            name: E2E Text
