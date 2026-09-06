@@ -6,4 +6,4 @@ Provision the board interactively, provide MQTT settings through the normal conf
 
 The parameter is keyed by a stable ID, while its label and presentation can evolve. Add a schema migration only when changing the meaning of an already-saved value.
 
-See [configuration](../../docs/CONFIGURATION.md) and the shared [examples guide](../README.md).
+See [parameters](../../docs/PARAMETERS.md), [Home Assistant and MQTT](../../docs/HOME_ASSISTANT_MQTT.md), [configuration](../../docs/CONFIGURATION.md), and the shared [examples guide](../README.md).

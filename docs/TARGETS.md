@@ -6,4 +6,6 @@ To add another board family, add a separate `[env:<family>_<board>]` extending `
 
 The supported target list in [compatibility](COMPATIBILITY.md) is the released-contract view; this guide explains the development layout.
 
+Validate target changes with [Testing](TESTING.md), including the complete examples on both released target families.
+
 Back to [documentation](README.md) · [project overview](../README.md).

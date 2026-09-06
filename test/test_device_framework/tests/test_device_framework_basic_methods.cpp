@@ -20,6 +20,12 @@ void test_device_framework_basic_methods() {
     TEST_ASSERT_EQUAL_STRING_MESSAGE(DF_DEFAULT_DEVICE_NAME, deviceName,
         "Device name should be set to 'esp8266-controller'");
 
+    TEST_ASSERT_EQUAL_MESSAGE(
+        static_cast<int>(DeviceFrameworkRestartReason::None),
+        static_cast<int>(DeviceFramework::getLastRestartReason()),
+        "An ordinary test boot should not report a framework-requested restart"
+    );
+
     // Test MQTT server - should return test value in TESTING_MODE
     const char* mqttServer = DeviceFramework::getMqttServer();
     TEST_ASSERT_NOT_NULL_MESSAGE(mqttServer, "MQTT server should not be NULL");

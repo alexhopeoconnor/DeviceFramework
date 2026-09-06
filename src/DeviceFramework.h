@@ -43,6 +43,21 @@ enum class DeviceFrameworkResetScope {
     Factory
 };
 
+// `None` means this boot was not preceded by a restart requested through the
+// framework. It does not attempt to distinguish power loss, a reset button,
+// watchdog recovery, or an external reset source.
+enum class DeviceFrameworkRestartReason : uint8_t {
+    None = 0,
+    Application,
+    WiFiProvisioned,
+    PasswordChanged,
+    WebRequest,
+    WebReset,
+    MqttRestartCommand,
+    MqttResetCommand,
+    FactoryRecovery
+};
+
 class DeviceFramework {
 public:
     static bool configureApplication(const char* applicationId, const char* firmwareVersion,
@@ -56,9 +71,16 @@ public:
     static const DeviceFrameworkApplicationIdentity& getApplicationIdentity();
     // Optional password shared by the provisioning AP, OTA, HTTP Basic auth,
     // and WebSerial. Updates are written transactionally before becoming live;
-    // restart after success to reconfigure all already-started transports.
+    // restart through `restart()` after success to reconfigure already-started
+    // transports without triggering rapid-reset recovery.
     static const char* getDevicePassword();
     static bool setDevicePassword(const char* password);
+
+    // Restart with a persisted framework marker. The next boot exposes the
+    // supplied reason and does not count this restart as physical rapid-reset
+    // recovery input. Call only after beforeSetup() has initialized RTC state.
+    static void restart(DeviceFrameworkRestartReason reason = DeviceFrameworkRestartReason::Application);
+    static DeviceFrameworkRestartReason getLastRestartReason();
 
 
     // Initialize core systems with optional callback for custom parameter registration
@@ -137,6 +159,7 @@ private:
     static RtcData rtcData;
     static bool rtcCleared;
     static bool beforeSetupCalled;
+    static DeviceFrameworkRestartReason lastRestartReason;
 
     // RTC Memory Management
     static void setupRTCMemory();  // Initialize RTC memory and handle reset behavior

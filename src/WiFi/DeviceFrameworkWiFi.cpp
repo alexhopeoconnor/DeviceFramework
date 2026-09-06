@@ -164,7 +164,7 @@ void DeviceFrameworkWiFi::loop() {
     if (wm.hasEnteredConfigPortal() && wm.didConfigPortalConnectSucceed()
             && wm.getConfigPortalConnectStatus() == WL_CONNECTED) {
         LOG_INFOLN(F("Config portal connect succeeded - restarting device..."));
-        ESP.restart();
+        DeviceFramework::restart(DeviceFrameworkRestartReason::WiFiProvisioned);
         return;
     }
 

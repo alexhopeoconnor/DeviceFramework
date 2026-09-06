@@ -43,6 +43,7 @@ Build [Portal First](examples/01-portal-first/) for the complete project. On a c
 | [Home Assistant Telemetry](examples/02-home-assistant-telemetry/) | add a parameter plus a changing discovered telemetry entity |
 | [Branded Device](examples/03-branded-device/) | give the existing admin UI and provisioning portal a product identity |
 | [Managed Configuration](examples/04-managed-configuration/) | understand a safe profile template, first-boot seed, and profile-free operation |
+| [Protected Output](examples/05-protected-output/) | model safe boot, requested versus applied state, and a bounded output policy using a configured demo indicator |
 
 ## Install
 
@@ -53,4 +54,21 @@ lib_deps =
 
 PlatformIO clones the repository and checks out the release tag after `#`. The package resolves the compatible WiFiManager, DFTE, ArduinoHA, web, and target-specific dependencies.
 
-See [getting started](docs/GETTING_STARTED.md), [configuration](docs/CONFIGURATION.md), [web UI branding](docs/WEB_UI.md), [web resource limits](docs/WEB_RESOURCES.md), [examples](examples/README.md), and the [documentation index](docs/README.md).
+See the [documentation index](docs/README.md) for the complete map, including
+[getting started](docs/GETTING_STARTED.md), [configuration](docs/CONFIGURATION.md),
+[web UI branding](docs/WEB_UI.md), [web resource limits](docs/WEB_RESOURCES.md),
+and [examples](examples/README.md).
+
+## Documentation by task
+
+The starter sketch is intentionally small; these guides make its contracts and
+extension points explicit.
+
+| When you need to… | Read |
+| --- | --- |
+| Understand exact `setup()`/`loop()` ordering, portal mode, and hardware boot policy | [Lifecycle](docs/LIFECYCLE.md) |
+| Add durable editable settings with portal and Home Assistant presentation | [Parameters](docs/PARAMETERS.md) |
+| Add native ArduinoHA entities or a custom MQTT command | [Home Assistant and MQTT](docs/HOME_ASSISTANT_MQTT.md) |
+| Look up supported sketch-facing APIs and advanced constraints | [API reference](docs/API_REFERENCE.md) |
+| Deploy, reset, rotate credentials, or diagnose field behaviour | [Operations](docs/OPERATIONS.md) and [Troubleshooting](docs/TROUBLESHOOTING.md) |
+| Build a sensor, protected controller, presence light, or product family | [Real-world scenarios](docs/SCENARIOS.md) |

@@ -88,9 +88,14 @@ bool DeviceFrameworkWebAdmissionControl::isCriticalMemoryPressure() {
 WebStreamPermit* DeviceFrameworkWebAdmissionControl::tryAcquireStreamPermit() {
     const bool memoryHeadroom = canStartDiagnosticWork();
     DEVICEFRAMEWORK_WEB_ADMISSION_GUARD;
-    if (!memoryHeadroom ||
-        resourceStats.activeStreamResponses >= resourceLimits.maxConcurrentStreamResponses) {
+    if (!memoryHeadroom) {
         ++resourceStats.rejectedStreamResponses;
+        ++resourceStats.rejectedStreamResponsesForMemory;
+        return nullptr;
+    }
+    if (resourceStats.activeStreamResponses >= resourceLimits.maxConcurrentStreamResponses) {
+        ++resourceStats.rejectedStreamResponses;
+        ++resourceStats.rejectedStreamResponsesForCapacity;
         return nullptr;
     }
 
@@ -107,6 +112,7 @@ WebStreamPermit* DeviceFrameworkWebAdmissionControl::tryAcquireStreamPermit() {
     }
 
     ++resourceStats.rejectedStreamResponses;
+    ++resourceStats.rejectedStreamResponsesForCapacity;
     return nullptr;
 }
 
@@ -176,11 +182,18 @@ WebSerialAdmissionResult DeviceFrameworkWebAdmissionControl::admitWebSerial(
     if (evictedClientId != nullptr) {
         *evictedClientId = 0;
     }
-    const bool memoryHeadroom = canStartDiagnosticWork();
     const bool criticalPressure = isCriticalMemoryPressure();
     const uint32_t connectedAt = millis();
     DEVICEFRAMEWORK_WEB_ADMISSION_GUARD;
-    if (!memoryHeadroom || criticalPressure) {
+    // ESPAsyncWebServer constructs its WebSocket client before delivering
+    // WS_EVT_CONNECT. Applying the stricter new-work watermark here would
+    // therefore reject a connection solely because its own transient
+    // handshake allocation crossed that watermark. Streamed HTTP responses
+    // are admitted before their state is allocated and continue to use that
+    // stricter check. Once the socket exists, the critical shedding floor is
+    // the correct safety boundary: below it we refuse/close diagnostics so
+    // Wi-Fi, MQTT, OTA, and the main loop retain headroom.
+    if (criticalPressure) {
         ++resourceStats.rejectedWebSerialClients;
         return WebSerialAdmissionResult::RejectedMemory;
     }

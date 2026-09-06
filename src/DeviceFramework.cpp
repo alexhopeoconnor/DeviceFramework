@@ -20,6 +20,23 @@ constexpr unsigned long NetworkServicesStabilizationMs = 1000UL;
 bool g_networkServicesInitialized = false;
 unsigned long g_networkServicesInitializedAt = 0;
 constexpr unsigned long NetworkServicesMqttStartDelayMs = 1500UL;
+
+bool isIntentionalRestartReason(uint8_t rawReason) {
+    switch (static_cast<DeviceFrameworkRestartReason>(rawReason)) {
+        case DeviceFrameworkRestartReason::Application:
+        case DeviceFrameworkRestartReason::WiFiProvisioned:
+        case DeviceFrameworkRestartReason::PasswordChanged:
+        case DeviceFrameworkRestartReason::WebRequest:
+        case DeviceFrameworkRestartReason::WebReset:
+        case DeviceFrameworkRestartReason::MqttRestartCommand:
+        case DeviceFrameworkRestartReason::MqttResetCommand:
+        case DeviceFrameworkRestartReason::FactoryRecovery:
+            return true;
+        case DeviceFrameworkRestartReason::None:
+            return false;
+    }
+    return false;
+}
 }
 
 #ifdef ENABLE_WEB_INTERFACE
@@ -34,6 +51,7 @@ constexpr unsigned long NetworkServicesMqttStartDelayMs = 1500UL;
 RtcData DeviceFramework::rtcData = {};
 bool DeviceFramework::rtcCleared = false;
 bool DeviceFramework::beforeSetupCalled = false;
+DeviceFrameworkRestartReason DeviceFramework::lastRestartReason = DeviceFrameworkRestartReason::None;
 
 bool DeviceFramework::configureApplication(const char* applicationId, const char* firmwareVersion,
                                            uint16_t configurationSchema,
@@ -67,6 +85,35 @@ bool DeviceFramework::setDevicePassword(const char* password) {
     // Persist and verify the candidate before changing the runtime authority.
     if (!DeviceFrameworkStorage::saveWithDevicePassword(value)) return false;
     return setConfigDevicePassword(value);
+}
+
+void DeviceFramework::restart(DeviceFrameworkRestartReason reason) {
+    const uint32_t currentCrc = CRC32Utils::calculate(
+        ((uint8_t*)&rtcData) + 4, sizeof(rtcData) - 4
+    );
+    const bool rtcReady = rtcData.magic == CONFIG_rtcMagicNumber && rtcData.crc32 == currentCrc;
+    if (!beforeSetupCalled && !rtcReady) {
+        LOG_WARNLN(F("DeviceFramework restart requested before RTC setup; restarting without provenance."));
+        ESP.restart();
+        return;
+    }
+
+    if (!isIntentionalRestartReason(static_cast<uint8_t>(reason))) {
+        reason = DeviceFrameworkRestartReason::Application;
+    }
+
+    rtcData.pendingRestartReason = static_cast<uint8_t>(reason);
+    rtcData.reserved = 0;
+    rtcData.crc32 = CRC32Utils::calculate(((uint8_t*)&rtcData) + 4, sizeof(rtcData) - 4);
+    if (!DeviceFrameworkRTC::write(&rtcData)) {
+        LOG_WARNLN(F("Failed to persist intentional restart marker."));
+    }
+
+    ESP.restart();
+}
+
+DeviceFrameworkRestartReason DeviceFramework::getLastRestartReason() {
+    return lastRestartReason;
 }
 
 
@@ -233,27 +280,29 @@ void DeviceFramework::setupRTCMemory() {
     uint32_t crcOfData = CRC32Utils::calculate(((uint8_t*)&rtcData) + 4, sizeof(rtcData) - 4);
 
     if (rtcData.magic == CONFIG_rtcMagicNumber && rtcData.crc32 == crcOfData) {
-        uint32_t timeSinceLastReset = TimeUtils::safeTimeDifference(millis(), rtcData.lastReset);
+        const uint8_t storedReason = rtcData.pendingRestartReason;
+        const bool intentionalRestart = isIntentionalRestartReason(storedReason);
+        lastRestartReason = intentionalRestart
+            ? static_cast<DeviceFrameworkRestartReason>(storedReason)
+            : DeviceFrameworkRestartReason::None;
 
-        if (timeSinceLastReset < CONFIG_resetTimeout) {
-            // Within timeout, increment reset count
-            rtcData.resetCount++;
-        } else {
-            // Timeout expired, reset count to 1
-            rtcData.resetCount = 1;
-        }
-
-        // Always increment total reset count
+        // A valid record survives only while the prior boot is inside the
+        // rapid-reset window; loop() clears it after CONFIG_resetTimeout.
+        // Do not compare millis() across boots because that clock restarts.
+        rtcData.resetCount = intentionalRestart ? 1 : static_cast<uint8_t>(rtcData.resetCount + 1);
         rtcData.totalResetCount++;
     } else {
-        // No valid data in RTC memory; initialize it
+        // No valid data in RTC memory; initialize it.
         rtcData.magic = CONFIG_rtcMagicNumber;
         rtcData.resetCount = 1;
         rtcData.totalResetCount = 1;
+        lastRestartReason = DeviceFrameworkRestartReason::None;
     }
 
-    // Update lastReset time
+    // Update current-boot state and consume any one-shot restart marker.
     rtcData.lastReset = millis();
+    rtcData.pendingRestartReason = static_cast<uint8_t>(DeviceFrameworkRestartReason::None);
+    rtcData.reserved = 0;
 
     // Recalculate CRC
     rtcData.crc32 = CRC32Utils::calculate(((uint8_t*)&rtcData) + 4, sizeof(rtcData) - 4);
@@ -279,8 +328,9 @@ void DeviceFramework::setupRTCMemory() {
         rtcData.crc32 = CRC32Utils::calculate(((uint8_t*)&rtcData) + 4, sizeof(rtcData) - 4);
         DeviceFrameworkRTC::write(&rtcData);
 
-        // Restart the device
-        ESP.restart();
+        // Restart without turning this recovery reboot into another physical
+        // rapid-reset event.
+        restart(DeviceFrameworkRestartReason::FactoryRecovery);
     }
 }
 

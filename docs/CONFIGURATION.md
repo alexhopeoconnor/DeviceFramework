@@ -149,4 +149,4 @@ Return `false` when a previous schema cannot be transformed safely. Firmware nev
 
 **Reset Configuration** keeps Wi-Fi credentials and the active device password while restoring framework parameters. **Factory Reset** clears Wi-Fi and both transactional slots, then restores the shared `default1` development password. Current releases write DFC4, introduced in DeviceFramework 2.2.0. DFC2 and DFC3 are recognised only as unsupported markers so a selected profile can replace them; their values are not decoded or migrated.
 
-Next: [testing](TESTING.md) · [development and releases](DEVELOPMENT.md) · [documentation map](README.md).
+Next: [Parameters](PARAMETERS.md) · [Operations](OPERATIONS.md) · [testing](TESTING.md) · [development and releases](DEVELOPMENT.md) · [documentation map](README.md).

@@ -299,9 +299,19 @@ void test_web_interface_methods() {
     // after WiFi, mDNS, MQTT, and the live web server have consumed most of
     // the heap, so rejection is the correct safety result. ESP32 and any
     // target with headroom still exercise the configured permit capacity.
+    const DeviceFrameworkWebResourceStats rejectionBaseline =
+        DeviceFrameworkWeb::getResourceStats();
     if (!DeviceFrameworkWebAdmissionControl::canStartDiagnosticWork()) {
         TEST_ASSERT_NULL_MESSAGE(DeviceFrameworkWebAdmissionControl::tryAcquireStreamPermit(),
             "Low memory must reject a new streamed response before allocation");
+        const DeviceFrameworkWebResourceStats afterRejection =
+            DeviceFrameworkWeb::getResourceStats();
+        TEST_ASSERT_EQUAL_UINT32(rejectionBaseline.rejectedStreamResponses + 1,
+            afterRejection.rejectedStreamResponses);
+        TEST_ASSERT_EQUAL_UINT32(rejectionBaseline.rejectedStreamResponsesForMemory + 1,
+            afterRejection.rejectedStreamResponsesForMemory);
+        TEST_ASSERT_EQUAL_UINT32(rejectionBaseline.rejectedStreamResponsesForCapacity,
+            afterRejection.rejectedStreamResponsesForCapacity);
     } else {
         WebStreamPermit* firstPermit = DeviceFrameworkWebAdmissionControl::tryAcquireStreamPermit();
         WebStreamPermit* secondPermit = DeviceFrameworkWebAdmissionControl::tryAcquireStreamPermit();
@@ -317,8 +327,25 @@ void test_web_interface_methods() {
             TEST_FAIL_MESSAGE("Configured stream permits should be acquirable with sufficient memory");
             return;
         }
+        const bool hadHeadroomBeforeCapacityCheck =
+            DeviceFrameworkWebAdmissionControl::canStartDiagnosticWork();
         TEST_ASSERT_NULL_MESSAGE(DeviceFrameworkWebAdmissionControl::tryAcquireStreamPermit(),
             "The response controller must reject work above the configured limit");
+        const DeviceFrameworkWebResourceStats afterRejection =
+            DeviceFrameworkWeb::getResourceStats();
+        TEST_ASSERT_EQUAL_UINT32(rejectionBaseline.rejectedStreamResponses + 1,
+            afterRejection.rejectedStreamResponses);
+        if (hadHeadroomBeforeCapacityCheck) {
+            TEST_ASSERT_EQUAL_UINT32(rejectionBaseline.rejectedStreamResponsesForMemory,
+                afterRejection.rejectedStreamResponsesForMemory);
+            TEST_ASSERT_EQUAL_UINT32(rejectionBaseline.rejectedStreamResponsesForCapacity + 1,
+                afterRejection.rejectedStreamResponsesForCapacity);
+        } else {
+            TEST_ASSERT_EQUAL_UINT32(rejectionBaseline.rejectedStreamResponsesForMemory + 1,
+                afterRejection.rejectedStreamResponsesForMemory);
+            TEST_ASSERT_EQUAL_UINT32(rejectionBaseline.rejectedStreamResponsesForCapacity,
+                afterRejection.rejectedStreamResponsesForCapacity);
+        }
         DeviceFrameworkWebAdmissionControl::releaseStreamPermit(firstPermit, firstPermit->generation);
         DeviceFrameworkWebAdmissionControl::releaseStreamPermit(secondPermit, secondPermit->generation);
         TEST_ASSERT_EQUAL_UINT8_MESSAGE(0, DeviceFrameworkWeb::getResourceStats().activeStreamResponses,

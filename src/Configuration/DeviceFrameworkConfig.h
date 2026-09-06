@@ -65,6 +65,10 @@ typedef struct {
     uint32_t magic;        // A unique magic number to identify our data
     uint32_t lastReset;    // Timestamp of the last reset
     uint8_t resetCount;    // Number of resets within the time window
+    // A non-zero framework-owned restart reason is consumed on the next boot
+    // and prevents that intentional restart from looking like a physical reset.
+    uint8_t pendingRestartReason;
+    uint16_t reserved;
     uint32_t totalResetCount; // Total resets since last timeout (persistent across resets)
 } RtcData;
 

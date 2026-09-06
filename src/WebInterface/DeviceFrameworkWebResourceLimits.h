@@ -35,7 +35,9 @@ struct DeviceFrameworkWebResourceLimits {
 struct DeviceFrameworkWebResourceStats {
     uint8_t activeStreamResponses;
     uint8_t activeWebSerialClients;
-    uint32_t rejectedStreamResponses;
+    uint32_t rejectedStreamResponses;  // Aggregate of the two reasons below.
+    uint32_t rejectedStreamResponsesForMemory;
+    uint32_t rejectedStreamResponsesForCapacity;
     uint32_t rejectedWebSerialClients;
     uint32_t evictedWebSerialClients;
     uint32_t droppedWebSerialBytes;

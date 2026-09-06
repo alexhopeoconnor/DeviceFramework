@@ -32,6 +32,8 @@ void setup() {
 
 The largest-block check matters on ESP8266: a board may report enough total free heap but still lack one contiguous allocation for an async response. At the new-work watermark, the framework rejects a low-priority streamed response rather than allocating into a fragmented heap. At the lower shedding watermark, it closes at most one WebSerial connection so the device can recover. Normal HTTP pages, MQTT, Wi-Fi, and the control API are not evicted.
 
+The normal new-work watermark applies to streamed HTTP responses. A WebSerial upgrade is evaluated only after ESPAsyncWebServer has constructed its socket and made its transient handshake allocation, so it uses the lower critical watermark instead; otherwise that allocation could make a healthy connection reject itself. Client capacity still applies, and an established WebSerial client is shed at the critical floor.
+
 `WebSerialAdmissionPolicy` controls only a new WebSerial upgrade when the configured client limit is already occupied:
 
 - `PreserveExisting` is the default. Reject the new diagnostic session.
@@ -48,13 +50,19 @@ The counters are available to a sketch for its own diagnostic surface; they are 
 
 ```cpp
 const DeviceFrameworkWebResourceStats web = DeviceFrameworkWeb::getResourceStats();
-Serial.printf("web: streams=%u ws=%u rejected=%lu/%lu evicted=%lu dropped=%lu\n",
+Serial.printf("web: streams=%u ws=%u stream-rejected=%lu (memory=%lu capacity=%lu) ws-rejected=%lu evicted=%lu dropped=%lu\n",
               web.activeStreamResponses,
               web.activeWebSerialClients,
               static_cast<unsigned long>(web.rejectedStreamResponses),
+              static_cast<unsigned long>(web.rejectedStreamResponsesForMemory),
+              static_cast<unsigned long>(web.rejectedStreamResponsesForCapacity),
               static_cast<unsigned long>(web.rejectedWebSerialClients),
               static_cast<unsigned long>(web.evictedWebSerialClients),
               static_cast<unsigned long>(web.droppedWebSerialBytes));
 ```
 
+rejectedStreamResponses remains the aggregate for lightweight existing diagnostics. The reason counters distinguish a deliberately conservative memory-headroom refusal from the configured concurrent-response capacity.
+
 For a resource-heavy sketch, measure its normal heap and largest free block first, change one threshold at a time, then test with actual simultaneous browser and WebSerial clients. Do not copy ESP8266 values onto ESP32 merely for consistency; the defaults intentionally preserve ESP32's substantially larger headroom.
+
+See [Troubleshooting](TROUBLESHOOTING.md) for symptoms and recovery steps.

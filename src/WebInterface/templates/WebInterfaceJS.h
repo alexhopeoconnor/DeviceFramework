@@ -21,6 +21,7 @@ let webserialOpenedAt = 0;
 let webserialReceivedMessage = false;
 let serialAvailabilityRequestInFlight = false;
 let serialAvailabilityRetryTimer = null;
+let webserialNavigationInProgress = false;
 let currentPage = "unknown";
 
 // The server renders one complete page at a time. Keep status polling and
@@ -31,19 +32,50 @@ document.addEventListener("DOMContentLoaded", function() {
     console.log("DeviceFramework page loaded:", currentPage);
     hidePageLoader();
     setupEventListeners();
-
-    setTimeout(() => {
-        if (currentPage === "status") {
-            startStatusPage();
-        } else if (currentPage === "serial") {
-            initializeSerialMonitor();
-            loadSavedIntervals();
-            initializeSerialPage();
-        } else if (currentPage === "controls") {
-            loadSavedIntervals();
-        }
-    }, 100);
+    loadHeaderLogoThenStartPage();
 });
+
+function loadHeaderLogoThenStartPage() {
+    const logo = document.querySelector("[data-df-header-logo]");
+    if (!logo || !logo.dataset.src) {
+        startCurrentPage();
+        return;
+    }
+
+    let settled = false;
+    let timeoutId = null;
+    const finish = function() {
+        if (settled) {
+            return;
+        }
+        settled = true;
+        if (timeoutId) {
+            clearTimeout(timeoutId);
+        }
+        startCurrentPage();
+    };
+
+    logo.addEventListener("load", finish, { once: true });
+    logo.addEventListener("error", function() {
+        console.info("Header logo did not load; continuing without it");
+        finish();
+    }, { once: true });
+    // Do not let an unavailable asset postpone an otherwise usable device UI.
+    timeoutId = setTimeout(finish, 1500);
+    logo.src = logo.dataset.src;
+}
+
+function startCurrentPage() {
+    if (currentPage === "status") {
+        startStatusPage();
+    } else if (currentPage === "serial") {
+        initializeSerialMonitor();
+        loadSavedIntervals();
+        initializeSerialPage();
+    } else if (currentPage === "controls") {
+        loadSavedIntervals();
+    }
+}
 
 window.addEventListener("pagehide", function() {
     if (statusUpdateInterval) {
@@ -106,8 +138,83 @@ function setupEventListeners() {
             link.classList.add("active");
             link.setAttribute("aria-current", "page");
         }
-        link.addEventListener("click", closeMobileNav);
+        link.addEventListener("click", function(event) {
+            closeMobileNav();
+
+            // A normal link navigation starts its HTTP request immediately,
+            // while pagehide only begins closing WebSerial. On an ESP8266,
+            // the socket buffer can still occupy bounded streaming headroom
+            // when the next page is requested. Give a same-tab navigation one
+            // clean WebSocket close round-trip first.
+            if (shouldCloseWebSerialBeforeNavigation(event, link)) {
+                event.preventDefault();
+                navigateAfterWebSerialClose(link.href);
+            }
+        });
     });
+}
+
+function shouldCloseWebSerialBeforeNavigation(event, link) {
+    if (currentPage !== "serial" || webserialNavigationInProgress ||
+        event.defaultPrevented || event.button !== 0 || event.metaKey ||
+        event.ctrlKey || event.shiftKey || event.altKey ||
+        (link.target && link.target !== "_self")) {
+        return false;
+    }
+
+    const destination = new URL(link.href, window.location.href);
+    return destination.origin === window.location.origin;
+}
+
+function navigateAfterWebSerialClose(destination) {
+    if (webserialNavigationInProgress) {
+        return;
+    }
+    webserialNavigationInProgress = true;
+    webserialDesired = false;
+
+    if (webserialReconnectTimer) {
+        clearTimeout(webserialReconnectTimer);
+        webserialReconnectTimer = null;
+    }
+    if (serialAvailabilityRetryTimer) {
+        clearTimeout(serialAvailabilityRetryTimer);
+        serialAvailabilityRetryTimer = null;
+    }
+    stopWebSerialHeartbeat();
+
+    const socket = webserialSocket;
+    let navigationComplete = false;
+    const continueNavigation = function() {
+        if (navigationComplete) {
+            return;
+        }
+        navigationComplete = true;
+        window.location.assign(destination);
+    };
+
+    if (!socket || socket.readyState === WebSocket.CLOSED) {
+        continueNavigation();
+        return;
+    }
+
+    // The fallback keeps navigation usable if the device or network has
+    // already vanished. A clean close normally completes well before it.
+    const fallback = setTimeout(continueNavigation, 500);
+    socket.addEventListener("close", function() {
+        clearTimeout(fallback);
+        // Let the ESP8266 service WS_EVT_DISCONNECT and release the response
+        // buffer before it receives the following page request.
+        setTimeout(continueNavigation, 75);
+    }, { once: true });
+
+    try {
+        socket.close(1000, "Navigating");
+    } catch (error) {
+        console.debug("WebSerial navigation close failed:", error);
+        clearTimeout(fallback);
+        continueNavigation();
+    }
 }
 
 // Toggle mobile navigation

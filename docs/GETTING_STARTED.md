@@ -47,7 +47,7 @@ inline bool configure() {
 void setup() {
     FirmwareIdentity::configure();
     DeviceFramework::beforeSetup([]() {
-        auto& registry = DeviceFrameworkParameters::getRegistry();
+        auto& registry = DeviceFramework::getParameterRegistry();
         registry.setDefaultValue(DeviceFrameworkParameters::PARAM_DEVICE_NAME, "Example device");
     });
     DeviceFramework::setup();
@@ -58,10 +58,20 @@ void loop() {
 }
 ```
 
-Register custom framework parameters and construct long-lived Home Assistant entities before calling `DeviceFramework::setup()`. ArduinoHA registers those entities automatically; do not call `DeviceFramework::getHAMqtt().addDeviceType()` in a DeviceFramework sketch. Keep `DeviceFramework::registerDeviceCommandHandler()` or `registerSharedCommandHandler()` for custom non-discovery command topics.
+Register custom framework parameters in the `beforeSetup` callback. Construct
+long-lived native ArduinoHA entities and configure their metadata before
+`DeviceFramework::setup()`; DeviceFramework registers them automatically. Do
+not call `DeviceFramework::getHAMqtt().addDeviceType()` in a DeviceFramework
+sketch.
+
+After `setup()`, apply the values that were loaded from storage to your hardware.
+Register `DeviceFramework::registerDeviceCommandHandler()` or
+`registerSharedCommandHandler()` before the first loop only for custom
+non-discovery command topics. Parameter changes and MQTT handlers should queue
+or flag hardware work rather than block.
 
 ArduinoHA's [entity lifecycle](https://github.com/alexhopeoconnor/arduino-home-assistant/blob/main/docs/device-and-discovery.md#discovery) explains the underlying registration and capacity rules.
 
-Next: [configuration and profiles](CONFIGURATION.md), [web UI branding](WEB_UI.md), or the [guided examples](../examples/README.md).
+Next: [Lifecycle](LIFECYCLE.md), [Parameters](PARAMETERS.md), [Home Assistant and MQTT](HOME_ASSISTANT_MQTT.md), [configuration and profiles](CONFIGURATION.md), or the [guided examples](../examples/README.md).
 
 Back to [documentation](README.md) · [project overview](../README.md).

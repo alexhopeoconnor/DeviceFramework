@@ -13,7 +13,7 @@
 const char PROGMEM header_template[] = R"rawliteral(
 <header class="header">
     <div class="header-content">
-        <img src="/assets/deviceframework-logo" alt="%LOGO_ALT_TEXT%" class="logo">
+        <img data-df-header-logo data-src="/assets/deviceframework-logo" alt="%LOGO_ALT_TEXT%" class="logo">
         <div class="header-titles">
             <p class="brand-name">%BRAND_NAME%</p>
             <h1>%PAGE_TITLE%</h1>
@@ -39,7 +39,7 @@ const char PROGMEM header_template[] = R"rawliteral(
 const char PROGMEM header_404_template[] = R"rawliteral(
 <header class="header">
     <div class="header-content">
-        <img src="/assets/deviceframework-logo" alt="%LOGO_ALT_TEXT%" class="logo">
+        <img data-df-header-logo data-src="/assets/deviceframework-logo" alt="%LOGO_ALT_TEXT%" class="logo">
         <div class="header-titles">
             <p class="brand-name">%BRAND_NAME%</p>
             <h1>%PAGE_TITLE_404%</h1>

@@ -26,7 +26,7 @@ uint32_t CONFIG_wsBufferSize = 1024;        // 1KB circular buffer
 uint32_t CONFIG_wsSendInterval = 50;        // 50ms max wait between flushes
 uint32_t CONFIG_wsClientCheckInterval = 50;  // 50ms client state check interval
 uint32_t CONFIG_wsBackoffDelay = 200;       // 200ms backoff when all clients reject
-uint32_t CONFIG_wsCleanupInterval = 30000;  // 30 seconds client cleanup interval
+uint32_t CONFIG_wsCleanupInterval = 5000;   // 5 seconds: promptly release stale diagnostic clients
 
 // mDNS configuration defaults
 uint32_t CONFIG_mdnsMinFreeHeap = 4096;              // 4KB minimum free heap for ESP8266 mDNS work

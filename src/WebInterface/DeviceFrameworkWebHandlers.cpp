@@ -170,6 +170,7 @@ size_t renderDecodedLogoChunk(Base64LogoResponseState& state, uint8_t* buffer, s
 bool restartPending = false;
 bool resetPending = false;
 DeviceFrameworkResetScope pendingResetScope = DeviceFrameworkResetScope::Factory;
+DeviceFrameworkRestartReason pendingRestartReason = DeviceFrameworkRestartReason::WebRequest;
 unsigned long restartAt = 0;
 
 // Shared pages need ROOT, the shell placeholder/template pair, HEADER's
@@ -180,7 +181,8 @@ constexpr size_t kWebTemplateReadBufferSize = 128;
 constexpr size_t kControlRequestBodyLimit = 96;
 constexpr const char* kControlBodyErrorAttribute = "df-control-body-error";
 
-void scheduleRestart() {
+void scheduleRestart(DeviceFrameworkRestartReason reason = DeviceFrameworkRestartReason::WebRequest) {
+    pendingRestartReason = reason;
     restartPending = true;
     restartAt = millis() + 500;
 }
@@ -188,7 +190,7 @@ void scheduleRestart() {
 void scheduleReset(DeviceFrameworkResetScope scope) {
     pendingResetScope = scope;
     resetPending = true;
-    scheduleRestart();
+    scheduleRestart(DeviceFrameworkRestartReason::WebReset);
 }
 
 bool restartDue(unsigned long now) {
@@ -464,7 +466,7 @@ void DeviceFrameworkWebHandlers::handleAPIDevicePassword(AsyncWebServerRequest *
     }
 
     request->send(200, "application/json", "{\"status\":\"success\",\"message\":\"Device password updated; restarting\"}");
-    scheduleRestart();
+    scheduleRestart(DeviceFrameworkRestartReason::PasswordChanged);
 }
 
 void DeviceFrameworkWebHandlers::loop() {
@@ -474,7 +476,7 @@ void DeviceFrameworkWebHandlers::loop() {
             resetPending = false;
             DeviceFramework::reset(pendingResetScope);
         }
-        ESP.restart();
+        DeviceFramework::restart(pendingRestartReason);
     }
 }
 

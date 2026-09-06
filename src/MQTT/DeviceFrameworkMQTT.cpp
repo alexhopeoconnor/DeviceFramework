@@ -2,6 +2,7 @@
 #include "../Configuration/DeviceFrameworkIdentity.h"
 #include "../Configuration/DeviceFrameworkConfig.h"
 #include "../Configuration/DeviceFrameworkParameters.h"
+#include "../DeviceFramework.h"
 #include "../WiFi/DeviceFrameworkWiFi.h"
 #include "../MDNS/DeviceFrameworkMDNS.h"
 
@@ -121,7 +122,7 @@ void DeviceFrameworkMQTT::addResetCommand(const char* suffix) {
             // This is a simplified version for the module
 
             LOG_INFOLN(F("Restarting device..."));
-            ESP.restart();
+            DeviceFramework::restart(DeviceFrameworkRestartReason::MqttResetCommand);
         } else {
             LOG_DEBUG_SP(F("Invalid reset command payload: "), true);
             LOG_DEBUGLN_SP(command, false);
@@ -151,7 +152,7 @@ void DeviceFrameworkMQTT::addRestartCommand(const char* suffix) {
 
         if (command == "1") {
             LOG_INFOLN(F("Valid restart command received. Restarting device..."));
-            ESP.restart();
+            DeviceFramework::restart(DeviceFrameworkRestartReason::MqttRestartCommand);
         } else {
             LOG_DEBUG_SP(F("Invalid restart command payload: "), true);
             LOG_DEBUGLN_SP(command, false);
