@@ -182,8 +182,8 @@ def call_service_until_state(
     """Retry a command while HA's MQTT client reconnects after a broker restart."""
     last_error: ContractError | None = None
     for attempt in range(1, 4):
-        client.call_service(domain, service, data)
         try:
+            client.call_service(domain, service, data)
             wait_for_result(30)
             return
         except ContractError as error:

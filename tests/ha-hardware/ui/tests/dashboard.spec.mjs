@@ -81,7 +81,7 @@ test("DeviceFramework Home Assistant dashboard renders deterministically", async
     return;
   }
 
-  const switchControl = root.getByRole("switch").first();
+  const switchControl = root.getByRole("switch", { name: /E2E Switch/i });
   await expect(switchControl).toBeVisible();
   await switchControl.click();
   await expect(root).toHaveScreenshot("deviceframework-e2e-switch-on.png");
