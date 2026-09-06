@@ -31,7 +31,6 @@ jobs:
     env:
       HA_VERSION: ${{ matrix.home_assistant }}
       AHA_TESTKIT_PATH: ${{ github.workspace }}/.ha-testkit/test-support/ha-mqtt-contract
-      ARTIFACT_DIR: ${{ runner.temp }}/deviceframework-ha-artifacts
       COMPOSE_FILE: tests/ha-hardware/compose.yaml
     steps:
       - uses: actions/checkout@v7
@@ -43,7 +42,7 @@ jobs:
           ref: main
           path: .ha-testkit
           sparse-checkout: test-support/ha-mqtt-contract
-      - run: mkdir -p "$ARTIFACT_DIR"
+      - run: mkdir -p "$RUNNER_TEMP/deviceframework-ha-artifacts"
       - name: Start broker and Home Assistant
         run: docker compose up -d mqtt homeassistant
       - name: Bootstrap Home Assistant MQTT integration
@@ -62,7 +61,7 @@ jobs:
         run: docker compose run --rm -e E2E_MODE=fixture-after-mqtt-restart verifier
       - name: Collect artifacts on failure
         if: failure()
-        run: docker compose logs --no-color homeassistant mqtt > "$ARTIFACT_DIR/compose.log" || true
+        run: docker compose logs --no-color homeassistant mqtt > "$RUNNER_TEMP/deviceframework-ha-artifacts/compose.log" || true
       - uses: actions/upload-artifact@v7
         if: always()
         with:
