@@ -16,9 +16,10 @@ With `--profile-fixture`, the consumer build checks three deliberately different
 The `hardware` mode runs the Unity/integration suite against a connected device. It
 reads required WiFi and MQTT values from an ignored `test/.env`; copy
 `test/.env.example` and fill it locally. The runner generates an ignored C++ header
-only for the duration of the run, then removes it. Hardware invocations take an
-exclusive local lock before they generate that header or touch the shared PlatformIO
-build tree, so a second local hardware run waits rather than racing the active one.
+only for the duration of the run, then removes it. Every `scripts/test.sh` mode
+takes one exclusive local lock before touching PlatformIO's package/build state;
+hardware mode additionally uses it before generating that header. A second local
+test waits rather than racing the active one.
 With `--profile-fixture`, it runs Unity with a bootstrap profile, owns the serial
 port while it injects an RTS-only reset after the selected board’s esptool upload,
 and requires a non-empty zero-failure result. This keeps USB-UART adapters from

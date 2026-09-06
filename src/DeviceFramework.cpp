@@ -289,7 +289,10 @@ void DeviceFramework::setupRTCMemory() {
         // A valid record survives only while the prior boot is inside the
         // rapid-reset window; loop() clears it after CONFIG_resetTimeout.
         // Do not compare millis() across boots because that clock restarts.
-        rtcData.resetCount = intentionalRestart ? 1 : static_cast<uint8_t>(rtcData.resetCount + 1);
+        // A framework-requested restart starts a fresh physical-reset sequence.
+        // Otherwise, the first real reset immediately afterwards would be
+        // mistaken for the second reset in a rapid-reset gesture.
+        rtcData.resetCount = intentionalRestart ? 0 : static_cast<uint8_t>(rtcData.resetCount + 1);
         rtcData.totalResetCount++;
     } else {
         // No valid data in RTC memory; initialize it.

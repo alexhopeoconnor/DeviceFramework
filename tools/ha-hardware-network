@@ -138,7 +138,7 @@ password="$(od -An -N12 -tx1 /dev/urandom | tr -d ' \n')"
 
 sudo nmcli connection add type wifi ifname "$ap_interface" con-name "$connection_name" autoconnect no ssid "$ssid" >/dev/null
 created_connection=true
-connection="$(sudo nmcli -g UUID connection show "$connection_name")"
+connection="$(sudo nmcli -g connection.uuid connection show "$connection_name")"
 sudo nmcli connection modify uuid "$connection" \
     802-11-wireless.mode ap \
     802-11-wireless.band bg \

@@ -9,9 +9,10 @@ Home Assistant service -> MQTT command -> firmware -> Home Assistant state
 ```
 
 It uses Docker Compose for Home Assistant, Mosquitto, onboarding, and
-verification. The host only needs Docker Compose, PlatformIO for a physical
-run, and (only for the disposable AP option) NetworkManager, `ip`, and a
-dedicated AP-capable Wi-Fi adapter.
+verification. The host only needs Docker Compose and `flock` (the standard
+`util-linux` locking utility), plus PlatformIO for a physical run and—only for
+the disposable AP option—NetworkManager, `ip`, and a dedicated AP-capable
+Wi-Fi adapter.
 
 The broker has anonymous access deliberately and is bound only to the selected
 local interface. It must never be port-forwarded or exposed to the internet.
@@ -40,6 +41,10 @@ or touching a board:
 
 The preflight creates a non-secret temporary test configuration and removes it
 when the compile finishes.
+
+Harness sessions and physical/compile operations each take a local advisory
+lock. A second invocation in the same checkout waits safely instead of racing a
+Docker broker, generated test header, or PlatformIO build tree.
 
 ## Run on the existing Wi-Fi network
 

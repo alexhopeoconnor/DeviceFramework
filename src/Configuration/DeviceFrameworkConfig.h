@@ -72,6 +72,10 @@ typedef struct {
     uint32_t totalResetCount; // Total resets since last timeout (persistent across resets)
 } RtcData;
 
+// This occupies the first words of ESP8266 RTC user memory. Keep its size
+// stable so DeviceFrameworkRtcBlob continues immediately after it.
+static_assert(sizeof(RtcData) == 20, "RtcData layout must remain 20 bytes");
+
 // Configuration getters and setters
 const char* getConfigDevicePassword();
 // Empty disables local authentication. A non-empty value must contain 8–31

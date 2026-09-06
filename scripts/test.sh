@@ -39,13 +39,12 @@ done
 [[ "$ha_e2e" == "false" || "$mode" == "hardware" ]] || { echo "--ha-e2e is only valid with hardware mode" >&2; exit 2; }
 [[ "$ha_e2e" == "false" || "$profile_fixture" == "false" ]] || { echo "--ha-e2e cannot be combined with --profile-fixture" >&2; exit 2; }
 
-# Hardware runs share the generated credential header and PlatformIO build tree.
-# Serialize them locally so a second invocation cannot delete either mid-build.
-if [[ "$mode" == "hardware" ]]; then
-    hardware_lock_file="${TMPDIR:-/tmp}/deviceframework-hardware-test.lock"
-    exec {hardware_lock_fd}>"$hardware_lock_file"
-    flock "$hardware_lock_fd"
-fi
+# Test modes share PlatformIO's package manager and build output; hardware also
+# shares a generated credential header. Serialize them in this checkout so
+# package updates and temporary configuration cannot race an active test.
+hardware_lock_file="${TMPDIR:-/tmp}/deviceframework-hardware-test.lock"
+exec {hardware_lock_fd}>"$hardware_lock_file"
+flock "$hardware_lock_fd"
 
 if [[ "$mode" == "examples" ]]; then
     mapfile -t examples < <(find examples -mindepth 1 -maxdepth 1 -type d -name '[0-9][0-9]-*' -print | sort)

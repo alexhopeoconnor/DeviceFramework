@@ -49,7 +49,7 @@ void applyOutputState() {
 }
 
 void updateSafetyState() {
-    if (requestedOn && appliedOn && outputStartedAt != 0 &&
+    if (requestedOn && appliedOn &&
         (millis() - outputStartedAt) >= maximumOnMillis()) {
         timeoutTripped = true;
         outputEvaluationPending = true;

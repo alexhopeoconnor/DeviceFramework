@@ -184,6 +184,35 @@ temporary_env=""
 platformio_override=""
 compile_config=""
 existing_firewall_connection=""
+harness_lock_fd=""
+compile_lock_fd=""
+
+acquire_harness_lock() {
+    command -v flock >/dev/null || {
+        echo "flock is required to safely serialize local HA harness sessions" >&2
+        exit 1
+    }
+    mkdir -p "$DFHA_STATE_ROOT"
+    chmod 700 "$DFHA_STATE_ROOT"
+    exec {harness_lock_fd}>"$DFHA_STATE_ROOT/harness.lock"
+    if ! flock -n "$harness_lock_fd"; then
+        echo "Another DeviceFramework HA harness session is active; waiting for it to finish." >&2
+        flock "$harness_lock_fd"
+    fi
+}
+
+acquire_compile_lock() {
+    command -v flock >/dev/null || {
+        echo "flock is required to safely serialize hardware test configuration" >&2
+        exit 1
+    }
+    local lock_file="${TMPDIR:-/tmp}/deviceframework-hardware-test.lock"
+    exec {compile_lock_fd}>"$lock_file"
+    if ! flock -n "$compile_lock_fd"; then
+        echo "Another DeviceFramework hardware test or HA compile is active; waiting for it to finish." >&2
+        flock "$compile_lock_fd"
+    fi
+}
 
 compose() {
     docker compose --project-name "$compose_project" -f "$HARNESS_DIR/compose.yaml" "$@"
@@ -334,8 +363,8 @@ configure_local_dependency_stack() {
         printf '%s\n' 'lib_deps ='
         printf '%s\n' '    madpilot/mDNSResolver@^0.3.0'
         printf '%s\n' '    knolleary/PubSubClient@2.8.0'
-        printf '%s\n' '    ESP32Async/ESPAsyncWebServer@3.9.1'
-        printf '%s\n' '    bblanchon/ArduinoJson@7.4.2'
+        printf '%s\n' '    ESP32Async/ESPAsyncWebServer@^3.12.0'
+        printf '%s\n' '    bblanchon/ArduinoJson@^7.4.3'
         printf '%s\n' ''
         printf '%s\n' '[env:esp8266_ha_e2e]'
         printf '%s\n' 'lib_deps ='
@@ -500,9 +529,11 @@ case "$command_name" in
     compile)
         runtime_dir="$(mktemp -d "${TMPDIR:-/tmp}/deviceframework-ha-hardware.XXXXXX")"
         trap cleanup EXIT INT TERM HUP
+        acquire_compile_lock
         compile_hardware_fixture
         ;;
     up|run|fixture)
+        acquire_harness_lock
         require_common
         ensure_no_retained_session
         runtime_dir="$(mktemp -d "${TMPDIR:-/tmp}/deviceframework-ha-hardware.XXXXXX")"

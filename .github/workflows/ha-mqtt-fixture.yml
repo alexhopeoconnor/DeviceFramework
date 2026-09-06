@@ -34,10 +34,10 @@ jobs:
       ARTIFACT_DIR: ${{ runner.temp }}/deviceframework-ha-artifacts
       COMPOSE_FILE: tests/ha-hardware/compose.yaml
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       # The schema-neutral transport testkit lives with ArduinoHA. Keep this
       # checkout sparse so DeviceFramework CI does not duplicate its library tests.
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           repository: alexhopeoconnor/arduino-home-assistant
           ref: main
@@ -63,7 +63,7 @@ jobs:
       - name: Collect artifacts on failure
         if: failure()
         run: docker compose logs --no-color homeassistant mqtt > "$ARTIFACT_DIR/compose.log" || true
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: home-assistant-fixture-${{ matrix.home_assistant }}

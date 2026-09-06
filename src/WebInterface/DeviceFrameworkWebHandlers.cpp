@@ -182,6 +182,12 @@ constexpr size_t kControlRequestBodyLimit = 96;
 constexpr const char* kControlBodyErrorAttribute = "df-control-body-error";
 
 void scheduleRestart(DeviceFrameworkRestartReason reason = DeviceFrameworkRestartReason::WebRequest) {
+    // A queued reset is stronger than a later plain restart request. Preserve
+    // both the reset operation and its restart provenance when requests arrive
+    // within the response-delay window.
+    if (resetPending) {
+        reason = DeviceFrameworkRestartReason::WebReset;
+    }
     pendingRestartReason = reason;
     restartPending = true;
     restartAt = millis() + 500;

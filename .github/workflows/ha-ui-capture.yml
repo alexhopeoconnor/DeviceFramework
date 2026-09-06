@@ -16,9 +16,9 @@ jobs:
     env:
       AHA_TESTKIT_PATH: ${{ github.workspace }}/.ha-testkit/test-support/ha-mqtt-contract
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       # Keep the generic ArduinoHA contract support in its owning repository.
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           repository: alexhopeoconnor/arduino-home-assistant
           ref: main
@@ -26,7 +26,7 @@ jobs:
           sparse-checkout: test-support/ha-mqtt-contract
       - name: Run pinned HA dashboard visual contract
         run: ./tools/ha-hardware fixture --ui-capture
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: home-assistant-visual-dashboard

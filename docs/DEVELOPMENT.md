@@ -32,18 +32,14 @@ The normal ESP8266 command also checks the web-interface-free configuration.
 ## ESP32 framework pin
 
 The maintained ESP32 environments use the PlatformIO-compatible
-`pioarduino/platform-espressif32` 51.03.05 package. It packages Espressif's
-official Arduino-ESP32 3.0.5 framework and its matching ESP-IDF 5.1 libraries;
-it is not a GitHub Release asset used by application firmware. The URL in each
-`platformio.ini` is the pinned PlatformIO platform package that downloads those
-framework inputs.
+`pioarduino/platform-espressif32` 55.03.311 package. It packages Espressif's
+official Arduino-ESP32 3.3.11 framework. The URL in each `platformio.ini`
+selects the PlatformIO platform package that downloads those framework inputs.
 
-This pin is deliberate. PlatformIO official `espressif32` packages available
-to this stack still provide Arduino-ESP32 2.0.17. On the affected board that
-version starts an asynchronous WiFi scan and reports `WIFI_SCAN_FAILED` after
-exactly six seconds. The current framework initializes the native scan
-configuration correctly. The AP+STA probe and portal-like scan complete in
-about four seconds on the connected ESP32.
+This package remains deliberate: it provides the ESP32 core behavior expected by
+the AP+STA and portal-like WiFi scan tests. Treat a future platform bump as a
+compatibility update and run the ESP32 consumer, example, profile, and hardware
+scan checks before adopting it.
 
 Core 3 separates the `Network` library from `WiFi`. Projects using LDF `deep+`
 therefore need `-DSOC_WIFI_SUPPORTED=1` and the documented `Network/src`

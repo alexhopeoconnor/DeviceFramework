@@ -19,7 +19,7 @@ jobs:
   documentation:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - run: bash -n scripts/*.sh
       - run: ./scripts/check-docs.sh
 
@@ -30,11 +30,11 @@ jobs:
       matrix:
         target: [esp8266, esp32]
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with:
           python-version: '3.11'
-      - run: python -m pip install --upgrade platformio==6.1.19
+      - run: python -m pip install --upgrade platformio==6.2.0
       - run: ./scripts/test.sh compile --platform ${{ matrix.target }}
       - run: ./scripts/test.sh examples --platform ${{ matrix.target }}
       - run: ./scripts/test.sh compile --platform ${{ matrix.target }} --profile-fixture
