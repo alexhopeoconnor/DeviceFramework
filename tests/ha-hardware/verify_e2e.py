@@ -8,8 +8,8 @@ import time
 from pathlib import Path
 from typing import Any, Callable
 
-from ha_mqtt_contract import (
-    ContractError,
+from ha_mqtt_test_harness import (
+    TestHarnessError,
     HomeAssistantClient,
     MqttObserver,
     RetainedPublisher,
@@ -32,11 +32,11 @@ def load_fixture() -> dict[str, Any]:
     path = ROOT / "fixtures" / "deviceframework-e2e.jsonl"
     records = [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
     if len(records) != 1:
-        raise ContractError(f"expected exactly one DeviceFramework fixture record, found {len(records)}")
+        raise TestHarnessError(f"expected exactly one DeviceFramework fixture record, found {len(records)}")
     fixture = records[0]
     for field in ("topic", "payload", "expect"):
         if field not in fixture:
-            raise ContractError(f"DeviceFramework fixture is missing {field}")
+            raise TestHarnessError(f"DeviceFramework fixture is missing {field}")
     return fixture
 
 
@@ -70,9 +70,9 @@ def assert_entities(
         unique_id = item["unique_id"]
         entry = client.wait_for_entity(unique_id, timeout=90)
         if entry.get("device_id") != device["id"]:
-            raise ContractError(f"entity {unique_id} belongs to {entry.get('device_id')}, expected {device['id']}")
+            raise TestHarnessError(f"entity {unique_id} belongs to {entry.get('device_id')}, expected {device['id']}")
         if entity_domain(entry) != item["domain"]:
-            raise ContractError(f"entity {unique_id} has domain {entity_domain(entry)}, expected {item['domain']}")
+            raise TestHarnessError(f"entity {unique_id} has domain {entity_domain(entry)}, expected {item['domain']}")
         matched[unique_id] = entry
     return matched
 
@@ -111,7 +111,7 @@ def assert_fixture_states(client: HomeAssistantClient, entities: dict[str, dict[
     client.wait_for_state(by_domain["text"]["entity_id"], "ready", timeout=90)
 
 
-def fixture_contract(*, republish: bool = True, identifier_suffix: str = "") -> None:
+def fixture_test_harness(*, republish: bool = True, identifier_suffix: str = "") -> None:
     fixture = load_fixture()
     if identifier_suffix:
         # This uses the same retained schema with a fresh discovery identity so
@@ -180,17 +180,17 @@ def call_service_until_state(
     description: str,
 ) -> None:
     """Retry a command while HA's MQTT client reconnects after a broker restart."""
-    last_error: ContractError | None = None
+    last_error: TestHarnessError | None = None
     for attempt in range(1, 4):
         try:
             client.call_service(domain, service, data)
             wait_for_result(30)
             return
-        except ContractError as error:
+        except TestHarnessError as error:
             last_error = error
             if attempt < 3:
                 time.sleep(3)
-    raise ContractError(f"{description} did not converge after 3 service attempts") from last_error
+    raise TestHarnessError(f"{description} did not converge after 3 service attempts") from last_error
 
 
 def assert_command_round_trips(client: HomeAssistantClient, entities: dict[str, dict[str, Any]], device_id: str) -> None:
@@ -247,10 +247,10 @@ def prepare_visual_states(
     )
 
 
-def prepare_visual_state_contract() -> None:
+def prepare_visual_state_test_harness() -> None:
     device_id = os.environ.get("E2E_EXPECTED_DEVICE_ID", "").strip()
     if not device_id:
-        raise ContractError("E2E_EXPECTED_DEVICE_ID is required to prepare hardware UI state")
+        raise TestHarnessError("E2E_EXPECTED_DEVICE_ID is required to prepare hardware UI state")
     client = HomeAssistantClient.from_state(HA_URL, STATE)
     try:
         device = wait_for_device(client, device_id)
@@ -268,12 +268,12 @@ def prepare_visual_state_contract() -> None:
 def assert_browser_switch_round_trip() -> None:
     result_path = ARTIFACTS / "ui-result.json"
     if not result_path.exists():
-        raise ContractError("browser visual test did not write its switch result")
+        raise TestHarnessError("browser visual test did not write its switch result")
     result = json.loads(result_path.read_text(encoding="utf-8"))
     entity_id = result.get("entity_id")
     expected_state = result.get("expected_state")
     if not isinstance(entity_id, str) or not isinstance(expected_state, str):
-        raise ContractError(f"browser visual result is invalid: {result}")
+        raise TestHarnessError(f"browser visual result is invalid: {result}")
     client = HomeAssistantClient.from_state(HA_URL, STATE)
     try:
         client.wait_for_state(entity_id, expected_state, timeout=90)
@@ -292,10 +292,10 @@ def normalize(value: Any, device_id: str) -> Any:
     return value
 
 
-def hardware_contract(*, restart_only: bool = False) -> None:
+def hardware_test_harness(*, restart_only: bool = False) -> None:
     device_id = os.environ.get("E2E_EXPECTED_DEVICE_ID", "").strip()
     if not device_id:
-        raise ContractError("E2E_EXPECTED_DEVICE_ID is required for hardware verification")
+        raise TestHarnessError("E2E_EXPECTED_DEVICE_ID is required for hardware verification")
     client = HomeAssistantClient.from_state(HA_URL, STATE)
     observer = MqttObserver(MQTT_HOST, MQTT_PORT)
     try:
@@ -321,24 +321,24 @@ def main() -> None:
     ARTIFACTS.mkdir(parents=True, exist_ok=True)
     HomeAssistantClient.wait_until_ready(HA_URL)
     if MODE == "fixture":
-        fixture_contract()
+        fixture_test_harness()
     elif MODE == "fixture-restart":
-        fixture_contract(republish=False)
+        fixture_test_harness(republish=False)
     elif MODE == "fixture-after-mqtt-restart":
-        fixture_contract(identifier_suffix="after_mqtt_restart")
+        fixture_test_harness(identifier_suffix="after_mqtt_restart")
     elif MODE == "hardware":
-        hardware_contract()
+        hardware_test_harness()
     elif MODE in {"ha-restart", "mqtt-restart"}:
-        hardware_contract(restart_only=True)
+        hardware_test_harness(restart_only=True)
     elif MODE == "visual-state":
-        prepare_visual_state_contract()
+        prepare_visual_state_test_harness()
     elif MODE == "ready":
         pass
     elif MODE == "ui-after-browser":
         assert_browser_switch_round_trip()
     else:
-        raise ContractError(f"unknown E2E_MODE: {MODE}")
-    print(f"DeviceFramework HA hardware contract mode {MODE} passed")
+        raise TestHarnessError(f"unknown E2E_MODE: {MODE}")
+    print(f"DeviceFramework HA hardware test harness mode {MODE} passed")
 
 
 if __name__ == "__main__":

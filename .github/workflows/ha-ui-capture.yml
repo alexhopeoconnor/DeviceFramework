@@ -14,7 +14,7 @@ jobs:
   visual-fixture:
     runs-on: ubuntu-latest
     env:
-      AHA_TESTKIT_PATH: ${{ github.workspace }}/.ha-testkit/test-support/ha-mqtt-contract
+      AHA_TESTKIT_PATH: ${{ github.workspace }}/.ha-testkit/test-support/ha-mqtt-test-harness
     steps:
       - uses: actions/checkout@v7
       # Keep the generic ArduinoHA contract support in its owning repository.
@@ -23,8 +23,8 @@ jobs:
           repository: alexhopeoconnor/arduino-home-assistant
           ref: main
           path: .ha-testkit
-          sparse-checkout: test-support/ha-mqtt-contract
-      - name: Run pinned HA dashboard visual contract
+          sparse-checkout: test-support/ha-mqtt-test-harness
+      - name: Run pinned HA dashboard visual test harness
         run: ./tools/ha-hardware fixture --ui-capture
       - uses: actions/upload-artifact@v7
         if: always()

@@ -4,7 +4,7 @@ services:
       context: .
       dockerfile: Dockerfile
       additional_contexts:
-        ha_testkit: ${AHA_TESTKIT_PATH:?Set AHA_TESTKIT_PATH to ha-mqtt-contract}
+        ha_testkit: ${AHA_TESTKIT_PATH:?Set AHA_TESTKIT_PATH to ha-mqtt-test-harness}
     command: ["python", "config_init.py"]
     volumes:
       - ha_config:/config
@@ -39,7 +39,7 @@ services:
       context: .
       dockerfile: Dockerfile
       additional_contexts:
-        ha_testkit: ${AHA_TESTKIT_PATH:?Set AHA_TESTKIT_PATH to ha-mqtt-contract}
+        ha_testkit: ${AHA_TESTKIT_PATH:?Set AHA_TESTKIT_PATH to ha-mqtt-test-harness}
     command: ["python", "bootstrap.py"]
     environment:
       HA_URL: http://homeassistant:8123
@@ -58,7 +58,7 @@ services:
       context: .
       dockerfile: Dockerfile
       additional_contexts:
-        ha_testkit: ${AHA_TESTKIT_PATH:?Set AHA_TESTKIT_PATH to ha-mqtt-contract}
+        ha_testkit: ${AHA_TESTKIT_PATH:?Set AHA_TESTKIT_PATH to ha-mqtt-test-harness}
     command: ["python", "dashboard_setup.py"]
     environment:
       HA_URL: http://homeassistant:8123
@@ -76,7 +76,7 @@ services:
       context: .
       dockerfile: Dockerfile
       additional_contexts:
-        ha_testkit: ${AHA_TESTKIT_PATH:?Set AHA_TESTKIT_PATH to ha-mqtt-contract}
+        ha_testkit: ${AHA_TESTKIT_PATH:?Set AHA_TESTKIT_PATH to ha-mqtt-test-harness}
     environment:
       HA_URL: http://homeassistant:8123
       MQTT_HOST: mqtt

@@ -8,7 +8,7 @@ import tempfile
 from pathlib import Path
 from typing import Any
 
-from ha_mqtt_contract import ContractError, HomeAssistantClient
+from ha_mqtt_test_harness import TestHarnessError, HomeAssistantClient
 
 
 ROOT = Path(__file__).parent
@@ -27,7 +27,7 @@ def load_fixture() -> dict[str, Any]:
         if line.strip()
     ]
     if len(records) != 1:
-        raise ContractError(f"expected exactly one UI fixture record, found {len(records)}")
+        raise TestHarnessError(f"expected exactly one UI fixture record, found {len(records)}")
     return records[0]
 
 
@@ -52,9 +52,9 @@ def expected_entities() -> tuple[str, list[dict[str, str]]]:
     if MODE == "hardware":
         device_id = os.environ.get("E2E_EXPECTED_DEVICE_ID", "").strip()
         if not device_id:
-            raise ContractError("E2E_EXPECTED_DEVICE_ID is required for hardware UI setup")
+            raise TestHarnessError("E2E_EXPECTED_DEVICE_ID is required for hardware UI setup")
         return device_id, expected_hardware_entities(device_id)
-    raise ContractError(f"unsupported UI dashboard mode: {MODE}")
+    raise TestHarnessError(f"unsupported UI dashboard mode: {MODE}")
 
 
 def render_dashboard(entity_ids: dict[str, str]) -> str:
@@ -62,7 +62,7 @@ def render_dashboard(entity_ids: dict[str, str]) -> str:
     for key, entity_id in entity_ids.items():
         text = text.replace(f"__{key.upper()}_ENTITY_ID__", entity_id)
     if "__" in text:
-        raise ContractError("dashboard template has unresolved placeholders")
+        raise TestHarnessError("dashboard template has unresolved placeholders")
     return text
 
 
@@ -83,7 +83,7 @@ def main() -> None:
         }
         for key, entity_id in entity_ids.items():
             if not isinstance(entity_id, str) or not entity_id:
-                raise ContractError(f"{key} UI entity has no entity_id")
+                raise TestHarnessError(f"{key} UI entity has no entity_id")
         atomic_write(DASHBOARD, render_dashboard(entity_ids))
         manifest = {
             "dashboard_url": "http://homeassistant:8123/deviceframework-e2e/controls",

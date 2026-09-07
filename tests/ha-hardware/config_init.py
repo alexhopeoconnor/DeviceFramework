@@ -5,7 +5,7 @@ from __future__ import annotations
 import shutil
 from pathlib import Path
 
-from ha_mqtt_contract import ContractError
+from ha_mqtt_test_harness import TestHarnessError
 
 
 SOURCE = Path("/tests/config")
@@ -25,7 +25,7 @@ def main() -> None:
     TARGET.mkdir(parents=True, exist_ok=True)
     configuration = TARGET / CONFIGURATION
     if configuration.exists() and MARKER not in configuration.read_text(encoding="utf-8"):
-        raise ContractError(f"refusing to reuse a non-harness Home Assistant configuration at {configuration}")
+        raise TestHarnessError(f"refusing to reuse a non-harness Home Assistant configuration at {configuration}")
     copy_if_missing(CONFIGURATION)
     copy_if_missing(DASHBOARD)
     print("DeviceFramework visual dashboard configuration is ready")

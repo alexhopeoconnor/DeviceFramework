@@ -4,7 +4,7 @@ views:
     cards:
       - type: markdown
         title: DeviceFramework HA E2E
-        content: Visual integration contract
+        content: Visual integration test harness
 
       - type: entities
         title: Device controls

@@ -1,4 +1,4 @@
-# Local Home Assistant hardware contract
+# Local Home Assistant hardware test harness
 
 This optional local harness tests the actual path that normal firmware tests
 cannot cover:
@@ -124,13 +124,13 @@ pretend to replace the physical service-command round trip.
 
 ## Visual dashboard contract
 
-The optional visual contract uses the same disposable Home Assistant and
+The optional visual test harness uses the same disposable Home Assistant and
 Mosquitto stack, plus a pinned headless Playwright container. It has no host
 Node.js, browser, or Python dependency. It seeds a harness-owned HA configuration
 volume and a small YAML dashboard, so it never merges into a developer's normal HA
 configuration. The browser remains on Docker's internal network.
 
-Run the board-free visual contract first:
+Run the board-free visual test harness first:
 
 ```bash
 ./tools/ha-hardware fixture --ui-capture

@@ -30,7 +30,7 @@ jobs:
         home_assistant: [stable]
     env:
       HA_VERSION: ${{ matrix.home_assistant }}
-      AHA_TESTKIT_PATH: ${{ github.workspace }}/.ha-testkit/test-support/ha-mqtt-contract
+      AHA_TESTKIT_PATH: ${{ github.workspace }}/.ha-testkit/test-support/ha-mqtt-test-harness
       COMPOSE_FILE: tests/ha-hardware/compose.yaml
     steps:
       - uses: actions/checkout@v7
@@ -41,7 +41,7 @@ jobs:
           repository: alexhopeoconnor/arduino-home-assistant
           ref: main
           path: .ha-testkit
-          sparse-checkout: test-support/ha-mqtt-contract
+          sparse-checkout: test-support/ha-mqtt-test-harness
       - run: mkdir -p "$RUNNER_TEMP/deviceframework-ha-artifacts"
       - name: Load pinned visual-test image
         run: grep -E '^[A-Za-z_][A-Za-z0-9_]*=' tests/ha-hardware/ui/visual-versions.env >> "$GITHUB_ENV"

@@ -79,7 +79,7 @@ status, pages, CSS/JavaScript/logo assets, and password persistence through a
 reboot. Set `DEVICEFRAMEWORK_TEST_DEVICE_HOST` in the ignored env file when
 Avahi or mDNS is unavailable.
 
-For an end-to-end local Home Assistant run (board -> Wi-Fi -> Mosquitto -> HA and HA commands back to the board), use the [local HA hardware contract](HA_HARDWARE_TESTING.md). It creates and removes Docker state automatically, can bind to the existing Wi-Fi network without sudo, and has an opt-in NetworkManager USB-adapter AP mode when a dedicated adapter is available.
+For an end-to-end local Home Assistant run (board -> Wi-Fi -> Mosquitto -> HA and HA commands back to the board), use the [local HA hardware test harness](HA_HARDWARE_TESTING.md). It creates and removes Docker state automatically, can bind to the existing Wi-Fi network without sudo, and has an opt-in NetworkManager USB-adapter AP mode when a dedicated adapter is available.
 
 ## Work against sibling checkouts
 

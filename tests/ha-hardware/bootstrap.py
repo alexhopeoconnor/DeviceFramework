@@ -3,14 +3,14 @@
 import os
 from pathlib import Path
 
-from ha_mqtt_contract import HomeAssistantClient
+from ha_mqtt_test_harness import HomeAssistantClient
 
 
 def main() -> None:
     client = HomeAssistantClient.bootstrap(
         os.environ.get("HA_URL", "http://homeassistant:8123"),
         Path("/state"),
-        owner_name="DeviceFramework Hardware Contract Owner",
+        owner_name="DeviceFramework Hardware Test Harness Owner",
         username="deviceframework-hardware",
         password="deviceframework-hardware-password",
     )

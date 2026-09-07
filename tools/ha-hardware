@@ -29,7 +29,7 @@ Options for run:
   --env-file FILE                     Wi-Fi credentials (default test/.env)
   --arduinoha-path PATH               compile firmware against this sibling-stack ArduinoHA checkout
   --ha-version VERSION                Home Assistant image tag (default stable; visual mode is pinned)
-  --ui-capture                        run the Docker-only Playwright visual contract after protocol checks
+  --ui-capture                        run the Docker-only Playwright visual test harness after protocol checks
   --update-snapshots                  explicitly regenerate reviewed Playwright snapshots (requires --ui-capture)
   --keep                              preserve the stack/AP for interactive inspection
 
@@ -92,10 +92,10 @@ $ui_capture && [[ "$command_name" != "run" && "$command_name" != "fixture" ]] &&
 # state even when the caller did not spell --keep.
 [[ "$command_name" != "up" ]] || keep=true
 
-if [[ -z "$arduinoha_path" && -d "$DEFAULT_AHA_DIR/test-support/ha-mqtt-contract" ]]; then
+if [[ -z "$arduinoha_path" && -d "$DEFAULT_AHA_DIR/test-support/ha-mqtt-test-harness" ]]; then
     arduinoha_path="$DEFAULT_AHA_DIR"
 fi
-testkit_path="${AHA_TESTKIT_PATH:-${arduinoha_path:+$arduinoha_path/test-support/ha-mqtt-contract}}"
+testkit_path="${AHA_TESTKIT_PATH:-${arduinoha_path:+$arduinoha_path/test-support/ha-mqtt-test-harness}}"
 
 # Docker Compose interpolates every declared service, including the optional UI
 # service, before running a non-visual command. Keep this its sole version source.
@@ -118,7 +118,7 @@ require_common() {
     command -v docker >/dev/null || { echo "docker is required" >&2; exit 1; }
     docker compose version >/dev/null || { echo "Docker Compose v2 is required" >&2; exit 1; }
     [[ -n "$testkit_path" && -f "$testkit_path/pyproject.toml" ]] || {
-        echo "Set --arduinoha-path (or AHA_TESTKIT_PATH) to an ArduinoHA checkout containing test-support/ha-mqtt-contract" >&2
+        echo "Set --arduinoha-path (or AHA_TESTKIT_PATH) to an ArduinoHA checkout containing test-support/ha-mqtt-test-harness" >&2
         exit 1
     }
 }
@@ -404,7 +404,7 @@ wait_for_mqtt() {
     return 1
 }
 
-run_visual_contract() {
+run_visual_test_harness() {
     local mode="$1"
     export E2E_MODE="$mode"
     if [[ "$mode" == "hardware" ]]; then
@@ -441,7 +441,7 @@ run_fixture() {
     wait_for_mqtt
     export E2E_MODE=fixture-after-mqtt-restart
     compose run --rm --user "$(id -u):$(id -g)" verifier
-    $ui_capture && run_visual_contract fixture
+    $ui_capture && run_visual_test_harness fixture
     printf '{"mode":"fixture","ha_version":"%s","ui_capture":%s}\n' \
         "$ha_version" "$ui_capture" > "$artifact_dir/summary.json"
 }
@@ -495,7 +495,7 @@ run_hardware() {
     wait_for_mqtt
     export E2E_MODE=mqtt-restart
     compose run --rm --user "$(id -u):$(id -g)" verifier
-    $ui_capture && run_visual_contract hardware
+    $ui_capture && run_visual_test_harness hardware
     printf '{"platform":"%s","device_id":"%s","arduinoha_path":"%s","ha_version":"%s","mqtt_bind_ip":"%s","ui_capture":%s}\n' \
         "$platform" "$device_id" "${arduinoha_path:-released-dependency}" "$ha_version" "$MQTT_BIND_IP" "$ui_capture" > "$artifact_dir/summary.json"
 }

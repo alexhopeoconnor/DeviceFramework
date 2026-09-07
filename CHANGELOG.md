@@ -4,7 +4,7 @@
 
 - Strengthen intentional-reset and web-recovery handling: preserve pending reset provenance, begin a fresh physical-reset sequence after a framework-requested restart, and assert the ESP8266 RTC layout that stores the reset record.
 - Correct the protected-output example so its safety timeout also applies when its activation timestamp is zero.
-- Add reproducible Docker-contained Home Assistant/MQTT integration coverage, including a hardware harness for ESP8266 and ESP32, an optional isolated USB-Wi-Fi access-point route, HA/MQTT restart recovery, and a pinned Playwright visual contract that exercises an actual HA control round trip.
+- Add reproducible Docker-contained Home Assistant/MQTT integration coverage, including a hardware harness for ESP8266 and ESP32, an optional isolated USB-Wi-Fi access-point route, HA/MQTT restart recovery, and a pinned Playwright visual test harness that exercises an actual HA control round trip.
 - Serialize local PlatformIO and HA-harness work to prevent shared package, generated-header, build-tree, and broker races during concurrent developer runs.
 - Update the tested build stack to PlatformIO 6.2.0, Arduino-ESP32 3.3.11, WiFiManager 3.2.2, ArduinoJson 7.4.3, ESPAsyncWebServer 3.12.0, and AsyncTCP 3.5.0; refresh GitHub Actions to their v7 major releases.
 
