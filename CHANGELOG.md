@@ -1,5 +1,12 @@
 # Changelog
 
+## 2.8.1
+
+- Pin the published ArduinoHA 3.2.0 release, including bounded direct MQTT discovery writes, lower peak discovery-serialization heap use, and fail-safe recovery after an interrupted discovery stream.
+- Extend the local HA hardware test harness with one retained stack, session-private credentials/build settings, immutable per-target builds, and Docker-contained USB flash workers so ESP8266 and ESP32 boards can run in parallel without sharing PlatformIO mutation.
+- Keep physical browser review deterministic: retained visual sessions use the pinned HA snapshot, run Playwright in Docker, compare the dashboard screenshot baseline, toggle the real device entity, and verify the MQTT/HA return state.
+- Document cleanup, dependency boundaries, existing-LAN/no-sudo operation, and the optional managed-AP path; no local test credentials or generated runtime state are committed.
+
 ## 2.8.0
 
 - Strengthen intentional-reset and web-recovery handling: preserve pending reset provenance, begin a fresh physical-reset sequence after a framework-requested restart, and assert the ESP8266 RTC layout that stores the reset record.
