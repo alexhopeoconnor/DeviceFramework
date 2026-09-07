@@ -8,11 +8,12 @@ DeviceFramework firmware -> Wi-Fi -> Mosquitto -> Home Assistant
 Home Assistant service -> MQTT command -> firmware -> Home Assistant state
 ```
 
-It uses Docker Compose for Home Assistant, Mosquitto, onboarding, and
-verification. The host only needs Docker Compose and `flock` (the standard
-`util-linux` locking utility), plus PlatformIO for a physical run and—only for
-the disposable AP option—NetworkManager, `ip`, and a dedicated AP-capable
-Wi-Fi adapter.
+It uses Docker Compose for Home Assistant, Mosquitto, onboarding, verification,
+browser rendering, and USB flashing. A physical run also needs PlatformIO to
+build firmware and Python 3 to capture serial output; it does not need a host
+`esptool`, browser, Node.js, or Home Assistant installation. The optional
+disposable AP mode additionally needs NetworkManager, `ip`, and a dedicated
+AP-capable Wi-Fi adapter.
 
 The broker has anonymous access deliberately and is bound only to the selected
 local interface. It must never be port-forwarded or exposed to the internet.
@@ -84,24 +85,54 @@ NetworkManager connection and any rules it created when the run exits. The
 board is intentionally not restored; it is test firmware and will be reflashed
 normally later.
 
-## Keep an interactive stack
+## Retained session and parallel boards
 
-`up` always retains the stack for manual HA inspection; it listens at
-`http://127.0.0.1:8125` by default.
+`up` starts one disposable stack for interactive HA inspection at
+`http://127.0.0.1:8125` and prints a session ID. It creates one private,
+session-scoped firmware header (mode 0400) from the ignored Wi-Fi input, plus an
+ignored PlatformIO override and build directory. The retained state file is mode
+0600 under the normal XDG state directory and contains paths only, never
+credentials.
+
+Compile each target once, then start one worker per physical board. Workers do
+not invoke PlatformIO: each mounts the prebuilt, immutable image into the pinned
+Docker `esptool` container, flashes only its assigned USB device, and captures
+that board's Unity output. This makes different USB boards safe to run in
+parallel without sharing PlatformIO's mutable package or build cache.
 
 ```bash
-./tools/ha-hardware up --network existing --env-file test/.env
+./tools/ha-hardware up --network existing --env-file test/.env --ha-version ui
+# Copy the printed session ID into SESSION.
+SESSION=dfha1234567890
+./tools/ha-hardware compile --session "$SESSION" --platform esp8266
+./tools/ha-hardware compile --session "$SESSION" --platform esp32
+./tools/ha-hardware worker --session "$SESSION" --alias esp8266-a --platform esp8266 --port /dev/ttyUSB1 &
+./tools/ha-hardware worker --session "$SESSION" --alias esp8266-b --platform esp8266 --port /dev/ttyUSB2 &
+./tools/ha-hardware worker --session "$SESSION" --alias esp32 --platform esp32 --port /dev/ttyUSB0 &
+wait
+./tools/ha-hardware verify --session "$SESSION" --device-id DEVICE_ID
+./tools/ha-hardware restart --session "$SESSION" --service homeassistant
+./tools/ha-hardware verify --session "$SESSION" --device-id DEVICE_ID --mode ha-restart
+./tools/ha-hardware restart --session "$SESSION" --service mqtt
+./tools/ha-hardware verify --session "$SESSION" --device-id DEVICE_ID --mode mqtt-restart
+./tools/ha-hardware visual --session "$SESSION" --device-id DEVICE_ID
 ./tools/ha-hardware down
 ```
 
-Use `--keep` with `run` for the same behaviour after a successful physical
-test. The retained-session record is mode 0600 under the normal XDG state
-directory, and `down` removes Compose volumes, a managed AP, and any temporary
-existing-network UFW rule. A non-`--keep` run captures `compose.log`, serial
-output, Home Assistant registries/states, raw discovery MQTT, normalized
-hardware discovery, and a run summary in the Git-ignored
-`artifacts/ha-hardware/` directory before it tears down containers and
-temporary files.
+Each worker writes a Git-ignored `result.json`, `flash.log`, and `serial.log`
+under `artifacts/ha-hardware/`. Because this sequence includes the visual
+command, `--ha-version ui` selects the reviewed Home Assistant version from
+`tests/ha-hardware/ui/visual-versions.env`. For protocol-only retained sessions,
+omit it to use rolling `stable`. Docker must be allowed to access the selected
+USB device; normal Docker permissions are sufficient, and the worker never asks
+for sudo. `down` removes the Compose volumes, the generated override and private
+runtime directory, a managed AP, and any temporary UFW rule. It does not restore
+board firmware; test boards are expected to be reflashed normally.
+
+`run --platform ... --port ...` remains the single-board convenience command.
+Use `--keep` with it to retain its stack after a successful physical test. A
+non-retained run captures Compose logs, Home Assistant registries/states, raw
+and normalized discovery data, serial output, and a summary before cleaning up.
 
 ## What the physical run proves
 
@@ -156,9 +187,11 @@ Inspect those artifacts before deliberately replacing a baseline:
 ./tools/ha-hardware fixture --ui-capture --update-snapshots
 ```
 
-An explicit HA version other than the pinned visual version also requires
-`--update-snapshots`, making screenshot changes a reviewed source change rather
-than an accidental result of the rolling `stable` image. The ordinary protocol
+A retained visual session must be started with `--ha-version ui`; this selects the
+reviewed HA version without copying a version string into local configuration.
+Any other explicit HA version requires `--update-snapshots` when used with
+`fixture --ui-capture`, making screenshot changes reviewed source changes rather
+than accidental results of the rolling `stable` image. The ordinary protocol
 harness continues to use `stable`.
 
 Back to [testing](TESTING.md) · [development](DEVELOPMENT.md) ·

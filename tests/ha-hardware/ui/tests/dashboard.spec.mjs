@@ -21,13 +21,13 @@ async function isVisible(locator, timeout = 2_000) {
 }
 
 async function signInIfNeeded(page) {
-  const username = page.getByRole("textbox", { name: "Username", exact: true });
+  const username = page.getByRole("textbox", { name: /^Username\*?$/ });
   if (!await isVisible(username)) {
     return false;
   }
 
   await username.fill(process.env.HA_TEST_USERNAME);
-  await page.getByRole("textbox", { name: "Password", exact: true }).fill(process.env.HA_TEST_PASSWORD);
+  await page.getByRole("textbox", { name: /^Password\*?$/ }).fill(process.env.HA_TEST_PASSWORD);
   await page.getByRole("button", { name: /log in/i }).click();
 
   const finish = page.getByRole("button", { name: "Finish", exact: true });

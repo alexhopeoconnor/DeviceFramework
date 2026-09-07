@@ -119,6 +119,16 @@ services:
       homeassistant:
         condition: service_started
 
+  flasher:
+    build:
+      context: ./flasher
+      dockerfile: Dockerfile
+    entrypoint: ["esptool"]
+    devices:
+      - ${SERIAL_DEVICE:-/dev/null}:${SERIAL_DEVICE:-/dev/null}
+    volumes:
+      - ${FIRMWARE_ARTIFACT_DIR:-/tmp}:/firmware:ro
+
 volumes:
   ha_config:
   test_state:

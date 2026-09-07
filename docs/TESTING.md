@@ -41,7 +41,7 @@ the password endpoint’s reboot. Set `DEVICEFRAMEWORK_TEST_DEVICE_HOST` in the
 ignored env file to use a known IP instead of Avahi/mDNS.
 
 
-For a Docker-backed Home Assistant/Mosquitto test of a physical board, use the [local HA hardware test harness](HA_HARDWARE_TESTING.md). It uses the same ignored Wi-Fi credentials, but supplies an isolated anonymous MQTT broker and verifies Home Assistant discovery, services, return state, and restarts. Its Docker-only retained fixture is also the intentionally small CI coverage for current HA behavior.
+For a Docker-backed Home Assistant/Mosquitto test of physical boards, use the [local HA hardware test harness](HA_HARDWARE_TESTING.md). It uses the same ignored Wi-Fi credentials, supplies an isolated anonymous MQTT broker, and verifies Home Assistant discovery, services, returned state, and restarts. A retained session compiles each target once and lets Docker-contained flashing workers test separate USB boards in parallel without a host `esptool`; its Docker-only retained fixture is the intentionally small CI coverage for current HA behavior.
 
 For a deterministic current-HA dashboard check with no board, run `./tools/ha-hardware fixture --ui-capture`. A physical `run ... --ui-capture` additionally proves a headless browser switch action reaches the board and returns through MQTT; see the hardware guide for reviewed screenshot baselines and failure artifacts.
 

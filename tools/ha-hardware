@@ -13,14 +13,18 @@ usage() {
     cat <<'USAGE'
 Usage:
   ./tools/ha-hardware doctor [--ap-interface IFACE] [--arduinoha-path PATH]
-  ./tools/ha-hardware compile --platform esp8266|esp32 [--arduinoha-path PATH]
+  ./tools/ha-hardware compile --platform esp8266|esp32 [--session ID] [--arduinoha-path PATH]
   ./tools/ha-hardware up [--network managed-ap --ap-interface IFACE] [--keep]
   ./tools/ha-hardware fixture [--ui-capture] [--update-snapshots] [--ha-version VERSION]
   ./tools/ha-hardware run --platform esp8266|esp32 --port DEVICE [options]
+  ./tools/ha-hardware worker --session ID --alias NAME --platform esp8266|esp32 --port DEVICE
+  ./tools/ha-hardware verify --session ID --device-id ID [--mode hardware|ha-restart|mqtt-restart]
+  ./tools/ha-hardware restart --session ID --service homeassistant|mqtt
+  ./tools/ha-hardware visual --session ID --device-id ID
   ./tools/ha-hardware down
   ./tools/ha-hardware reset
 
-Options for run:
+Options for up, run, and fixture:
   --network existing|managed-ap       existing is the default
   --mqtt-bind-ip ADDRESS              existing-network host address reachable by the board
   --ap-interface IFACE                required for managed-ap
@@ -28,7 +32,7 @@ Options for run:
   --firewall check|allow|manual       default: check; allow is temporary and may use sudo
   --env-file FILE                     Wi-Fi credentials (default test/.env)
   --arduinoha-path PATH               compile firmware against this sibling-stack ArduinoHA checkout
-  --ha-version VERSION                Home Assistant image tag (default stable; visual mode is pinned)
+  --ha-version VERSION                Home Assistant tag: stable (default) or ui (reviewed snapshot pin)
   --ui-capture                        run the Docker-only Playwright visual test harness after protocol checks
   --update-snapshots                  explicitly regenerate reviewed Playwright snapshots (requires --ui-capture)
   --keep                              preserve the stack/AP for interactive inspection
@@ -58,6 +62,11 @@ keep=false
 ui_capture=false
 update_snapshots=false
 session_persisted=false
+session_id=""
+worker_alias=""
+device_id=""
+verify_mode="hardware"
+restart_service=""
 ui_version_file="$HARNESS_DIR/ui/visual-versions.env"
 
 while [[ $# -gt 0 ]]; do
@@ -72,6 +81,11 @@ while [[ $# -gt 0 ]]; do
         --ha-version) ha_version="${2:-}"; ha_version_explicit=true; shift 2 ;;
         --platform) platform="${2:-}"; shift 2 ;;
         --port) port="${2:-}"; shift 2 ;;
+        --session) session_id="${2:-}"; shift 2 ;;
+        --alias) worker_alias="${2:-}"; shift 2 ;;
+        --device-id) device_id="${2:-}"; shift 2 ;;
+        --mode) verify_mode="${2:-}"; shift 2 ;;
+        --service) restart_service="${2:-}"; shift 2 ;;
         --ui-capture) ui_capture=true; shift ;;
         --update-snapshots) update_snapshots=true; shift ;;
         --keep) keep=true; shift ;;
@@ -88,10 +102,18 @@ $ui_capture && [[ "$command_name" != "run" && "$command_name" != "fixture" ]] &&
     exit 2
 }
 [[ "$command_name" != "fixture" || "$keep" == false ]] || { echo "fixture always cleans up; use up for interactive inspection" >&2; exit 2; }
+[[ "$command_name" != "worker" || ( -n "$session_id" && -n "$worker_alias" && -n "$platform" && -n "$port" ) ]] || usage
+[[ "$command_name" != "verify" || ( -n "$session_id" && -n "$device_id" ) ]] || usage
+[[ "$command_name" != "restart" || ( -n "$session_id" && -n "$restart_service" ) ]] || usage
+[[ "$command_name" != "visual" || ( -n "$session_id" && -n "$device_id" ) ]] || usage
 # `up` is explicitly an interactive lifecycle command, so it must retain its
 # state even when the caller did not spell --keep.
 [[ "$command_name" != "up" ]] || keep=true
 
+if [[ -n "$arduinoha_path" ]]; then
+    [[ -d "$arduinoha_path" ]] || { echo "Missing ArduinoHA checkout: $arduinoha_path" >&2; exit 1; }
+    arduinoha_path="$(cd "$arduinoha_path" && pwd)"
+fi
 if [[ -z "$arduinoha_path" && -d "$DEFAULT_AHA_DIR/test-support/ha-mqtt-test-harness" ]]; then
     arduinoha_path="$DEFAULT_AHA_DIR"
 fi
@@ -105,8 +127,9 @@ source "$ui_version_file"
 : "${PLAYWRIGHT_IMAGE:?visual version file must define PLAYWRIGHT_IMAGE}"
 export PLAYWRIGHT_IMAGE
 
+: "${HA_UI_VERSION:?visual version file must define HA_UI_VERSION}"
+[[ "$ha_version" != "ui" ]] || ha_version="$HA_UI_VERSION"
 if $ui_capture; then
-    : "${HA_UI_VERSION:?visual version file must define HA_UI_VERSION}"
     if ! $ha_version_explicit; then
         ha_version="$HA_UI_VERSION"
     elif [[ "$ha_version" != "$HA_UI_VERSION" && "$update_snapshots" != true ]]; then
@@ -181,6 +204,7 @@ compose_project=""
 connection_uuid=""
 ap_gateway=""
 temporary_env=""
+firmware_config=""
 platformio_override=""
 compile_config=""
 existing_firewall_connection=""
@@ -233,6 +257,26 @@ write_test_env() {
     chmod 600 "$temporary_env"
 }
 
+write_firmware_config() {
+    [[ -n "$temporary_env" && -f "$temporary_env" ]] || {
+        echo "Missing private session environment" >&2
+        exit 1
+    }
+    # This file is generated by write_test_env with shell-escaped values and
+    # stays inside the 0700 session directory. Never print its contents.
+    # shellcheck disable=SC1090
+    source "$temporary_env"
+    {
+        printf '%s\n' '#pragma once'
+        printf '%s\n' '#define DEVICEFRAMEWORK_HA_E2E_CONFIG_INCLUDED 1'
+        printf '#define TEST_WIFI_SSID "%s"\n' "$(printf '%s' "$DEVICEFRAMEWORK_TEST_WIFI_SSID" | sed 's/\\/\\\\/g; s/"/\\"/g')"
+        printf '#define TEST_WIFI_PASSWORD "%s"\n' "$(printf '%s' "$DEVICEFRAMEWORK_TEST_WIFI_PASSWORD" | sed 's/\\/\\\\/g; s/"/\\"/g')"
+        printf '#define TEST_MQTT_SERVER "%s"\n' "$(printf '%s' "$DEVICEFRAMEWORK_TEST_MQTT_SERVER" | sed 's/\\/\\\\/g; s/"/\\"/g')"
+        printf '%s\n' '#define TEST_MQTT_USER ""'
+        printf '%s\n' '#define TEST_MQTT_PASSWORD ""'
+    } > "$firmware_config"
+    chmod 400 "$firmware_config"
+}
 configure_existing_firewall() {
     [[ "$network" == "existing" ]] || return 0
     command -v ufw >/dev/null || return 0
@@ -273,6 +317,17 @@ write_state() {
     local state_file="$DFHA_STATE_ROOT/session.env"
     {
         printf 'DFHA_PROJECT=%q\n' "$compose_project"
+        printf 'DFHA_SESSION=%q\n' "$compose_project"
+        printf 'DFHA_RUNTIME_DIR=%q\n' "$runtime_dir"
+        printf 'DFHA_TEMPORARY_ENV=%q\n' "$temporary_env"
+        printf 'DFHA_FIRMWARE_CONFIG=%q\n' "$firmware_config"
+        printf 'DFHA_PLATFORMIO_OVERRIDE=%q\n' "$platformio_override"
+        printf 'DFHA_ARDUINOHA_PATH=%q\n' "$arduinoha_path"
+        printf 'DFHA_HA_VERSION=%q\n' "$ha_version"
+        printf 'DFHA_ARTIFACT_DIR=%q\n' "$artifact_dir"
+        printf 'DFHA_MQTT_BIND_IP=%q\n' "$MQTT_BIND_IP"
+        printf 'DFHA_HA_PORT=%q\n' "${HA_PORT:-8125}"
+        printf 'DFHA_TZ=%q\n' "${TZ:-UTC}"
         printf 'DFHA_TESTKIT=%q\n' "$testkit_path"
         printf 'DFHA_CONNECTION=%q\n' "$connection_uuid"
         printf 'DFHA_AP_INTERFACE=%q\n' "$ap_interface"
@@ -299,11 +354,13 @@ cleanup() {
     if [[ "$session_persisted" != true ]]; then
         remove_existing_firewall || true
     fi
-    # These are always process-local: --keep retains only the intentionally
-    # inspectable Docker/AP session, never a generated project override.
-    [[ -z "$platformio_override" ]] || rm -f "$platformio_override"
+    # A retained session owns its private runtime directory and generated
+    # PlatformIO override until `down`; ordinary runs remove both here.
+    if [[ "$session_persisted" != true ]]; then
+        [[ -z "$platformio_override" ]] || rm -f "$platformio_override"
+        [[ -z "$runtime_dir" ]] || rm -rf "$runtime_dir"
+    fi
     [[ -z "$compile_config" ]] || rm -f "$compile_config"
-    [[ -z "$runtime_dir" ]] || rm -rf "$runtime_dir"
     exit "$result"
 }
 
@@ -380,6 +437,59 @@ configure_local_dependency_stack() {
     echo "Firmware will use local ArduinoHA/WiFiManager/DFTE from $stack_root"
 }
 
+configure_session_platformio() {
+    [[ -n "$runtime_dir" && -n "$firmware_config" && -f "$firmware_config" ]] || {
+        echo "Missing private session firmware configuration" >&2
+        exit 1
+    }
+    [[ -z "$platformio_override" ]] || return 0
+    platformio_override="$PROJECT_DIR/platformio.local.ini.zz-ha-hardware-${compose_project}"
+    [[ ! -e "$platformio_override" ]] || { echo "Refusing to overwrite $platformio_override" >&2; exit 1; }
+    local stack_root=""
+    if [[ -n "$arduinoha_path" ]]; then
+        require_local_dependency_stack
+        stack_root="$(cd "$arduinoha_path/.." && pwd)"
+    fi
+    {
+        printf '%s\n' '; Generated by tools/ha-hardware; removed by down or the cleanup trap.'
+        printf '%s\n' '[platformio]'
+        printf 'build_dir = %s\n' "$runtime_dir/pio/build"
+        printf '%s\n' ''
+        if [[ -n "$stack_root" ]]; then
+            printf '%s\n' '[common]'
+            printf 'lib_extra_dirs =\n    %s\n' "$stack_root"
+            printf '%s\n' 'lib_deps ='
+            printf '%s\n' '    madpilot/mDNSResolver@^0.3.0'
+            printf '%s\n' '    knolleary/PubSubClient@2.8.0'
+            printf '%s\n' '    ESP32Async/ESPAsyncWebServer@^3.12.0'
+            printf '%s\n' '    bblanchon/ArduinoJson@^7.4.3'
+            printf '%s\n' ''
+        fi
+        printf '%s\n' '[env:esp8266_ha_e2e]'
+        printf '%s\n' 'build_flags ='
+        printf '%s\n' '    ${env:esp8266_no_web.build_flags}'
+        printf '%s\n' '    -DDEVICEFRAMEWORK_HA_E2E=1'
+        printf '    -include %s\n' "$firmware_config"
+        if [[ -n "$stack_root" ]]; then
+            printf '%s\n' 'lib_deps ='
+            printf '%s\n' '    ${env:esp8266.lib_deps}'
+            printf '%s\n' '    throwtheswitch/Unity@^2.6.1'
+        fi
+        printf '%s\n' ''
+        printf '%s\n' '[env:esp32_ha_e2e]'
+        printf '%s\n' 'build_flags ='
+        printf '%s\n' '    ${env:esp32.build_flags}'
+        printf '%s\n' '    -DDEVICEFRAMEWORK_HA_E2E=1'
+        printf '    -include %s\n' "$firmware_config"
+        if [[ -n "$stack_root" ]]; then
+            printf '%s\n' 'lib_deps ='
+            printf '%s\n' '    ${env:esp32.lib_deps}'
+            printf '%s\n' '    throwtheswitch/Unity@^2.6.1'
+        fi
+    } > "$platformio_override"
+    chmod 600 "$platformio_override"
+    [[ -z "$stack_root" ]] || echo "Firmware will use local ArduinoHA/WiFiManager/DFTE from $stack_root"
+}
 start_stack() {
     export AHA_TESTKIT_PATH="$testkit_path"
     export ARTIFACT_DIR="$artifact_dir"
@@ -474,11 +584,11 @@ run_hardware() {
     [[ "$platform" == "esp8266" || "$platform" == "esp32" ]] || usage
     [[ -n "$port" ]] || usage
     command -v pio >/dev/null || { echo "PlatformIO is required for run" >&2; return 1; }
-    configure_local_dependency_stack
+    configure_session_platformio
     local serial_log="$artifact_dir/serial.log"
     set +e
     "$PROJECT_DIR/scripts/test.sh" hardware --platform "$platform" --port "$port" \
-        --env-file "$temporary_env" --ha-e2e 2>&1 | tee "$serial_log"
+        --env-file "$temporary_env" --ha-e2e --config-header "$firmware_config" 2>&1 | tee "$serial_log"
     local test_status=${PIPESTATUS[0]}
     set -e
     [[ "$test_status" == 0 ]] || return "$test_status"
@@ -499,26 +609,193 @@ run_hardware() {
     printf '{"platform":"%s","device_id":"%s","arduinoha_path":"%s","ha_version":"%s","mqtt_bind_ip":"%s","ui_capture":%s}\n' \
         "$platform" "$device_id" "${arduinoha_path:-released-dependency}" "$ha_version" "$MQTT_BIND_IP" "$ui_capture" > "$artifact_dir/summary.json"
 }
+load_retained_session() {
+    local state_file="$DFHA_STATE_ROOT/session.env"
+    [[ -f "$state_file" ]] || { echo "No retained DeviceFramework HA session" >&2; return 1; }
+    # The state file is generated by write_state in a 0700 directory with 0600
+    # permissions; it contains paths only, never credentials.
+    # shellcheck disable=SC1090
+    source "$state_file"
+    [[ -z "$session_id" || "$session_id" == "$DFHA_SESSION" ]] || {
+        echo "Requested session $session_id does not match retained session $DFHA_SESSION" >&2
+        return 1
+    }
+    compose_project="$DFHA_PROJECT"
+    testkit_path="$DFHA_TESTKIT"
+    runtime_dir="$DFHA_RUNTIME_DIR"
+    temporary_env="$DFHA_TEMPORARY_ENV"
+    firmware_config="$DFHA_FIRMWARE_CONFIG"
+    platformio_override="$DFHA_PLATFORMIO_OVERRIDE"
+    arduinoha_path="$DFHA_ARDUINOHA_PATH"
+    ha_version="$DFHA_HA_VERSION"
+    artifact_dir="$DFHA_ARTIFACT_DIR"
+    connection_uuid="$DFHA_CONNECTION"
+    ap_interface="$DFHA_AP_INTERFACE"
+    MQTT_BIND_IP="${DFHA_MQTT_BIND_IP:-}"
+    HA_PORT="${DFHA_HA_PORT:-8125}"
+    TZ="${DFHA_TZ:-UTC}"
+    [[ -n "$MQTT_BIND_IP" ]] || {
+        echo "Retained session $DFHA_SESSION is missing its MQTT bind address; run ./tools/ha-hardware down and start a new session" >&2
+        return 1
+    }
+    export MQTT_BIND_IP HA_PORT TZ
+    export HA_VERSION="$ha_version"
+    export ARTIFACT_DIR="$artifact_dir"
+    uplink_interface="$DFHA_UPLINK_INTERFACE"
+    firewall="$DFHA_FIREWALL"
+    existing_firewall_connection="$DFHA_EXISTING_FIREWALL"
+    export AHA_TESTKIT_PATH="$testkit_path"
+    [[ -d "$runtime_dir" && -f "$temporary_env" && -f "$firmware_config" && -f "$platformio_override" ]] || {
+        echo "Retained session $DFHA_SESSION is incomplete; run ./tools/ha-hardware down and start a new session" >&2
+        return 1
+    }
+}
+
+copy_esp32_boot_app0() {
+    local pio_home="${PLATFORMIO_CORE_DIR:-${HOME}/.platformio}"
+    local source_file="$pio_home/packages/framework-arduinoespressif32/tools/partitions/boot_app0.bin"
+    local target_file="$runtime_dir/pio/build/esp32_ha_e2e/boot_app0.bin"
+    [[ -f "$source_file" ]] || {
+        echo "Missing ESP32 boot_app0.bin from the installed PlatformIO framework" >&2
+        return 1
+    }
+    cp "$source_file" "$target_file"
+    chmod 600 "$target_file"
+}
+
+compile_session_hardware() {
+    [[ "$platform" == "esp8266" || "$platform" == "esp32" ]] || usage
+    command -v pio >/dev/null || { echo "PlatformIO is required for compile" >&2; return 1; }
+    pio test -e "${platform}_ha_e2e" --filter test_ha_e2e --without-uploading --without-testing
+    if [[ "$platform" == "esp32" ]]; then
+        copy_esp32_boot_app0
+    fi
+    : > "$runtime_dir/.${platform}-ha-e2e.ready"
+    chmod 600 "$runtime_dir/.${platform}-ha-e2e.ready"
+    echo "Prepared immutable ${platform} HA E2E build for session $DFHA_SESSION"
+}
+
+flash_prepared_firmware() {
+    local build_dir="$runtime_dir/pio/build/${platform}_ha_e2e"
+    local FIRMWARE_ARTIFACT_DIR="$runtime_dir/pio/build" SERIAL_DEVICE="$port"
+    export FIRMWARE_ARTIFACT_DIR SERIAL_DEVICE
+    [[ -c "$port" ]] || { echo "Serial port is not a character device: $port" >&2; return 1; }
+    case "$platform" in
+        esp8266)
+            [[ -f "$build_dir/firmware.bin" ]] || { echo "Missing prepared ESP8266 firmware" >&2; return 1; }
+            compose run --rm --no-deps flasher \
+                --chip esp8266 --port "$port" --baud 460800 --before default-reset --after hard-reset \
+                write-flash --flash-size detect 0x0 /firmware/esp8266_ha_e2e/firmware.bin
+            ;;
+        esp32)
+            local artifact
+            for artifact in firmware.bin bootloader.bin partitions.bin boot_app0.bin; do
+                [[ -f "$build_dir/$artifact" ]] || { echo "Missing prepared ESP32 artifact: $artifact" >&2; return 1; }
+            done
+            compose run --rm --no-deps flasher \
+                --chip esp32 --port "$port" --baud 460800 --before default-reset --after hard-reset \
+                write-flash -z --flash-mode dio --flash-freq 40m --flash-size detect \
+                0x1000 /firmware/esp32_ha_e2e/bootloader.bin \
+                0x8000 /firmware/esp32_ha_e2e/partitions.bin \
+                0xe000 /firmware/esp32_ha_e2e/boot_app0.bin \
+                0x10000 /firmware/esp32_ha_e2e/firmware.bin
+            ;;
+        *) usage ;;
+    esac
+}
+
+run_worker() {
+    [[ "$platform" == "esp8266" || "$platform" == "esp32" ]] || usage
+    [[ "$worker_alias" =~ ^[A-Za-z0-9][A-Za-z0-9_-]*$ ]] || {
+        echo "--alias must contain only letters, digits, underscores, or hyphens" >&2
+        return 2
+    }
+    command -v docker >/dev/null || { echo "Docker is required for worker" >&2; return 1; }
+    command -v python3 >/dev/null || { echo "Python 3 is required for serial capture" >&2; return 1; }
+    [[ -f "$runtime_dir/.${platform}-ha-e2e.ready" ]] || {
+        echo "Prepare the ${platform} firmware with ./tools/ha-hardware compile --session $DFHA_SESSION --platform $platform first" >&2
+        return 1
+    }
+    local worker_dir="$artifact_dir/boards/$worker_alias"
+    [[ ! -e "$worker_dir" ]] || { echo "Worker artifact directory already exists: $worker_dir" >&2; return 1; }
+    mkdir -p "$worker_dir"
+    local flash_log="$worker_dir/flash.log"
+    local serial_log="$worker_dir/serial.log"
+    if ! flash_prepared_firmware >"$flash_log" 2>&1; then
+        cat "$flash_log"
+        return 1
+    fi
+    if ! python3 "$PROJECT_DIR/tools/capture-unity-serial.py" --port "$port" --output "$serial_log"; then
+        cat "$serial_log"
+        return 1
+    fi
+    local detected_device_id detected_ip revision
+    detected_device_id="$(sed -nE 's/^HA_E2E_DEVICE_ID=([^[:space:]]+)$/\1/p' "$serial_log" | tail -n 1)"
+    detected_ip="$(sed -nE 's/^HA_E2E_DEVICE_IP=([^[:space:]]+)$/\1/p' "$serial_log" | tail -n 1)"
+    [[ -n "$detected_device_id" && -n "$detected_ip" ]] || { echo "Hardware firmware did not emit its device ID and IPv4 address" >&2; return 1; }
+    revision="$(git -C "$arduinoha_path" rev-parse --short HEAD 2>/dev/null || printf '%s' released-dependency)"
+    printf '{"alias":"%s","platform":"%s","port":"%s","device_id":"%s","ip":"%s","firmware_revision":"%s","flash_log":"flash.log","serial_log":"serial.log","status":"ready"}\n' \
+        "$worker_alias" "$platform" "$port" "$detected_device_id" "$detected_ip" "$revision" > "$worker_dir/result.json"
+    chmod 600 "$worker_dir/result.json"
+    printf 'HA_E2E_DEVICE_ID=%s\n' "$detected_device_id"
+    printf 'HA_E2E_DEVICE_RESULT=%s\n' "$worker_dir/result.json"
+}
+
+verify_session_device() {
+    case "$verify_mode" in
+        hardware|ha-restart|mqtt-restart) ;;
+        *) echo "--mode must be hardware, ha-restart, or mqtt-restart" >&2; return 2 ;;
+    esac
+    export E2E_EXPECTED_DEVICE_ID="$device_id"
+    export E2E_MODE="$verify_mode"
+    compose run --rm --user "$(id -u):$(id -g)" verifier
+}
+
+restart_session_service() {
+    case "$restart_service" in
+        homeassistant) compose restart homeassistant ;;
+        mqtt) compose restart mqtt; wait_for_mqtt ;;
+        *) echo "--service must be homeassistant or mqtt" >&2; return 2 ;;
+    esac
+}
+run_session_visual() {
+    [[ "$ha_version" == "$HA_UI_VERSION" ]] || {
+        echo "visual requires a retained session started with --ha-version ui (pinned to $HA_UI_VERSION)" >&2
+        return 2
+    }
+    export E2E_EXPECTED_DEVICE_ID="$device_id"
+    run_visual_test_harness hardware
+}
 load_state_and_down() {
     local state_file="$DFHA_STATE_ROOT/session.env"
     [[ -f "$state_file" ]] || { echo "No retained DeviceFramework HA session" >&2; return 0; }
-    # This file is generated by write_state with 0600 permissions.
+    # This file is generated by write_state in a 0700 directory with 0600
+    # permissions; it contains paths only, never credentials.
     # shellcheck disable=SC1090
     source "$state_file"
     compose_project="$DFHA_PROJECT"
     testkit_path="$DFHA_TESTKIT"
     export AHA_TESTKIT_PATH="$testkit_path"
+    MQTT_BIND_IP="${DFHA_MQTT_BIND_IP:-127.0.0.1}"
+    HA_PORT="${DFHA_HA_PORT:-8125}"
+    TZ="${DFHA_TZ:-UTC}"
+    export MQTT_BIND_IP HA_PORT TZ
+    export HA_VERSION="$DFHA_HA_VERSION"
     connection_uuid="$DFHA_CONNECTION"
     ap_interface="$DFHA_AP_INTERFACE"
     uplink_interface="$DFHA_UPLINK_INTERFACE"
     firewall="$DFHA_FIREWALL"
     existing_firewall_connection="$DFHA_EXISTING_FIREWALL"
+    runtime_dir="$DFHA_RUNTIME_DIR"
+    platformio_override="$DFHA_PLATFORMIO_OVERRIDE"
     docker compose --project-name "$compose_project" -f "$DFHA_COMPOSE_FILE" down -v --remove-orphans || true
     if [[ -n "$connection_uuid" ]]; then
         "$NETWORK_HELPER" destroy --connection "$connection_uuid" --ap-interface "$ap_interface" \
             --uplink-interface "$uplink_interface" --firewall "$firewall" || true
     fi
     remove_existing_firewall || true
+    [[ -z "$platformio_override" ]] || rm -f "$platformio_override"
+    [[ -z "$runtime_dir" ]] || rm -rf "$runtime_dir"
     rm -f "$state_file"
 }
 
@@ -527,10 +804,15 @@ case "$command_name" in
         doctor
         ;;
     compile)
-        runtime_dir="$(mktemp -d "${TMPDIR:-/tmp}/deviceframework-ha-hardware.XXXXXX")"
-        trap cleanup EXIT INT TERM HUP
         acquire_compile_lock
-        compile_hardware_fixture
+        if [[ -n "$session_id" ]]; then
+            load_retained_session
+            compile_session_hardware
+        else
+            runtime_dir="$(mktemp -d "${TMPDIR:-/tmp}/deviceframework-ha-hardware.XXXXXX")"
+            trap cleanup EXIT INT TERM HUP
+            compile_hardware_fixture
+        fi
         ;;
     up|run|fixture)
         acquire_harness_lock
@@ -547,17 +829,44 @@ case "$command_name" in
             run_fixture
         else
             temporary_env="$runtime_dir/test.env"
+            firmware_config="$runtime_dir/firmware-config.h"
             start_network
+            write_firmware_config
+            configure_session_platformio
             start_stack
+            session_id="$compose_project"
             write_state
             if [[ "$command_name" == "run" ]]; then
                 run_hardware
             else
-                echo "Home Assistant stack retained. Visit http://127.0.0.1:${HA_PORT:-8125} and run ./tools/ha-hardware down when finished."
+                echo "Home Assistant stack retained as $session_id. Visit http://127.0.0.1:${HA_PORT:-8125}; compile workers with ./tools/ha-hardware compile --session $session_id --platform esp8266|esp32; run ./tools/ha-hardware down when finished."
             fi
         fi
         ;;
+    worker)
+        load_retained_session
+        run_worker
+        ;;
+    verify)
+        acquire_harness_lock
+        require_common
+        load_retained_session
+        verify_session_device
+        ;;
+    restart)
+        acquire_harness_lock
+        require_common
+        load_retained_session
+        restart_session_service
+        ;;
+    visual)
+        acquire_harness_lock
+        require_common
+        load_retained_session
+        run_session_visual
+        ;;
     down|reset)
+        acquire_harness_lock
         load_state_and_down
         ;;
     *)

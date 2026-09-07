@@ -1,18 +1,10 @@
 #pragma once
 
-// Board-free builds use these non-secret defaults. The hardware runner creates
-// the ignored test_config.generated.h from test/.env for the duration of a run.
-#if defined(__has_include)
-  #if __has_include("test_config.generated.h")
-    #include "test_config.generated.h"
-  #else
-    #define DEVICEFRAMEWORK_TEST_CONFIG_DEFAULTS 1
-  #endif
-#else
-  #define DEVICEFRAMEWORK_TEST_CONFIG_DEFAULTS 1
-#endif
-
-#ifdef DEVICEFRAMEWORK_TEST_CONFIG_DEFAULTS
+// Board-free builds use these non-secret defaults. Physical HA E2E builds
+// receive a private, session-scoped header through the compiler's -include
+// flag. Keeping credentials outside the checkout lets parallel workers share
+// one immutable configuration without racing on a generated source file.
+#ifndef DEVICEFRAMEWORK_HA_E2E_CONFIG_INCLUDED
   #define TEST_WIFI_SSID ""
   #define TEST_WIFI_PASSWORD ""
   #define TEST_MQTT_SERVER ""

@@ -8,7 +8,7 @@ usage() {
 Usage:
   ./scripts/test.sh compile  --platform esp8266|esp32 [--profile-fixture]
   ./scripts/test.sh examples --platform esp8266|esp32
-  ./scripts/test.sh hardware --platform esp8266|esp32 --port /dev/ttyUSB0 [--env-file test/.env] [--profile-fixture] [--ha-e2e]
+  ./scripts/test.sh hardware --platform esp8266|esp32 --port /dev/ttyUSB0 [--env-file test/.env] [--profile-fixture] [--ha-e2e] [--config-header PATH]
 EOF
     exit 2
 }
@@ -23,6 +23,7 @@ profile_fixture=false
 ha_e2e=false
 port=""
 env_file="test/.env"
+config_header=""
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --platform) [[ $# -ge 2 ]] || usage; platform="${2:-}"; shift 2 ;;
@@ -30,6 +31,7 @@ while [[ $# -gt 0 ]]; do
         --ha-e2e) ha_e2e=true; shift ;;
         --port) [[ $# -ge 2 ]] || usage; port="${2:-}"; shift 2 ;;
         --env-file) [[ $# -ge 2 ]] || usage; env_file="${2:-}"; shift 2 ;;
+        --config-header) [[ $# -ge 2 ]] || usage; config_header="${2:-}"; shift 2 ;;
         *) usage ;;
     esac
 done
@@ -38,6 +40,8 @@ done
 [[ "$mode" != "hardware" || "$profile_fixture" == "false" || -f "$env_file" ]] || usage
 [[ "$ha_e2e" == "false" || "$mode" == "hardware" ]] || { echo "--ha-e2e is only valid with hardware mode" >&2; exit 2; }
 [[ "$ha_e2e" == "false" || "$profile_fixture" == "false" ]] || { echo "--ha-e2e cannot be combined with --profile-fixture" >&2; exit 2; }
+[[ -z "$config_header" || "$ha_e2e" == "true" ]] || { echo "--config-header requires --ha-e2e" >&2; exit 2; }
+[[ -z "$config_header" || -f "$config_header" ]] || { echo "Missing private HA E2E configuration header: $config_header" >&2; exit 1; }
 
 # Test modes share PlatformIO's package manager and build output; hardware also
 # shares a generated credential header. Serialize them in this checkout so
@@ -113,6 +117,7 @@ fi
 
 escape_c_string() { printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g'; }
 write_config() {
+    [[ -z "$config_header" ]] || return 0
     printf '%s\n' '#pragma once' > "$config_file"
     printf '#define TEST_WIFI_SSID "%s"\n' "$(escape_c_string "$DEVICEFRAMEWORK_TEST_WIFI_SSID")" >> "$config_file"
     printf '#define TEST_WIFI_PASSWORD "%s"\n' "$(escape_c_string "$DEVICEFRAMEWORK_TEST_WIFI_PASSWORD")" >> "$config_file"
@@ -368,7 +373,7 @@ verify_web_interface() {
     fi
 }
 cleanup() {
-    rm -f "$config_file"
+    if [[ -z "$config_header" ]]; then rm -f "$config_file"; fi
     [[ -z "$hardware_profile" ]] || rm -f "$hardware_profile"
     [[ -z "$hardware_smoke_profile" ]] || rm -f "$hardware_smoke_profile"
 }
