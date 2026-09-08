@@ -1,5 +1,20 @@
 # Changelog
 
+## 2.8.2
+
+- Publish the tested stack of WiFiManager 3.2.3, DFTE 1.2.1, and ArduinoHA
+  3.2.1, so an application pins one DeviceFramework release rather than each
+  dependency separately.
+- Restructure the reader-facing framework, configuration, web UI, operations,
+  and development documentation around practical starting points and the
+  maintained-library boundary.
+- Add one interruptible board-free release runner, while making web-asset
+  checking, local test locks, and Home Assistant harness cleanup safe and
+  explicit during cancellation.
+- Make the version/release tools derive and validate the compatibility-table
+  row from `library.json`, preventing package metadata from drifting from the
+  documented tested stack.
+
 ## 2.8.1
 
 - Pin the published ArduinoHA 3.2.0 release, including bounded direct MQTT discovery writes, lower peak discovery-serialization heap use, and fail-safe recovery after an interrupted discovery stream.

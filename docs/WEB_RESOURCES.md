@@ -2,7 +2,10 @@
 
 DeviceFramework's built-in web interface is designed to remain responsive when a small board is busy. It bounds streamed HTTP work and WebSerial clients before the framework starts, protecting ordinary browser use within the device's measured memory headroom.
 
-Use the platform-aware defaults unless a device has a measured reason to differ. Configure a copy before `DeviceFramework::setup()`:
+Most sketches should keep the platform-aware defaults. Change a limit only
+after measuring that specific device under simultaneous browser and WebSerial
+use. Configure a copy before `DeviceFramework::setup()` when it has a measured
+reason to differ:
 
 ```cpp
 #include <DeviceFramework.h>
@@ -42,7 +45,10 @@ The normal new-work watermark applies to streamed HTTP responses. A WebSerial up
 
 When a new WebSerial client is refused for capacity or memory pressure, the connection receives WebSocket close code `1013` ("try again later"). It is not reported as an authentication failure.
 
-WebSerial carries logs, so its queue drops log data rather than repeatedly closing and reconnecting a client when the queue is full. This is deliberate: a live device is more valuable than a complete debug transcript under pressure.
+WebSerial carries logs, so its queue drops log data rather than repeatedly
+closing and reconnecting a client when the queue is full. Keeping a live device
+responsive is more important than retaining a complete debug transcript under
+pressure.
 
 ## Observability
 

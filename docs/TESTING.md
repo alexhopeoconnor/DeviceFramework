@@ -1,5 +1,16 @@
 # Testing
 
+Run the complete board-free local suite as one interruptible command:
+
+```bash
+./scripts/test-nonhardware.sh
+```
+
+It checks generated web assets once, then runs both consumer-build fixtures on
+ESP8266 and ESP32, all examples, documentation, and the Docker-backed Home
+Assistant visual fixture. `Ctrl-C` stops this single sequence without starting
+a later check. The individual commands below remain useful while iterating.
+
 `compile` builds a minimal consuming application that declares only
 DeviceFramework, so it proves the released package manifest resolves every
 library without an attached microcontroller. Run the normal and safe profiled fixtures for both supported targets before a release:

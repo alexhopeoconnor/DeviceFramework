@@ -17,6 +17,8 @@
 | Compile without a board or run a LAN hardware suite | [Testing](TESTING.md) |
 | Work on this library or publish a GitHub release | [Development and releases](DEVELOPMENT.md) |
 
-The framework’s release history is in the [changelog](../CHANGELOG.md). Application firmware should depend on one released DeviceFramework tag rather than declaring its internal dependencies separately.
+The framework’s release history is in the [changelog](../CHANGELOG.md). A sketch
+normally lists DeviceFramework alone; its package manifest brings in the tested
+WiFiManager, DFTE, and ArduinoHA releases.
 
 Back to the [project overview](../README.md).

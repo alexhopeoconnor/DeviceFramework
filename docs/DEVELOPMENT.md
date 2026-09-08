@@ -108,7 +108,9 @@ application dependency needs to change.
    ./scripts/bump-version.sh vMAJOR.MINOR.PATCH
    ```
 
-3. Replace the generated changelog TODO with the release summary. Update the compatibility table only when a pinned dependency or target contract changes; update guides when behaviour changes.
+3. Replace the generated changelog TODO with the release summary. The version
+   script updates the current compatibility row from `library.json`; update
+   guides when behaviour changes.
 4. Run the four compile checks above; run the hardware suite when its covered
    behavior changed.
 5. Commit the release preparation, then validate and create the annotated tag:

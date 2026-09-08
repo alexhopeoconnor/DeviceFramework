@@ -48,7 +48,9 @@ for required in \
     fi
 done
 
-"$root/tools/check-web-assets.sh"
+if [[ "${DEVICEFRAMEWORK_SKIP_WEB_ASSET_CHECK:-0}" != "1" ]]; then
+    "$root/tools/check-web-assets.sh"
+fi
 
 while IFS= read -r example; do
     for required in README.md platformio.ini; do

@@ -13,8 +13,6 @@ EOF
     exit 2
 }
 
-"$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/tools/check-web-assets.sh"
-
 mode="${1:-}"
 [[ "$mode" == "compile" || "$mode" == "examples" || "$mode" == "hardware" ]] || usage
 shift
@@ -43,12 +41,30 @@ done
 [[ -z "$config_header" || "$ha_e2e" == "true" ]] || { echo "--config-header requires --ha-e2e" >&2; exit 2; }
 [[ -z "$config_header" || -f "$config_header" ]] || { echo "Missing private HA E2E configuration header: $config_header" >&2; exit 1; }
 
+on_interrupt() {
+    local signal="$1"
+    trap - INT TERM
+    printf '\nDeviceFramework %s test interrupted by %s; exiting without starting another test.\n' "$mode" "$signal" >&2
+    exit 130
+}
+trap 'on_interrupt INT' INT
+trap 'on_interrupt TERM' TERM
+
+# The aggregate runner verifies generated web assets once before it invokes
+# individual checks. Direct calls retain the normal safety check.
+if [[ "${DEVICEFRAMEWORK_SKIP_WEB_ASSET_CHECK:-0}" != "1" ]]; then
+    "$project_dir/tools/check-web-assets.sh"
+fi
+
 # Test modes share PlatformIO's package manager and build output; hardware also
 # shares a generated credential header. Serialize them in this checkout so
 # package updates and temporary configuration cannot race an active test.
 hardware_lock_file="${TMPDIR:-/tmp}/deviceframework-hardware-test.lock"
 exec {hardware_lock_fd}>"$hardware_lock_file"
-flock "$hardware_lock_fd"
+if ! flock -n "$hardware_lock_fd"; then
+    echo "Another DeviceFramework test is active; waiting for its PlatformIO build state. Press Ctrl-C to cancel safely." >&2
+    flock "$hardware_lock_fd"
+fi
 
 if [[ "$mode" == "examples" ]]; then
     mapfile -t examples < <(find examples -mindepth 1 -maxdepth 1 -type d -name '[0-9][0-9]-*' -print | sort)
@@ -377,7 +393,7 @@ cleanup() {
     [[ -z "$hardware_profile" ]] || rm -f "$hardware_profile"
     [[ -z "$hardware_smoke_profile" ]] || rm -f "$hardware_smoke_profile"
 }
-trap cleanup EXIT INT TERM
+trap cleanup EXIT
 write_config
 if [[ "$profile_fixture" == "true" ]]; then
     write_hardware_profile

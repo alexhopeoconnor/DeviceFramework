@@ -1,6 +1,14 @@
 # Web UI and provisioning branding
 
-`DeviceFrameworkUIConfig` gives a firmware one setup-time product presentation configuration for two existing interfaces:
+Configure a product name, logo, colours, and optional About details once before
+setup. `DeviceFrameworkUIConfig` applies them to DeviceFramework's existing web
+interface and passes compatible presentation settings to WiFiManager's existing
+provisioning portal.
+
+## Configure once before setup
+
+UI values are non-owning static data in RAM or PROGMEM. Configure them before
+`beforeSetup()` and `setup()`:
 
 ```text
 DeviceFrameworkUIConfig
@@ -8,13 +16,15 @@ DeviceFrameworkUIConfig
 └── private adapter → WiFiManagerPortalConfig → existing provisioning portal
 ```
 
-DeviceFramework owns product identity, the existing web header, and web-theme tokens. WiFiManager owns provisioning routes, forms, navigation, captive behavior, and its portal API. DeviceFramework uses only WiFiManager public `setPortalConfig()`; WiFiManager never depends on DeviceFramework.
+DeviceFramework owns product identity, the existing web header, and web-theme
+tokens. WiFiManager owns provisioning routes, forms, navigation, captive
+behavior, and its browser protocol. DeviceFramework uses only WiFiManager's
+public `setPortalConfig()` API; WiFiManager never depends on DeviceFramework.
 
-This is presentation-only source configuration. It creates no routes, consumer-defined pages, arbitrary HTML surfaces, stored fields, profile values, or schema migrations. A firmware may opt into one fixed framework-owned **About** section with a short summary and up to two static HTTPS links.
-
-## Configure once before setup
-
-UI values are non-owning static data in RAM or PROGMEM. Configure them before `beforeSetup()` and `setup()`:
+This is source-owned presentation, not deployment configuration. It does not
+create routes, custom pages, stored fields, profile values, or schema
+migrations. A firmware may opt into one fixed framework-owned **About** section
+with a short summary and up to two static HTTPS links.
 
 ```cpp
 #include <DeviceFramework.h>
@@ -58,7 +68,13 @@ void setup() {
 }
 ```
 
-The small `ui` object may be local **inside a short configuration helper** because the fields it refers to are static. The framework copies pointer-sized values, validates semantic theme values, prepares bounded escaped/style text before WiFi and web services start, and locks configuration before WiFiManager or web services start. On ESP8266, do not keep a large local UI configuration live across `DeviceFramework::setup()` in the same long-running `setup()` frame: the Arduino continuation stack is deliberately small. `setUIConfig()` returns `false` after setup has begun.
+The small `ui` object may be local **inside a short configuration helper**
+because the fields it refers to are static. The framework copies pointer-sized
+values, validates theme values, prepares bounded escaped/style text before WiFi
+and web services start, and then locks configuration. On ESP8266, do not keep a
+large local UI configuration live across `DeviceFramework::setup()` in the same
+long-running `setup()` frame: the Arduino continuation stack is small.
+`setUIConfig()` returns `false` after setup has begun.
 
 ## What appears where
 
@@ -92,7 +108,11 @@ ui.about.primaryLink = {
 };
 ```
 
-Links are optional, but a label and URL must be provided together. URLs must use `https://` and are validated before setup; labels and summary are HTML-escaped once before WiFi and web services begin. The resulting anchors always use `target="_blank" rel="noopener noreferrer"`. This deliberately is not a custom-page or arbitrary-markup API.
+Links are optional, but a label and URL must be provided together. URLs must use
+`https://` and are validated before setup; labels and summary are HTML-escaped
+once before WiFi and web services begin. The resulting anchors always use
+`target="_blank" rel="noopener noreferrer"`. The framework supplies this fixed
+About section; it is not a custom-page or arbitrary-markup API.
 
 ## Built-in pages and browser work
 

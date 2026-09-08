@@ -2,7 +2,7 @@
 
 DeviceFramework starts the shared device services in a fixed order. A sketch supplies its identity, setup-time declarations, hardware policy, and the non-blocking work it performs after each framework loop.
 
-## The contract
+## Typical firmware startup
 
 1. Make any hazardous output safe before networking or configuration can run.
 2. Configure the firmware identity and source-owned presentation policy.

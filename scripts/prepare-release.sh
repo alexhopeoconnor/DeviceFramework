@@ -36,6 +36,26 @@ validate_reference() {
 validate_reference README.md
 validate_reference docs/GETTING_STARTED.md
 
+dependency_version() {
+    local name="$1"
+    sed -n -E '/"name": "'"$name"'"/,/"version":/s/.*#v([0-9]+\.[0-9]+\.[0-9]+).*/\1/p' \
+        library.json | head -n 1
+}
+
+series="${version%.*}"
+wifi_version="$(dependency_version WiFiManager)"
+dfte_version="$(dependency_version DeviceFrameworkTemplateEngine)"
+arduinoha_version="$(dependency_version home-assistant-integration)"
+[[ -n "$wifi_version" && -n "$dfte_version" && -n "$arduinoha_version" ]] || {
+    echo "Could not read the maintained dependency versions from library.json." >&2
+    exit 1
+}
+expected_compatibility_row="| ${series}.x | ${wifi_version} | ${dfte_version} | ${arduinoha_version} | ESP8266, ESP32 |"
+grep -Fqx "$expected_compatibility_row" docs/COMPATIBILITY.md || {
+    echo "docs/COMPATIBILITY.md is missing: $expected_compatibility_row" >&2
+    exit 1
+}
+
 git diff --check
 package_dir="$(mktemp -d)"
 trap 'rm -rf "$package_dir"' EXIT

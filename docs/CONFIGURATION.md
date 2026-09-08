@@ -8,11 +8,24 @@ Each consuming firmware declares three separate values in `include/FirmwareIdent
 
 Adding, removing, or reordering parameter IDs does not need a schema bump: V4 storage is keyed by parameter ID. Increase the schema only for a rename, conversion, clamp, or another incompatible interpretation.
 
-## Configuration lifecycle
+## Choose the normal path
+
+| Situation | Build choice | Result |
+| --- | --- | --- |
+| New board | No local profile | WiFiManager collects Wi-Fi and device settings interactively. |
+| Repeatable deployment | `bootstrap` profile | Seeds explicitly supplied values on an eligible new or recovery record. |
+| Managed update | New `reconcile` profile revision | Updates only the values named in that profile. |
+| Normal restart or repeat upload | Any ordinary firmware image | Keeps matching saved configuration, including portal and Home Assistant edits. |
+
+Most firmware needs no local profile. A profile is a build input for preparing a
+specific device; it is not a second configuration database.
+
+## How values are applied
 
 Configuration has one normal runtime owner: the current V4 storage record. Framework and sketch parameter defaults are used only while that record is absent or when a newly registered parameter has no stored value. Portal, web, API, and Home Assistant updates change that record; they are not reapplied from a profile on an ordinary reboot.
 
-A selected local profile is a firmware-build input with a deliberately narrower role. PlatformIO compiles it into the image, DeviceFramework evaluates it once at boot, and editing the JSON later has no effect until that new image is uploaded. The order is therefore:
+A selected local profile is compiled into the image and evaluated at boot.
+Editing its JSON has no effect until that new image is uploaded. The order is:
 
 ```cpp
 registerParametersWithDefaults();  // framework and sketch defaults
@@ -39,7 +52,7 @@ your-firmware/
 
 The ignored `platformio.local.ini.<machine>` only selects a local profile or OTA endpoint; real values remain in the JSON profile. A consuming project may point DeviceFramework at a local checkout through `lib_extra_dirs`; when it does not, PlatformIO resolves the tracked Git-tag dependencies. Keep coordinated untagged dependency work in the framework root project. DeviceFramework's package hook uses PlatformIO/SCons and Python’s standard library to generate a C++ header only under `.pio`. Sketches do not declare `extra_scripts`, manage Python, or parse credentials. With no `custom_device_profile`, the hook does nothing.
 
-## Profile contract
+## Profile format and validation
 
 The compiler requires `format: 2` and rejects unknown keys at every profile level. Every consumed string must contain printable ASCII. `application` and `profile.id` must be non-empty; `profile.revision` is an integer from 1 through 4,294,967,295; and `profile.policy` is either `bootstrap` or `reconcile`. `wifi` is optional. When present, `wifi.profiles` contains one primary profile and at most one fallback; SSIDs are 1–32 characters and Wi-Fi passwords are 0–64 characters. `parameters` is optional, but its IDs are alphanumeric and its values use the same printable-ASCII rule. `device_password` is optional; when supplied, it must be empty or 8–31 characters.
 
@@ -76,7 +89,10 @@ A profile overrides only the parameter IDs it names. On a new or reset device, o
 
 ## Reconciliation updates
 
-`reconcile` applies supplied managed values once when either the profile ID or revision changes. It intentionally preserves every omitted value. To roll out a required replacement for an existing portal-managed setting, include that field and increase the revision:
+`reconcile` applies supplied managed values once when either the profile ID or
+revision changes. It preserves every omitted value. To roll out a required
+replacement for an existing portal-managed setting, include that field and
+increase the revision:
 
 ```json
 {

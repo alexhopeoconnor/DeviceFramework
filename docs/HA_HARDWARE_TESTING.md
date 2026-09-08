@@ -47,6 +47,11 @@ Harness sessions and physical/compile operations each take a local advisory
 lock. A second invocation in the same checkout waits safely instead of racing a
 Docker broker, generated test header, or PlatformIO build tree.
 
+`Ctrl-C` reports that cleanup is running, then removes any temporary resources
+created by a non-retained command. If the terminal or host is forcibly stopped
+before cleanup can run, use `./tools/ha-hardware down` before starting another
+retained session.
+
 ## Run on the existing Wi-Fi network
 
 Create the ignored `test/.env` from its example and provide the Wi-Fi SSID and

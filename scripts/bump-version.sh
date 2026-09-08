@@ -14,6 +14,37 @@ version="${tag#v}"
 repo_url="https://github.com/alexhopeoconnor/DeviceFramework.git"
 reference_files=(README.md docs/GETTING_STARTED.md)
 
+dependency_version() {
+    local name="$1"
+    sed -n -E '/"name": "'"$name"'"/,/"version":/s/.*#v([0-9]+\.[0-9]+\.[0-9]+).*/\1/p' \
+        "$root/library.json" | head -n 1
+}
+
+update_compatibility_row() {
+    local series="${version%.*}"
+    local wifi_version dfte_version arduinoha_version row temporary
+    wifi_version="$(dependency_version WiFiManager)"
+    dfte_version="$(dependency_version DeviceFrameworkTemplateEngine)"
+    arduinoha_version="$(dependency_version home-assistant-integration)"
+    [[ -n "$wifi_version" && -n "$dfte_version" && -n "$arduinoha_version" ]] || {
+        echo "Could not read the maintained dependency versions from library.json." >&2
+        exit 1
+    }
+    row="| ${series}.x | ${wifi_version} | ${dfte_version} | ${arduinoha_version} | ESP8266, ESP32 |"
+    temporary="$(mktemp)"
+    awk -v series="$series" -v row="$row" '
+        $0 ~ "^\\| " series "\\.x \\|" { print row; written = 1; next }
+        !written && $0 ~ /^\| [0-9]+\.[0-9]+\.x \|/ { print row; written = 1 }
+        { print }
+        END { if (!written) exit 1 }
+    ' "$root/docs/COMPATIBILITY.md" > "$temporary" || {
+        rm -f "$temporary"
+        echo "Could not update docs/COMPATIBILITY.md." >&2
+        exit 1
+    }
+    mv "$temporary" "$root/docs/COMPATIBILITY.md"
+}
+
 current_version="$(sed -n 's/.*"version": "\([^"]*\)".*/\1/p' "$root/library.json" | head -n 1)"
 [[ "$current_version" != "$version" ]] || {
     echo "library.json already declares $version; choose a new version." >&2
@@ -32,6 +63,8 @@ for file in "${reference_files[@]}"; do
     sed -i -E "s|${repo_url}#v[0-9]+\.[0-9]+\.[0-9]+|${repo_url}#v${version}|g" "$root/$file"
 done
 
+update_compatibility_row
+
 temp_file="$(mktemp)"
 trap 'rm -f "$temp_file"' EXIT
 {
@@ -45,5 +78,5 @@ trap 'rm -f "$temp_file"' EXIT
 } > "$temp_file"
 mv "$temp_file" "$root/CHANGELOG.md"
 
-echo "Updated DeviceFramework declarations and canonical install references to $tag."
+echo "Updated DeviceFramework declarations, compatibility row, and canonical install references to $tag."
 echo "Replace the generated changelog TODO with the release summary, then run scripts/check-docs.sh and scripts/prepare-release.sh $tag."

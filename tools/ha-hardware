@@ -62,6 +62,8 @@ keep=false
 ui_capture=false
 update_snapshots=false
 session_persisted=false
+interrupted=false
+cleanup_installed=false
 session_id=""
 worker_alias=""
 device_id=""
@@ -220,7 +222,7 @@ acquire_harness_lock() {
     chmod 700 "$DFHA_STATE_ROOT"
     exec {harness_lock_fd}>"$DFHA_STATE_ROOT/harness.lock"
     if ! flock -n "$harness_lock_fd"; then
-        echo "Another DeviceFramework HA harness session is active; waiting for it to finish." >&2
+        echo "Another DeviceFramework HA harness session is active; waiting for it to finish. Press Ctrl-C to cancel safely." >&2
         flock "$harness_lock_fd"
     fi
 }
@@ -233,7 +235,7 @@ acquire_compile_lock() {
     local lock_file="${TMPDIR:-/tmp}/deviceframework-hardware-test.lock"
     exec {compile_lock_fd}>"$lock_file"
     if ! flock -n "$compile_lock_fd"; then
-        echo "Another DeviceFramework hardware test or HA compile is active; waiting for it to finish." >&2
+        echo "Another DeviceFramework hardware test or HA compile is active; waiting for it to finish. Press Ctrl-C to cancel safely." >&2
         flock "$compile_lock_fd"
     fi
 }
@@ -361,8 +363,38 @@ cleanup() {
         [[ -z "$runtime_dir" ]] || rm -rf "$runtime_dir"
     fi
     [[ -z "$compile_config" ]] || rm -f "$compile_config"
+    if [[ "$interrupted" == true ]]; then
+        echo "Home Assistant test harness cleanup finished." >&2
+    fi
     exit "$result"
 }
+
+on_interrupt() {
+    local signal="$1"
+    trap - INT TERM HUP
+    interrupted=true
+    if [[ "$cleanup_installed" != true ]]; then
+        printf '\nHome Assistant test harness interrupted by %s while waiting; no temporary resources were created.\n' "$signal" >&2
+        exit 130
+    fi
+    printf '\nHome Assistant test harness interrupted by %s; cleaning up temporary local resources...\n' "$signal" >&2
+    exit 130
+}
+
+install_cleanup_traps() {
+    cleanup_installed=true
+    trap cleanup EXIT
+    trap 'on_interrupt INT' INT
+    trap 'on_interrupt TERM' TERM
+    trap 'on_interrupt HUP' HUP
+}
+
+# Locks are acquired before a command has a runtime directory to clean. Install
+# the signal handler here as well, so Ctrl-C while waiting is immediate and
+# does not leave an apparently unresponsive command.
+trap 'on_interrupt INT' INT
+trap 'on_interrupt TERM' TERM
+trap 'on_interrupt HUP' HUP
 
 start_network() {
     if [[ "$network" == "managed-ap" ]]; then
@@ -810,7 +842,7 @@ case "$command_name" in
             compile_session_hardware
         else
             runtime_dir="$(mktemp -d "${TMPDIR:-/tmp}/deviceframework-ha-hardware.XXXXXX")"
-            trap cleanup EXIT INT TERM HUP
+            install_cleanup_traps
             compile_hardware_fixture
         fi
         ;;
@@ -822,7 +854,7 @@ case "$command_name" in
         artifact_dir="$PROJECT_DIR/artifacts/ha-hardware/$(date -u +%Y%m%dT%H%M%SZ)"
         mkdir -p "$artifact_dir"
         compose_project="dfha$(date +%s)"
-        trap cleanup EXIT INT TERM HUP
+        install_cleanup_traps
         if [[ "$command_name" == "fixture" ]]; then
             MQTT_BIND_IP=127.0.0.1
             start_stack

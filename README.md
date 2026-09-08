@@ -24,8 +24,6 @@ void loop() {
 
 Build [Portal First](examples/01-portal-first/) for the complete project. On a clean board it starts the WiFiManager provisioning portal. After you enter valid Wi-Fi details, the device saves them and restarts; later boots reconnect and run mDNS, OTA, MQTT, and—when built with `ENABLE_WEB_INTERFACE`—the existing local web interface. This skeleton provides the shared lifecycle only: add your own parameters, sensors, controls, and Home Assistant entities for device-specific behaviour.
 
-- **Measured web resilience:** platform-aware response and WebSerial limits keep a busy ESP8266 responsive while remaining configurable by a consuming sketch.
-
 ## What it provides
 
 - **One device lifecycle:** configuration, provisioning, Wi-Fi, mDNS, OTA, MQTT, Home Assistant, and the existing web UI work together without repeated sketch boilerplate.
@@ -34,6 +32,19 @@ Build [Portal First](examples/01-portal-first/) for the complete project. On a c
 - **One optional device password:** the portal, OTA, authenticated web interface, and WebSerial use one active stored value.
 - **Private deployment profiles:** an ignored local JSON profile can seed a new device without putting credentials in source control.
 - **Product presentation:** `DeviceFrameworkUIConfig` brands the existing web UI and provisioning portal with one source-level configuration.
+- **Measured web resilience:** platform-aware response and WebSerial limits keep a busy ESP8266 responsive while remaining configurable by a sketch.
+
+## Built with maintained libraries
+
+DeviceFramework composes tested releases of:
+
+- [WiFiManager](https://github.com/alexhopeoconnor/WiFiManager) — self-hosted Wi-Fi provisioning.
+- [DFTE](https://github.com/alexhopeoconnor/DFTE) — bounded streaming templates for embedded web responses.
+- [Arduino Home Assistant integration](https://github.com/alexhopeoconnor/arduino-home-assistant) — MQTT discovery and entities.
+
+A firmware normally declares **DeviceFramework only**. Its package manifest
+resolves compatible library releases; see [Compatibility](docs/COMPATIBILITY.md)
+for the exact mapping.
 
 ## Choose an example
 
@@ -49,10 +60,12 @@ Build [Portal First](examples/01-portal-first/) for the complete project. On a c
 
 ```ini
 lib_deps =
-    DeviceFramework=https://github.com/alexhopeoconnor/DeviceFramework.git#v2.8.1
+    DeviceFramework=https://github.com/alexhopeoconnor/DeviceFramework.git#v2.8.2
 ```
 
-PlatformIO clones the repository and checks out the release tag after `#`. The package resolves the compatible WiFiManager, DFTE, ArduinoHA, web, and target-specific dependencies.
+PlatformIO clones the repository and checks out the release tag after `#`. The
+package resolves the compatible libraries, web server, and target-specific
+dependencies.
 
 See the [documentation index](docs/README.md) for the complete map, including
 [getting started](docs/GETTING_STARTED.md), [configuration](docs/CONFIGURATION.md),
@@ -61,8 +74,8 @@ and [examples](examples/README.md).
 
 ## Documentation by task
 
-The starter sketch is intentionally small; these guides make its contracts and
-extension points explicit.
+Start with the small sketch above, then follow the guide that matches what you
+want to add.
 
 | When you need to… | Read |
 | --- | --- |
