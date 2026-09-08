@@ -103,11 +103,13 @@ services:
       HA_URL: http://homeassistant:8123
       UI_MANIFEST: /state/ui-manifest.json
       UI_RESULT: /artifacts/ui-result.json
+      UI_CAPTURE_DIR: /artifacts/screenshots
       ARTIFACT_DIR: /artifacts
       HA_TEST_USERNAME: deviceframework-hardware
       HA_TEST_PASSWORD: deviceframework-hardware-password
       UI_EXPECT_INTERACTION: ${UI_EXPECT_INTERACTION:-0}
       PLAYWRIGHT_UPDATE_SNAPSHOTS: ${PLAYWRIGHT_UPDATE_SNAPSHOTS:-0}
+      HA_UI_VERSION: ${HA_UI_VERSION:?Set HA_UI_VERSION from ui/visual-versions.env}
       HOME: /tmp
       XDG_CACHE_HOME: /tmp
     volumes:

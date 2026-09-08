@@ -1,4 +1,5 @@
 .pio/
+platformio.local.ini
 platformio.local.ini.*
 test/.env
 test/test_device_framework/test_config.generated.h
@@ -11,3 +12,4 @@ scripts/endpoint-fetcher/obj/
 *.tar.gz
 __pycache__/
 artifacts/ha-hardware/
+artifacts/device-ui/

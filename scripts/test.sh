@@ -6,7 +6,7 @@ cd "$project_dir"
 usage() {
     cat <<'EOF'
 Usage:
-  ./scripts/test.sh compile  --platform esp8266|esp32 [--profile-fixture]
+  ./scripts/test.sh compile  --platform esp8266|esp32 [--profile-fixture] [--release]
   ./scripts/test.sh examples --platform esp8266|esp32
   ./scripts/test.sh hardware --platform esp8266|esp32 --port /dev/ttyUSB0 [--env-file test/.env] [--profile-fixture] [--ha-e2e] [--config-header PATH]
 EOF
@@ -22,6 +22,7 @@ ha_e2e=false
 port=""
 env_file="test/.env"
 config_header=""
+release=false
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --platform) [[ $# -ge 2 ]] || usage; platform="${2:-}"; shift 2 ;;
@@ -30,6 +31,7 @@ while [[ $# -gt 0 ]]; do
         --port) [[ $# -ge 2 ]] || usage; port="${2:-}"; shift 2 ;;
         --env-file) [[ $# -ge 2 ]] || usage; env_file="${2:-}"; shift 2 ;;
         --config-header) [[ $# -ge 2 ]] || usage; config_header="${2:-}"; shift 2 ;;
+        --release) release=true; shift ;;
         *) usage ;;
     esac
 done
@@ -37,6 +39,7 @@ done
 [[ "$mode" != "hardware" || -n "$port" ]] || usage
 [[ "$mode" != "hardware" || "$profile_fixture" == "false" || -f "$env_file" ]] || usage
 [[ "$ha_e2e" == "false" || "$mode" == "hardware" ]] || { echo "--ha-e2e is only valid with hardware mode" >&2; exit 2; }
+[[ "$release" == "false" || "$mode" == "compile" ]] || { echo "--release is only valid with compile mode" >&2; exit 2; }
 [[ "$ha_e2e" == "false" || "$profile_fixture" == "false" ]] || { echo "--ha-e2e cannot be combined with --profile-fixture" >&2; exit 2; }
 [[ -z "$config_header" || "$ha_e2e" == "true" ]] || { echo "--config-header requires --ha-e2e" >&2; exit 2; }
 [[ -z "$config_header" || -f "$config_header" ]] || { echo "Missing private HA E2E configuration header: $config_header" >&2; exit 1; }
@@ -80,12 +83,28 @@ if [[ "$mode" == "examples" ]]; then
 fi
 
 environment="$platform"
+consumer_config_args=()
+if [[ "$release" == "true" ]]; then
+    # PlatformIO resolves --project-conf before it applies -d, so this must
+    # be an absolute path rather than a name relative to the consumer project.
+    consumer_config_args=(-c "$project_dir/test/compile-project/platformio.release.ini")
+fi
 refresh_clean_consumer_dependency() {
     local target_environment="$1"
-    local cached_library="test/compile-project/.pio/libdeps/${target_environment}/DeviceFramework"
-    [[ -d "$cached_library" || -e "${cached_library}.pio-link" ]] || return 0
-    pio pkg uninstall -d test/compile-project -e "$target_environment" \
-        -l DeviceFramework --no-save --skip-dependencies >/dev/null
+    local dependency cached_library
+    # The consumer fixture is used both for release-tag verification and
+    # ignored sibling-worktree development. Remove all direct first-party
+    # packages so PlatformIO resolves the config selected for this invocation;
+    # otherwise a cached WiFiManager/DFTE/ArduinoHA tag can mask a local change.
+    for dependency in DeviceFramework WiFiManager DeviceFrameworkTemplateEngine home-assistant-integration; do
+        cached_library="test/compile-project/.pio/libdeps/${target_environment}/${dependency}"
+        [[ -d "$cached_library" || -e "${cached_library}.pio-link" ]] || continue
+        # `pio pkg uninstall` has no --project-conf option.  It only removes
+        # the named cached package; the following `pio run` is what resolves
+        # the selected release or local project configuration afresh.
+        pio pkg uninstall -d test/compile-project -e "$target_environment" \
+            -l "$dependency" --no-save --skip-dependencies >/dev/null
+    done
 }
 
 [[ "$profile_fixture" == "true" ]] && environment="${platform}_profile"
@@ -104,14 +123,14 @@ if [[ "$mode" == "compile" ]]; then
     fi
 
     for consumer_environment in "${consumer_environments[@]}"; do
-        pio run -d test/compile-project -e "$consumer_environment" -t clean >/dev/null
+        pio run -d test/compile-project "${consumer_config_args[@]}" -e "$consumer_environment" -t clean >/dev/null
         refresh_clean_consumer_dependency "$consumer_environment"
-        pio run -d test/compile-project -e "$consumer_environment"
+        pio run -d test/compile-project "${consumer_config_args[@]}" -e "$consumer_environment"
     done
     if [[ "$profile_fixture" == "false" && "$platform" == "esp8266" ]]; then
         # Prove that callers can omit the optional local web interface.
         refresh_clean_consumer_dependency esp8266_no_web
-        pio run -d test/compile-project -e esp8266_no_web
+        pio run -d test/compile-project "${consumer_config_args[@]}" -e esp8266_no_web
     fi
     exit 0
 fi

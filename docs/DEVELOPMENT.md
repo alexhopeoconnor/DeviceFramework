@@ -81,6 +81,12 @@ Avahi or mDNS is unavailable.
 
 For an end-to-end local Home Assistant run (board -> Wi-Fi -> Mosquitto -> HA and HA commands back to the board), use the [local HA hardware test harness](HA_HARDWARE_TESTING.md). It creates and removes Docker state automatically, can bind to the existing Wi-Fi network without sudo, and has an opt-in NetworkManager USB-adapter AP mode when a dedicated adapter is available. For several boards, retain one session, compile each target once, and run its Docker-contained USB workers in parallel.
 
+To inspect the browser-facing DeviceFramework-to-WiFiManager integration on a
+board, use `./tools/device-ui-hardware`. It uses only an explicitly named
+secondary Wi-Fi adapter for the portal and will refuse the primary/default-route
+adapter. The [testing guide](TESTING.md#browser-evidence-on-a-real-board) has the
+complete command and artifact contract.
+
 ## Work against sibling checkouts
 
 The consumer compile fixture is intentionally a separate PlatformIO project. If
@@ -93,11 +99,14 @@ cp test/compile-project/platformio.local.example.ini test/compile-project/platfo
 
 Released builds use public Git tags. For coordinated local library development, copy
 [`platformio.local.example.ini`](../platformio.local.example.ini) to a file such
-as `platformio.local.ini.alex`, update its `lib_extra_dirs` path, and leave that
-file untracked. It discovers sibling source trees while the explicit `lib_deps`
-list supplies only their third-party dependencies. `platformio.ini` loads matching
-`platformio.local.ini.*` files when present, so no tracked configuration or
-application dependency needs to change.
+as `platformio.local.ini.alex`, update its explicit relative `symlink://` paths,
+and leave that file untracked. The first-party entries explicitly replace the
+package-manifest tags and ensure their transitive dependencies resolve. Do not
+point `lib_dir` at a broad sibling-worktree parent: PlatformIO can otherwise
+discover nested test and build directories as project inputs. The remaining
+entries supply only third-party dependencies. `platformio.ini`
+loads matching `platformio.local.ini.*` files when present, so no tracked
+configuration or application dependency needs to change.
 
 ## Publish a release
 

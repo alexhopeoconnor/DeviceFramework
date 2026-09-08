@@ -56,9 +56,50 @@ For a Docker-backed Home Assistant/Mosquitto test of physical boards, use the [l
 
 For a deterministic current-HA dashboard check with no board, run `./tools/ha-hardware fixture --ui-capture`. A physical `run ... --ui-capture` additionally proves a headless browser switch action reaches the board and returns through MQTT; see the hardware guide for reviewed screenshot baselines and failure artifacts.
 
+## Browser evidence on a real board
+
+The WiFiManager repository tests its portable portal on its own. DeviceFramework
+also tests the integration boundary: it flashes a DeviceFramework fixture with no
+saved Wi-Fi configuration, so the framework starts and brands the real
+WiFiManager portal. A Docker-contained Playwright browser then checks the portal
+launch, Wi-Fi scan, configuration save, station hand-off, and the framework's
+own status, serial, controls, and about pages.
+
+Use a dedicated USB Wi-Fi adapter for the portal connection. The command refuses
+the host default-route adapter and marks the portal connection `never-default`,
+so normal LAN and internet traffic stay on the primary adapter:
+
+```bash
+./tools/device-ui-hardware doctor --client-interface wlx0123456789ab
+./tools/device-ui-hardware full --platform esp8266 --port /dev/serial/by-id/… \
+  --client-interface wlx0123456789ab \
+  --output ~/Desktop/DeviceFramework-Visual-Harness/$(date +%F)/esp8266
+```
+
+`full` erases and reflashes only the named board, runs the real portal-to-station
+journey, and leaves screenshots, browser diagnostics, and a credential-free
+manifest in the supplied directory. It reads the ignored `test/.env` only at
+runtime; credentials are never written into artifacts or source control. Use
+`portal` for only the provisioning surface, `web --url http://device.local` for
+an already-running web UI, and `down` to remove a retained secondary-adapter
+portal connection.
+
+An ESP32 may move its single radio to the station network's channel while
+joining Wi-Fi. In that case the browser's portal connection can disappear before
+it receives the final save response. The harness accepts that transport change
+only after the selected test hostname resolves and the post-handoff web checks
+pass; a rejected or failed station association still fails the run.
+
 Run `./scripts/check-docs.sh` after changing Markdown, examples, or generated web assets. It verifies local documentation links, required guides, web assets, and that every numbered example remains a buildable project shape.
 
 CI always runs both compile-only variants. Hardware tests remain an explicit
 local gate because they require LAN access, a board, and test credentials.
+
+`./scripts/test-nonhardware.sh` deliberately compiles the consumer fixture with
+`test/compile-project/platformio.release.ini`. That configuration excludes every
+ignored `platformio.local.ini.*` override while still consuming the checked-out
+DeviceFramework source. It therefore proves the current framework works with
+the exact first-party library tags declared in `library.json`; local sibling
+worktrees cannot accidentally make a release gate pass.
 
 Back to [documentation](README.md) · [project overview](../README.md).

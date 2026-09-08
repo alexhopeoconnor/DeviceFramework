@@ -379,7 +379,7 @@ void test_web_interface_methods() {
         "DeviceFramework UI Test",
         "Test Lab",
         "df-web-theme",
-        "--df-accent:#15803d;",
+        "--df-accent:#2477c9;",
         "alt=\"Test Lab\"",
         "href=\"/assets/deviceframework.css\"",
         "src=\"/assets/deviceframework.js\"",

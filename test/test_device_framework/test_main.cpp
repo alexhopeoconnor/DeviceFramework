@@ -155,16 +155,16 @@ void configureSharedUI() {
                             DeviceFrameworkText::ram("https://example.test")};
     ui.about.creditLink = {DeviceFrameworkText::ram("Credits"),
                            DeviceFrameworkText::ram("https://example.test/credits")};
-    ui.theme.pageStart = DeviceFrameworkText::ram("#14532d");
-    ui.theme.pageEnd = DeviceFrameworkText::ram("#166534");
-    ui.theme.surface = DeviceFrameworkText::ram("#f0fdf4");
-    ui.theme.text = DeviceFrameworkText::ram("#052e16");
-    ui.theme.mutedText = DeviceFrameworkText::ram("#166534");
-    ui.theme.border = DeviceFrameworkText::ram("#bbf7d0");
-    ui.theme.accent = DeviceFrameworkText::ram("#15803d");
-    ui.theme.accentHover = DeviceFrameworkText::ram("#166534");
+    ui.theme.pageStart = DeviceFrameworkText::ram("#eaf3ff");
+    ui.theme.pageEnd = DeviceFrameworkText::ram("#d6e8ff");
+    ui.theme.surface = DeviceFrameworkText::ram("#ffffff");
+    ui.theme.text = DeviceFrameworkText::ram("#13233d");
+    ui.theme.mutedText = DeviceFrameworkText::ram("#4b6385");
+    ui.theme.border = DeviceFrameworkText::ram("#b9d4f4");
+    ui.theme.accent = DeviceFrameworkText::ram("#2477c9");
+    ui.theme.accentHover = DeviceFrameworkText::ram("#1d5f9f");
     ui.theme.accentText = DeviceFrameworkText::ram("#ffffff");
-    ui.theme.success = DeviceFrameworkText::ram("#16a34a");
+    ui.theme.success = DeviceFrameworkText::ram("#18864b");
     ui.theme.danger = DeviceFrameworkText::ram("#dc2626");
     DeviceFramework::setUIConfig(ui);
 }

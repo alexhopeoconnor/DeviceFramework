@@ -173,24 +173,41 @@ Run the board-free visual test harness first:
 ```
 
 This replays retained discovery and state for a sensor, switch, number, select,
-and text entity; restarts HA and Mosquitto; then captures the rendered dashboard.
-A physical run adds the opposite-direction check: Playwright clicks the switch in
-HA, the command travels through MQTT to the board, and the verifier waits for the
-board's returned `on` state:
+and text entity; restarts HA and Mosquitto; then checks the purpose-built controls
+dashboard and Home Assistant's native device-detail page. The retained evidence
+contains desktop and mobile captures of both views. A physical run adds the
+opposite-direction check: Playwright clicks the switch in HA, the command travels
+through MQTT to the board, and the verifier waits for the board's returned `on`
+state:
 
 ```bash
 ./tools/ha-hardware run --platform esp8266 --port /dev/ttyUSB0 --ui-capture
 ```
 
-Reviewed baseline PNGs live in `tests/ha-hardware/ui/tests/snapshots/`. Their HA
-and Playwright versions are pinned in `tests/ha-hardware/ui/visual-versions.env`.
-On a mismatch, Playwright retains expected, actual, diff, trace, and JSON report
-artifacts under the ignored `artifacts/ha-hardware/<timestamp>/playwright/` path.
-Inspect those artifacts before deliberately replacing a baseline:
+The stable controls card has a reviewed pixel baseline in
+`tests/ha-hardware/ui/tests/snapshots/`, whose filename includes the pinned HA
+version from `tests/ha-hardware/ui/visual-versions.env`. The native page includes
+live activity timestamps, so it is asserted semantically and retained as an
+evidence image rather than compared pixel-for-pixel. On a baseline mismatch,
+Playwright retains expected, actual, diff, trace, and JSON report artifacts under
+the ignored `artifacts/ha-hardware/<timestamp>/playwright/` path. Inspect those
+artifacts before deliberately replacing a baseline:
 
 ```bash
 ./tools/ha-hardware fixture --ui-capture --update-snapshots
 ```
+
+To preserve a successful run for manual review instead of the ignored default
+artifact path, choose an explicit output directory:
+
+```bash
+./tools/ha-hardware fixture --ui-capture \
+  --output ~/Desktop/DeviceFramework-Visual-Harness/$(date +%F)/ha-fixture
+```
+
+The directory contains the captured screenshots, discovery/state summaries, raw
+MQTT discovery data, and Playwright report. It contains no local Wi-Fi or MQTT
+credentials.
 
 A retained visual session must be started with `--ha-version ui`; this selects the
 reviewed HA version without copying a version string into local configuration.

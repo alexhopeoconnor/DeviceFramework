@@ -50,7 +50,7 @@ your-firmware/
 └── profiles.local/home.json          # ignored real profile
 ```
 
-The ignored `platformio.local.ini.<machine>` only selects a local profile or OTA endpoint; real values remain in the JSON profile. A consuming project may point DeviceFramework at a local checkout through `lib_extra_dirs`; when it does not, PlatformIO resolves the tracked Git-tag dependencies. Keep coordinated untagged dependency work in the framework root project. DeviceFramework's package hook uses PlatformIO/SCons and Python’s standard library to generate a C++ header only under `.pio`. Sketches do not declare `extra_scripts`, manage Python, or parse credentials. With no `custom_device_profile`, the hook does nothing.
+The ignored `platformio.local.ini.<machine>` only selects a local profile or OTA endpoint; real values remain in the JSON profile. A consuming project may replace released dependencies with explicit relative `symlink://` package specifications. Those first-party package entries override the tags declared by manifests; without them, PlatformIO resolves the tracked Git-tag dependency. Do not set `lib_dir` to a broad sibling-worktree parent: PlatformIO can discover nested test/build directories that are not project inputs. Keep coordinated untagged dependency work in the framework root project. DeviceFramework's package hook uses PlatformIO/SCons and Python’s standard library to generate a C++ header only under `.pio`. Sketches do not declare `extra_scripts`, manage Python, or parse credentials. With no `custom_device_profile`, the hook does nothing.
 
 ## Profile format and validation
 

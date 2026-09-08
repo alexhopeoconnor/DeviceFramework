@@ -23,7 +23,7 @@ void test_device_framework_ui_configuration() {
     const char* stylesheet = DeviceFrameworkUI::getWebThemeStyle();
     TEST_ASSERT_NOT_NULL(stylesheet);
     TEST_ASSERT_NOT_EQUAL(-1, String(stylesheet).indexOf("id='df-web-theme'"));
-    TEST_ASSERT_NOT_EQUAL(-1, String(stylesheet).indexOf("--df-accent:#15803d;"));
+    TEST_ASSERT_NOT_EQUAL(-1, String(stylesheet).indexOf("--df-accent:#2477c9;"));
     TEST_ASSERT_NOT_EQUAL(-1, String(DeviceFrameworkUI::getAboutNavigation()).indexOf("/about"));
     const String about = DeviceFrameworkUI::getAboutSection();
     TEST_ASSERT_NOT_EQUAL(-1, about.indexOf("fixed product About"));

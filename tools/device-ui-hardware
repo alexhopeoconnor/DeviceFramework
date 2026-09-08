@@ -1,0 +1,380 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+project_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# shellcheck source=tools/lib/device-ui-session.sh
+source "$project_dir/tools/lib/device-ui-session.sh"
+cd "$project_dir"
+
+usage() {
+    cat <<'EOF' >&2
+Usage:
+  ./tools/device-ui-hardware doctor --client-interface IFACE [--take-over-client-adapter]
+  ./tools/device-ui-hardware portal --platform esp8266|esp32 --port DEVICE \
+      --client-interface IFACE [--take-over-client-adapter] [--env-file test/.env] \
+      [--output DIRECTORY] [--keep]
+  ./tools/device-ui-hardware web --platform esp8266|esp32 [--port DEVICE] \
+      [--env-file test/.env] [--url URL] [--output DIRECTORY]
+  ./tools/device-ui-hardware full --platform esp8266|esp32 --port DEVICE \
+      --client-interface IFACE [--take-over-client-adapter] [--env-file test/.env] \
+      [--output DIRECTORY] [--keep]
+  ./tools/device-ui-hardware down
+
+`portal` flashes the DeviceFramework no-Wi-Fi fixture and tests the actual
+DeviceFramework -> WiFiManager portal integration. With an env file it also
+provisions the board and records its station hand-off. `web` tests the normal
+DeviceFramework UI, either at --url or after flashing a local station fixture.
+`full` performs both without touching the host default-route Wi-Fi adapter.
+EOF
+    exit 2
+}
+
+command_name="${1:-}"
+[[ -n "$command_name" ]] || usage
+shift || true
+
+platform=""
+port=""
+client_interface=""
+takeover="no"
+keep="no"
+env_file="test/.env"
+output_dir=""
+web_url=""
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --platform) [[ $# -ge 2 ]] || usage; platform="$2"; shift 2 ;;
+        --port) [[ $# -ge 2 ]] || usage; port="$2"; shift 2 ;;
+        --client-interface) [[ $# -ge 2 ]] || usage; client_interface="$2"; shift 2 ;;
+        --take-over-client-adapter) takeover="yes"; shift ;;
+        --keep) keep="yes"; shift ;;
+        --env-file) [[ $# -ge 2 ]] || usage; env_file="$2"; shift 2 ;;
+        --output) [[ $# -ge 2 ]] || usage; output_dir="$2"; shift 2 ;;
+        --url) [[ $# -ge 2 ]] || usage; web_url="$2"; shift 2 ;;
+        *) usage ;;
+    esac
+done
+
+profile_file=""
+portal_connected="no"
+
+require_common() {
+    dfui_require ip
+    dfui_require nmcli
+    dfui_require pio
+    dfui_require docker
+    dfui_require curl
+    docker compose version >/dev/null
+}
+
+prepare_output_dir() {
+    if [[ -z "$output_dir" ]]; then
+        output_dir="$project_dir/artifacts/device-ui/$(date -u +%Y%m%dT%H%M%SZ)-${platform:-unknown}"
+    fi
+    install -d -m 700 "$output_dir"
+    output_dir="$(cd "$output_dir" && pwd)"
+}
+
+validate_platform() {
+    [[ "$platform" == "esp8266" || "$platform" == "esp32" ]] || usage
+}
+
+require_port() {
+    [[ -n "$port" && -e "$port" ]] || {
+        echo "Serial port not found: $port" >&2
+        exit 1
+    }
+}
+
+load_station_env() {
+    [[ -r "$env_file" ]] || {
+        echo "Missing local test credentials: $env_file (copy test/.env.example)." >&2
+        exit 1
+    }
+    set -a
+    # shellcheck disable=SC1090
+    source "$env_file"
+    set +a
+    for key in DEVICEFRAMEWORK_TEST_WIFI_SSID DEVICEFRAMEWORK_TEST_WIFI_PASSWORD; do
+        [[ -n "${!key:-}" ]] || {
+            echo "$key is required in $env_file" >&2
+            exit 1
+        }
+    done
+}
+
+json_escape() {
+    printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g; s/\r/\\r/g; s/\n/\\n/g'
+}
+
+write_manifest() {
+    local surface="$1" directory="$2"
+    printf '{"schema":1,"surface":"%s","platform":"%s","created_at":"%s"}\n' \
+        "$surface" "$platform" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$directory/manifest.json"
+    chmod 600 "$directory/manifest.json"
+}
+
+erase_and_upload() {
+    local environment="$1"
+    # Each visual fixture must start without a previous board's persisted
+    # configuration. The explicitly supplied test board is immediately
+    # reflashed after erase; no other serial device is selected.
+    refresh_local_first_party_dependencies "$environment"
+    pio run -d test/compile-project -e "$environment" -t erase --upload-port "$port"
+    pio run -d test/compile-project -e "$environment" -t upload --upload-port "$port"
+}
+
+refresh_local_first_party_dependencies() {
+    local environment="$1" dependency
+    local -a local_overrides=(test/compile-project/platformio.local.ini.*)
+
+    # The ignored development override deliberately replaces the released
+    # first-party packages with sibling links. PlatformIO otherwise retains a
+    # previously resolved Git package in .pio/libdeps, which can silently make
+    # a physical integration run test an old tag instead of the local change.
+    # Refresh only this disposable consumer fixture before an explicit flash.
+    [[ -e "${local_overrides[0]}" ]] || return 0
+    for dependency in DeviceFramework WiFiManager DeviceFrameworkTemplateEngine home-assistant-integration; do
+        pio pkg uninstall -d test/compile-project -e "$environment" \
+            -l "$dependency" --no-save --skip-dependencies >/dev/null || true
+    done
+}
+
+upload_portal_fixture() {
+    erase_and_upload "${platform}_ui_portal"
+}
+
+write_station_profile() {
+    local device_name
+    device_name="DF Web ${platform^^}"
+    profile_file="$(mktemp -p /tmp deviceframework-device-ui-profile.XXXXXX)"
+    chmod 600 "$profile_file"
+    {
+        printf '%s\n' '{'
+        printf '%s\n' '  "format": 2,'
+        printf '%s\n' '  "application": "deviceframework",'
+        printf '  "profile": { "id": "device-ui-%s-station", "revision": 1, "policy": "bootstrap" },\n' "$platform"
+        printf '%s\n' '  "device_password": "default1",'
+        printf '%s\n' '  "wifi": { "profiles": ['
+        printf '    { "ssid": "%s", "password": "%s" }\n' \
+            "$(json_escape "$DEVICEFRAMEWORK_TEST_WIFI_SSID")" \
+            "$(json_escape "$DEVICEFRAMEWORK_TEST_WIFI_PASSWORD")"
+        printf '%s\n' '  ] },'
+        printf '  "parameters": { "device": "%s", "loglevel": "Verbose" }\n' \
+            "$(json_escape "$device_name")"
+        printf '%s\n' '}'
+    } > "$profile_file"
+}
+
+upload_station_fixture() {
+    load_station_env
+    write_station_profile
+    DEVICEFRAMEWORK_HARDWARE_PROFILE="$profile_file" \
+        erase_and_upload "${platform}_profile_hardware"
+}
+
+wait_for_web_url() {
+    local hostname="${1:-df-web-${platform}.local}" resolved_host="" attempt status
+    if [[ -n "${DEVICEFRAMEWORK_TEST_DEVICE_HOST:-}" ]]; then
+        resolved_host="$DEVICEFRAMEWORK_TEST_DEVICE_HOST"
+    elif command -v avahi-resolve >/dev/null 2>&1; then
+        for attempt in {1..45}; do
+            resolved_host="$(avahi-resolve -4 -n "$hostname" 2>/dev/null | awk 'NR == 1 { print $2; exit }')"
+            [[ -n "$resolved_host" ]] && break
+            sleep 1
+        done
+    fi
+    [[ -n "$resolved_host" ]] || {
+        echo "Could not resolve $hostname. Set DEVICEFRAMEWORK_TEST_DEVICE_HOST in $env_file or pass --url." >&2
+        return 1
+    }
+    for attempt in {1..45}; do
+        status="$(curl --silent --connect-timeout 1 --max-time 2 --output /dev/null --write-out '%{http_code}' \
+            -u 'admin:default1' "http://${resolved_host}/api/status" 2>/dev/null || true)"
+        [[ "$status" == "200" ]] && {
+            printf 'http://%s\n' "$resolved_host"
+            return 0
+        }
+        sleep 1
+    done
+    echo "DeviceFramework web UI did not become ready at $resolved_host" >&2
+    return 1
+}
+
+wait_for_station_status() {
+    local url="$1" attempt status
+    for attempt in {1..45}; do
+        status="$(curl --silent --connect-timeout 1 --max-time 2 \
+            -u 'admin:default1' "${url%/}/api/status" 2>/dev/null || true)"
+        # The normal web fixture has already proved that this is the intended
+        # board. Do not start page screenshots until its cached runtime status
+        # has also observed the completed AP-to-STA transition.
+        if printf '%s\n' "$status" | grep -Eq '"wifi"[[:space:]]*:[[:space:]]*\{[^}]*"connected"[[:space:]]*:[[:space:]]*true'; then
+            return 0
+        fi
+        sleep 1
+    done
+    echo "DeviceFramework station did not report a connected Wi-Fi state at $url" >&2
+    return 1
+}
+
+run_browser() {
+    local mode="$1" url="$2" directory="$3" station_mount=""
+    install -d -m 700 "$directory"
+    write_manifest "$mode" "$directory"
+    export DEVICE_UI_MODE="$mode"
+    export DEVICE_UI_URL="$url"
+    export DEVICE_UI_ARTIFACT_DIR="$directory"
+    export DEVICE_UI_USERNAME='admin'
+    export DEVICE_UI_PASSWORD='default1'
+    export DEVICE_UI_TEST_DEVICE_NAME="df-portal-${platform}"
+    export LOCAL_UID="$(id -u)"
+    export LOCAL_GID="$(id -g)"
+    compose_files=(-f "$project_dir/tests/device-ui/compose.yaml")
+    if [[ -r "$env_file" && "$mode" == "portal" ]]; then
+        station_mount="$(cd "$(dirname "$env_file")" && pwd)/$(basename "$env_file")"
+        export DEVICE_UI_STATION_ENV_HOST="$station_mount"
+        compose_files+=(-f "$project_dir/tests/device-ui/compose.station.yaml")
+    fi
+    local browser_status=0
+    docker compose "${compose_files[@]}" build device-ui
+    if docker compose "${compose_files[@]}" run --rm device-ui; then
+        browser_status=0
+    else
+        browser_status=$?
+    fi
+    sanitize_browser_artifacts "$directory"
+    return "$browser_status"
+}
+
+sanitize_browser_artifacts() {
+    local directory="$1" key value
+    local -a matching_files=()
+
+    [[ -r "$env_file" ]] || return 0
+    # Failure-only Playwright diagnostics can include a DOM snapshot. A password
+    # field is visually masked in screenshots but its DOM value may be present
+    # in that text file, so remove any artifact containing a known local secret.
+    # The selected credentials remain mounted read-only inside Docker only.
+    set -a
+    # shellcheck disable=SC1090
+    source "$env_file"
+    set +a
+    for key in DEVICEFRAMEWORK_TEST_WIFI_PASSWORD DEVICEFRAMEWORK_TEST_MQTT_PASSWORD; do
+        value="${!key:-}"
+        [[ -n "$value" ]] || continue
+        mapfile -t matching_files < <(rg -l -a -F -- "$value" "$directory" 2>/dev/null || true)
+        if (( ${#matching_files[@]} > 0 )); then
+            printf 'Removing browser evidence containing a local test credential.\n' >&2
+            rm -f -- "${matching_files[@]}"
+        fi
+    done
+}
+
+start_portal_connection() {
+    local ssid
+    require_port
+    [[ -n "$client_interface" ]] || usage
+    dfui_require_client_adapter "$client_interface" "$takeover"
+    dfui_require_no_active_session
+    upload_portal_fixture
+    ssid="$(dfui_portal_ssid "$platform")"
+    dfui_create_portal_connection "$client_interface" "$ssid" 'default1'
+    portal_connected="yes"
+    dfui_verify_portal_route "$client_interface"
+    dfui_write_state "$client_interface" "$platform" "$DFUI_PORTAL_CONNECTION_UUID" "$DFUI_PORTAL_CONNECTION_NAME"
+}
+
+run_portal() {
+    local directory="$1"
+    start_portal_connection
+    run_browser portal 'http://192.168.4.1' "$directory"
+}
+
+run_web() {
+    local directory="$1" url="$web_url"
+    if [[ -z "$url" ]]; then
+        require_port
+        upload_station_fixture
+        url="$(wait_for_web_url)"
+    fi
+    run_browser web "$url" "$directory"
+}
+
+cleanup() {
+    local status=$?
+    [[ -z "$profile_file" ]] || rm -f "$profile_file"
+    if [[ "$portal_connected" == "yes" && "$keep" != "yes" ]]; then
+        dfui_remove_portal_connection || true
+    fi
+    exit "$status"
+}
+
+case "$command_name" in
+    doctor)
+        [[ -n "$client_interface" ]] || usage
+        require_common
+        dfui_acquire_hardware_lock
+        dfui_require_client_adapter "$client_interface" "$takeover"
+        echo "DeviceFramework device-UI prerequisites are ready; primary route is untouched."
+        ;;
+    down)
+        [[ -z "$platform$port$client_interface$output_dir$web_url" ]] || usage
+        dfui_acquire_hardware_lock
+        dfui_load_state
+        dfui_remove_portal_connection
+        echo "DeviceFramework portal client connection removed."
+        ;;
+    portal)
+        validate_platform
+        require_common
+        dfui_acquire_hardware_lock
+        prepare_output_dir
+        trap cleanup EXIT INT TERM
+        run_portal "$output_dir"
+        echo "DeviceFramework portal integration contract passed. Artifacts: $output_dir"
+        [[ "$keep" != "yes" ]] || echo "Portal client remains connected; run ./tools/device-ui-hardware down when finished."
+        ;;
+    web)
+        validate_platform
+        require_common
+        dfui_acquire_hardware_lock
+        prepare_output_dir
+        trap cleanup EXIT INT TERM
+        run_web "$output_dir"
+        echo "DeviceFramework web UI contract passed. Artifacts: $output_dir"
+        ;;
+    full)
+        validate_platform
+        require_common
+        require_port
+        [[ -n "$client_interface" ]] || usage
+        load_station_env
+        dfui_acquire_hardware_lock
+        prepare_output_dir
+        trap cleanup EXIT INT TERM
+        run_portal "$output_dir/portal"
+        handoff_file="$output_dir/portal/portal-handoff.json"
+        [[ -r "$handoff_file" ]] || {
+            echo "Portal browser contract did not record a station hand-off." >&2
+            exit 1
+        }
+        handoff_ip="$(sed -nE 's/^[[:space:]]*"stationIp"[[:space:]]*:[[:space:]]*"([0-9.]+)"[,]?$/\1/p' "$handoff_file")"
+        if [[ -n "$handoff_ip" ]]; then
+            web_url="http://$handoff_ip"
+        else
+            # ESP32 can drop the portal client while moving AP+STA to the
+            # selected station channel. The portal test has already proved
+            # the accepted save; now require the named DeviceFramework board
+            # to appear on the LAN before testing its own UI.
+            web_url="$(wait_for_web_url "df-portal-${platform}.local")"
+        fi
+        wait_for_station_status "$web_url"
+        run_web "$output_dir/web"
+        write_manifest full "$output_dir"
+        echo "DeviceFramework full portal-to-web contract passed. Artifacts: $output_dir"
+        [[ "$keep" != "yes" ]] || echo "Portal client remains connected; run ./tools/device-ui-hardware down when finished."
+        ;;
+    *) usage ;;
+esac

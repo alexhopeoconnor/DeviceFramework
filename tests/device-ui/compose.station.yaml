@@ -1,0 +1,6 @@
+services:
+  device-ui:
+    environment:
+      DEVICE_UI_STATION_ENV: /station.env
+    volumes:
+      - ${DEVICE_UI_STATION_ENV_HOST:?station environment path is required}:/station.env:ro

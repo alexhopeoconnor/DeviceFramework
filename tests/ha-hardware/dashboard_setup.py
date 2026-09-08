@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 import tempfile
+import time
 from pathlib import Path
 from typing import Any
 
@@ -39,6 +40,24 @@ def expected_hardware_entities(device_id: str) -> list[dict[str, str]]:
         {"key": "select", "unique_id": f"{device_id}_e2eselect"},
         {"key": "text", "unique_id": f"{device_id}_e2etext"},
     ]
+
+
+def find_device(client: HomeAssistantClient, identifier: str) -> dict[str, Any] | None:
+    for device in client.device_registry():
+        for candidate in device.get("identifiers", []):
+            if isinstance(candidate, (list, tuple)) and identifier in candidate:
+                return device
+    return None
+
+
+def wait_for_device(client: HomeAssistantClient, identifier: str) -> dict[str, Any]:
+    deadline = time.monotonic() + 90
+    while time.monotonic() < deadline:
+        device = find_device(client, identifier)
+        if device:
+            return device
+        time.sleep(1)
+    raise TestHarnessError(f"Home Assistant device {identifier} was not discovered")
 
 
 def expected_entities() -> tuple[str, list[dict[str, str]]]:
@@ -77,6 +96,7 @@ def main() -> None:
     device_id, expected = expected_entities()
     client = HomeAssistantClient.from_state(HA_URL, STATE)
     try:
+        device = wait_for_device(client, device_id)
         entity_ids = {
             entry["key"]: client.wait_for_entity(entry["unique_id"], timeout=90)["entity_id"]
             for entry in expected
@@ -88,6 +108,8 @@ def main() -> None:
         manifest = {
             "dashboard_url": "http://homeassistant:8123/deviceframework-e2e/controls",
             "device_id": device_id,
+            "ha_device_id": device["id"],
+            "device_name": device.get("name_by_user") or device.get("name") or device_id,
             "entities": entity_ids,
             "mode": MODE,
         }

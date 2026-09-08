@@ -37,16 +37,20 @@ void setup() {
     ui.about.summary = text("A fixed product attribution area in the existing web interface.");
     ui.about.primaryLink = {text("Example Devices"), text("https://example.test")};
     ui.about.creditLink = {text("Framework credits"), text("https://example.test/credits")};
-    ui.theme.pageStart = text("#14532d");
-    ui.theme.pageEnd = text("#166534");
-    ui.theme.surface = text("#f0fdf4");
-    ui.theme.text = text("#052e16");
-    ui.theme.mutedText = text("#166534");
-    ui.theme.border = text("#bbf7d0");
-    ui.theme.accent = text("#15803d");
-    ui.theme.accentHover = text("#166534");
+    // Keep the reusable visual fixture high-contrast. DeviceFramework's
+    // portable theme has one foreground token for page and surface content,
+    // so a light page and surface are the coherent way to exercise all theme
+    // fields without teaching the fixture a product-specific dark-mode model.
+    ui.theme.pageStart = text("#eaf3ff");
+    ui.theme.pageEnd = text("#d6e8ff");
+    ui.theme.surface = text("#ffffff");
+    ui.theme.text = text("#13233d");
+    ui.theme.mutedText = text("#4b6385");
+    ui.theme.border = text("#b9d4f4");
+    ui.theme.accent = text("#2477c9");
+    ui.theme.accentHover = text("#1d5f9f");
     ui.theme.accentText = text("#ffffff");
-    ui.theme.success = text("#16a34a");
+    ui.theme.success = text("#18864b");
     ui.theme.danger = text("#dc2626");
     ui.theme.cornerRadiusPx = 10;
     DeviceFramework::setUIConfig(ui);

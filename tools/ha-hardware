@@ -15,7 +15,7 @@ Usage:
   ./tools/ha-hardware doctor [--ap-interface IFACE] [--arduinoha-path PATH]
   ./tools/ha-hardware compile --platform esp8266|esp32 [--session ID] [--arduinoha-path PATH]
   ./tools/ha-hardware up [--network managed-ap --ap-interface IFACE] [--keep]
-  ./tools/ha-hardware fixture [--ui-capture] [--update-snapshots] [--ha-version VERSION]
+  ./tools/ha-hardware fixture [--ui-capture] [--update-snapshots] [--ha-version VERSION] [--output DIRECTORY]
   ./tools/ha-hardware run --platform esp8266|esp32 --port DEVICE [options]
   ./tools/ha-hardware worker --session ID --alias NAME --platform esp8266|esp32 --port DEVICE
   ./tools/ha-hardware verify --session ID --device-id ID [--mode hardware|ha-restart|mqtt-restart]
@@ -35,6 +35,7 @@ Options for up, run, and fixture:
   --ha-version VERSION                Home Assistant tag: stable (default) or ui (reviewed snapshot pin)
   --ui-capture                        run the Docker-only Playwright visual test harness after protocol checks
   --update-snapshots                  explicitly regenerate reviewed Playwright snapshots (requires --ui-capture)
+  --output DIRECTORY                  retain successful visual evidence in this directory
   --keep                              preserve the stack/AP for interactive inspection
 
 The broker is anonymous by design and for local development only. Do not
@@ -61,6 +62,7 @@ port=""
 keep=false
 ui_capture=false
 update_snapshots=false
+output_dir=""
 session_persisted=false
 interrupted=false
 cleanup_installed=false
@@ -90,6 +92,7 @@ while [[ $# -gt 0 ]]; do
         --service) restart_service="${2:-}"; shift 2 ;;
         --ui-capture) ui_capture=true; shift ;;
         --update-snapshots) update_snapshots=true; shift ;;
+        --output) output_dir="${2:-}"; shift 2 ;;
         --keep) keep=true; shift ;;
         -h|--help) usage ;;
         *) echo "Unknown option: $1" >&2; usage ;;
@@ -104,6 +107,10 @@ $ui_capture && [[ "$command_name" != "run" && "$command_name" != "fixture" ]] &&
     exit 2
 }
 [[ "$command_name" != "fixture" || "$keep" == false ]] || { echo "fixture always cleans up; use up for interactive inspection" >&2; exit 2; }
+[[ -z "$output_dir" || "$command_name" == "fixture" || "$command_name" == "run" ]] || {
+    echo "--output is supported by fixture and run" >&2
+    exit 2
+}
 [[ "$command_name" != "worker" || ( -n "$session_id" && -n "$worker_alias" && -n "$platform" && -n "$port" ) ]] || usage
 [[ "$command_name" != "verify" || ( -n "$session_id" && -n "$device_id" ) ]] || usage
 [[ "$command_name" != "restart" || ( -n "$session_id" && -n "$restart_service" ) ]] || usage
@@ -130,6 +137,7 @@ source "$ui_version_file"
 export PLAYWRIGHT_IMAGE
 
 : "${HA_UI_VERSION:?visual version file must define HA_UI_VERSION}"
+export HA_UI_VERSION
 [[ "$ha_version" != "ui" ]] || ha_version="$HA_UI_VERSION"
 if $ui_capture; then
     if ! $ha_version_explicit; then
@@ -851,8 +859,13 @@ case "$command_name" in
         require_common
         ensure_no_retained_session
         runtime_dir="$(mktemp -d "${TMPDIR:-/tmp}/deviceframework-ha-hardware.XXXXXX")"
-        artifact_dir="$PROJECT_DIR/artifacts/ha-hardware/$(date -u +%Y%m%dT%H%M%SZ)"
-        mkdir -p "$artifact_dir"
+        if [[ -n "$output_dir" ]]; then
+            artifact_dir="$output_dir"
+        else
+            artifact_dir="$PROJECT_DIR/artifacts/ha-hardware/$(date -u +%Y%m%dT%H%M%SZ)"
+        fi
+        install -d -m 700 "$artifact_dir"
+        artifact_dir="$(cd "$artifact_dir" && pwd)"
         compose_project="dfha$(date +%s)"
         install_cleanup_traps
         if [[ "$command_name" == "fixture" ]]; then

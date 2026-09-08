@@ -31,13 +31,14 @@ run_test() {
 }
 
 "$project_dir/tools/check-web-assets.sh"
-run_test compile --platform esp8266
-run_test compile --platform esp8266 --profile-fixture
-run_test compile --platform esp32
-run_test compile --platform esp32 --profile-fixture
+run_test compile --platform esp8266 --release
+run_test compile --platform esp8266 --profile-fixture --release
+run_test compile --platform esp32 --release
+run_test compile --platform esp32 --profile-fixture --release
 run_test examples --platform esp8266
 run_test examples --platform esp32
 DEVICEFRAMEWORK_SKIP_WEB_ASSET_CHECK=1 "$project_dir/scripts/check-docs.sh"
+"$project_dir/tests/test-device-ui-hardware-cli.sh"
 "$project_dir/tools/ha-hardware" fixture --ui-capture
 
 echo "DeviceFramework non-hardware test suite passed"

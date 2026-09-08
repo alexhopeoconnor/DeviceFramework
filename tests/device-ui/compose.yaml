@@ -1,0 +1,19 @@
+services:
+  device-ui:
+    build:
+      context: ../..
+      dockerfile: tests/device-ui/Dockerfile
+    network_mode: host
+    ipc: host
+    init: true
+    user: "${LOCAL_UID:-1000}:${LOCAL_GID:-1000}"
+    environment:
+      HOME: /tmp
+      DEVICE_UI_MODE: ${DEVICE_UI_MODE:?device UI mode is required}
+      DEVICE_UI_URL: ${DEVICE_UI_URL:?device UI URL is required}
+      DEVICE_UI_USERNAME: ${DEVICE_UI_USERNAME:-admin}
+      DEVICE_UI_PASSWORD: ${DEVICE_UI_PASSWORD:-default1}
+      DEVICE_UI_TEST_DEVICE_NAME: ${DEVICE_UI_TEST_DEVICE_NAME:-}
+      ARTIFACT_DIR: /artifacts
+    volumes:
+      - ${DEVICE_UI_ARTIFACT_DIR:?device UI artifact directory is required}:/artifacts
