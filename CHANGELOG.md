@@ -1,5 +1,18 @@
 # Changelog
 
+## 2.8.3
+
+- Pin WiFiManager 3.2.4 so profile-backed provisioning through the framework
+  web portal waits for a real station address instead of taking the legacy
+  empty-SSID success path.
+- Add Docker-contained browser evidence for the integrated WiFiManager portal,
+  DeviceFramework web UI, and Home Assistant native device page, while keeping
+  real-board Wi-Fi, MQTT, and browser checks available through one explicit
+  local hardware command.
+- Make the release gate resolve each first-party dependency from its exact
+  published tag, and ignore both plain and machine-suffixed local PlatformIO
+  overrides.
+
 ## 2.8.2
 
 - Publish the tested stack of WiFiManager 3.2.3, DFTE 1.2.1, and ArduinoHA

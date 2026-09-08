@@ -60,7 +60,7 @@ for the exact mapping.
 
 ```ini
 lib_deps =
-    DeviceFramework=https://github.com/alexhopeoconnor/DeviceFramework.git#v2.8.2
+    DeviceFramework=https://github.com/alexhopeoconnor/DeviceFramework.git#v2.8.3
 ```
 
 PlatformIO clones the repository and checks out the release tag after `#`. The

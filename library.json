@@ -1,11 +1,11 @@
 {
   "$schema": "https://raw.githubusercontent.com/platformio/platformio-core/develop/platformio/assets/schema/library.json",
   "name": "DeviceFramework",
-  "version": "2.8.2",
+  "version": "2.8.3",
   "build": {
     "extraScript": "tools/platformio/profile.py",
     "flags": [
-      "-DDEVICEFRAMEWORK_LIBRARY_VERSION=\\\"2.8.2\\\""
+      "-DDEVICEFRAMEWORK_LIBRARY_VERSION=\\\"2.8.3\\\""
     ]
   },
   "description": "Reusable ESP8266 and ESP32 device framework with WiFi provisioning, MQTT, OTA, local web UI, and Home Assistant integration.",
@@ -41,7 +41,7 @@
   "dependencies": [
     {
       "name": "WiFiManager",
-      "version": "https://github.com/alexhopeoconnor/WiFiManager.git#v3.2.3"
+      "version": "https://github.com/alexhopeoconnor/WiFiManager.git#v3.2.4"
     },
     {
       "name": "DeviceFrameworkTemplateEngine",
