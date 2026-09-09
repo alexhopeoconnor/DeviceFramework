@@ -12,6 +12,13 @@ The framework does not require a connected broker to run local device logic.
 MQTT begins only after usable Wi-Fi and broker resolution are available, and it
 reconnects as the network changes.
 
+![Home Assistant native device page showing a DeviceFramework fixture with
+discovered telemetry, controls, and editable parameters.](assets/readme/home-assistant-device-page.png)
+
+Home Assistant renders this page from MQTT discovery and state messages. The
+framework supplies that integration surface; it does not render or style Home
+Assistant's own interface.
+
 ## Pick the right integration surface
 
 | Requirement | Use | Why |

@@ -3,6 +3,7 @@ services:
     build:
       context: ../..
       dockerfile: tests/device-ui/Dockerfile
+      target: ${DEVICE_UI_DOCKER_TARGET:-device-ui}
     network_mode: host
     ipc: host
     init: true
@@ -14,6 +15,7 @@ services:
       DEVICE_UI_USERNAME: ${DEVICE_UI_USERNAME:-admin}
       DEVICE_UI_PASSWORD: ${DEVICE_UI_PASSWORD:-default1}
       DEVICE_UI_TEST_DEVICE_NAME: ${DEVICE_UI_TEST_DEVICE_NAME:-}
+      DEVICE_UI_CAPTURE_README_MEDIA: ${DEVICE_UI_CAPTURE_README_MEDIA:-0}
       ARTIFACT_DIR: /artifacts
     volumes:
       - ${DEVICE_UI_ARTIFACT_DIR:?device UI artifact directory is required}:/artifacts

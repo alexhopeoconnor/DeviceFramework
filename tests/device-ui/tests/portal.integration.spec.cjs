@@ -181,7 +181,11 @@ test.describe("DeviceFramework WiFiManager integration", () => {
     while (Date.now() < deadline) {
       let response;
       try {
-        response = await request.get("/api/wifi/connect-status");
+        // The AP can disappear as soon as the ESP32 changes radio channel for
+        // the station network. Bound this one request so that expected route
+        // loss immediately hands control back to the host runner, which then
+        // verifies the board on its station address.
+        response = await request.get("/api/wifi/connect-status", { timeout: 3_000 });
       } catch (error) {
         // ESP32 can move its one radio from the portal AP channel to the
         // selected station channel before the browser receives the final JSON.

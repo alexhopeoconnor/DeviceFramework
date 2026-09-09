@@ -101,10 +101,13 @@ Released builds use public Git tags. For coordinated local library development, 
 [`platformio.local.example.ini`](../platformio.local.example.ini) to a file such
 as `platformio.local.ini.alex`, update its explicit relative `symlink://` paths,
 and leave that file untracked. The first-party entries explicitly replace the
-package-manifest tags and ensure their transitive dependencies resolve. Do not
-point `lib_dir` at a broad sibling-worktree parent: PlatformIO can otherwise
-discover nested test and build directories as project inputs. The remaining
-entries supply only third-party dependencies. `platformio.ini`
+direct package-manifest tags. When a manifest itself declares a tagged
+first-party dependency, expose that package's exact local storage through
+`lib_extra_dirs` too; the consumer-fixture template does this for
+WiFiManager's nested `lib/` root, which gives it priority over `.pio/libdeps`.
+Do not point `lib_dir` at a broad sibling-worktree parent: PlatformIO can
+otherwise discover nested test and build directories as project inputs. The
+remaining entries supply only third-party dependencies. `platformio.ini`
 loads matching `platformio.local.ini.*` files when present, so no tracked
 configuration or application dependency needs to change.
 

@@ -1,0 +1,90 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+source_dir=""
+ha_source_dir=""
+replace="no"
+
+usage() {
+    cat <<'EOF' >&2
+Usage: ./tools/promote-readme-media --from DEVICE_UI_ARTIFACT_DIRECTORY --replace [--ha-from HA_ARTIFACT_DIRECTORY]
+
+Copies approved DeviceFramework README media from a successful ESP32 device UI
+capture. Supply --ha-from when adding or refreshing the native Home Assistant
+device-page image from a successful `tools/ha-hardware fixture --ui-capture` run.
+EOF
+    exit 2
+}
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --from) [[ $# -ge 2 ]] || usage; source_dir="$2"; shift 2 ;;
+        --ha-from) [[ $# -ge 2 ]] || usage; ha_source_dir="$2"; shift 2 ;;
+        --replace) replace="yes"; shift ;;
+        *) usage ;;
+    esac
+done
+
+[[ -n "$source_dir" && "$replace" == "yes" ]] || usage
+source_dir="$(cd "$source_dir" && pwd)"
+media_dir="$source_dir/readme-media"
+manifest="$media_dir/manifest.json"
+target_dir="$root/docs/assets/readme"
+
+[[ -r "$manifest" ]] || { echo "Missing README media manifest: $manifest" >&2; exit 1; }
+grep -Fq '"project":"DeviceFramework"' "$manifest" &&
+    grep -Fq '"kind":"readme-media"' "$manifest" &&
+    grep -Fq '"status":"passed"' "$manifest" &&
+    grep -Fq '"platform":"esp32"' "$manifest" || {
+        echo "The media manifest is not a successful DeviceFramework ESP32 capture." >&2
+        exit 1
+    }
+
+validate_image() {
+    local source_file="$1" expected_type="$2" max_bytes="$3"
+    [[ -s "$source_file" ]] || { echo "Missing media asset: $source_file" >&2; exit 1; }
+    [[ "$(file --brief --mime-type "$source_file")" == "$expected_type" ]] || {
+        echo "Unexpected media type for $source_file" >&2
+        exit 1
+    }
+    (( $(wc -c < "$source_file") <= max_bytes )) || {
+        echo "README media exceeds its size limit: $source_file" >&2
+        exit 1
+    }
+}
+
+copy_image() {
+    local source_file="$1" target_file="$2"
+    cp -- "$source_file" "$target_file"
+    printf 'Promoted %s\n' "${target_file#$root/}"
+}
+
+validate_image "$media_dir/device-lifecycle-tour.gif" image/gif $((2 * 1024 * 1024))
+validate_image "$media_dir/device-status.png" image/png $((1024 * 1024))
+
+if [[ -n "$ha_source_dir" ]]; then
+    ha_source_dir="$(cd "$ha_source_dir" && pwd)"
+    summary="$ha_source_dir/summary.json"
+    [[ -r "$summary" ]] || { echo "Missing Home Assistant fixture summary: $summary" >&2; exit 1; }
+    grep -Fq '"mode":"fixture"' "$summary" && grep -Fq '"ui_capture":true' "$summary" || {
+        echo "The Home Assistant artifacts are not from a successful UI fixture capture." >&2
+        exit 1
+    }
+    validate_image "$ha_source_dir/screenshots/device-page-desktop.png" image/png $((1024 * 1024))
+elif [[ ! -f "$target_dir/home-assistant-device-page.png" ]]; then
+    echo "The first promotion requires --ha-from to create home-assistant-device-page.png." >&2
+    exit 1
+fi
+
+# All sources are valid at this point, so a failed candidate cannot leave a
+# partially refreshed documentation set behind.
+install -d "$target_dir"
+copy_image "$media_dir/device-lifecycle-tour.gif" \
+    "$target_dir/device-lifecycle-tour.gif"
+copy_image "$media_dir/device-status.png" \
+    "$target_dir/device-status.png"
+if [[ -n "$ha_source_dir" ]]; then
+    copy_image "$ha_source_dir/screenshots/device-page-desktop.png" \
+        "$target_dir/home-assistant-device-page.png"
+fi

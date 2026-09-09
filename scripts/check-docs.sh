@@ -48,6 +48,35 @@ for required in \
     fi
 done
 
+check_readme_media() {
+    local asset="$1"
+    local expected_type="$2"
+    local max_bytes="$3"
+    local path="$root/docs/assets/readme/$asset"
+    if [[ ! -s "$path" ]]; then
+        printf 'Missing README media asset: %s\n' "docs/assets/readme/$asset" >&2
+        failed=1
+        return
+    fi
+    if [[ "$(file --brief --mime-type "$path")" != "$expected_type" ]]; then
+        printf 'Unexpected README media type: %s\n' "docs/assets/readme/$asset" >&2
+        failed=1
+    fi
+    if (( $(wc -c < "$path") > max_bytes )); then
+        printf 'README media exceeds its size limit: %s\n' "docs/assets/readme/$asset" >&2
+        failed=1
+    fi
+}
+
+check_readme_media device-lifecycle-tour.gif image/gif $((2 * 1024 * 1024))
+check_readme_media device-status.png image/png $((1024 * 1024))
+check_readme_media home-assistant-device-page.png image/png $((1024 * 1024))
+
+if [[ -n "$(git -C "$root" ls-files -- 'artifacts/readme-media/**')" ]]; then
+    printf 'Ignored README media artifacts must not be tracked.\n' >&2
+    failed=1
+fi
+
 if [[ "${DEVICEFRAMEWORK_SKIP_WEB_ASSET_CHECK:-0}" != "1" ]]; then
     "$root/tools/check-web-assets.sh"
 fi

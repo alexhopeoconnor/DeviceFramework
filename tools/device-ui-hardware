@@ -17,7 +17,7 @@ Usage:
       [--env-file test/.env] [--url URL] [--output DIRECTORY]
   ./tools/device-ui-hardware full --platform esp8266|esp32 --port DEVICE \
       --client-interface IFACE [--take-over-client-adapter] [--env-file test/.env] \
-      [--output DIRECTORY] [--keep]
+      [--output DIRECTORY] [--keep] [--capture-readme-media]
   ./tools/device-ui-hardware down
 
 `portal` flashes the DeviceFramework no-Wi-Fi fixture and tests the actual
@@ -41,6 +41,7 @@ keep="no"
 env_file="test/.env"
 output_dir=""
 web_url=""
+capture_readme_media="no"
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -52,6 +53,7 @@ while [[ $# -gt 0 ]]; do
         --env-file) [[ $# -ge 2 ]] || usage; env_file="$2"; shift 2 ;;
         --output) [[ $# -ge 2 ]] || usage; output_dir="$2"; shift 2 ;;
         --url) [[ $# -ge 2 ]] || usage; web_url="$2"; shift 2 ;;
+        --capture-readme-media) capture_readme_media="yes"; shift ;;
         *) usage ;;
     esac
 done
@@ -70,7 +72,11 @@ require_common() {
 
 prepare_output_dir() {
     if [[ -z "$output_dir" ]]; then
-        output_dir="$project_dir/artifacts/device-ui/$(date -u +%Y%m%dT%H%M%SZ)-${platform:-unknown}"
+        if [[ "$capture_readme_media" == "yes" ]]; then
+            output_dir="$project_dir/artifacts/readme-media/$(date -u +%Y%m%dT%H%M%SZ)-${platform:-unknown}"
+        else
+            output_dir="$project_dir/artifacts/device-ui/$(date -u +%Y%m%dT%H%M%SZ)-${platform:-unknown}"
+        fi
     fi
     install -d -m 700 "$output_dir"
     output_dir="$(cd "$output_dir" && pwd)"
@@ -78,6 +84,14 @@ prepare_output_dir() {
 
 validate_platform() {
     [[ "$platform" == "esp8266" || "$platform" == "esp32" ]] || usage
+}
+
+validate_readme_media_capture() {
+    [[ "$capture_readme_media" != "yes" ]] && return 0
+    [[ "$command_name" == "full" && "$platform" == "esp32" ]] || {
+        echo "--capture-readme-media is supported only by full --platform esp32" >&2
+        exit 2
+    }
 }
 
 require_port() {
@@ -115,6 +129,20 @@ write_manifest() {
     chmod 600 "$directory/manifest.json"
 }
 
+write_readme_media_manifest() {
+    local media_dir="$output_dir/readme-media"
+    local required
+    for required in device-lifecycle-tour.gif device-status.png; do
+        [[ -s "$media_dir/$required" ]] || {
+            echo "README media output is incomplete: $media_dir/$required" >&2
+            return 1
+        }
+    done
+    printf '{"schema":1,"project":"DeviceFramework","kind":"readme-media","status":"passed","platform":"esp32","created_at":"%s"}\n' \
+        "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$media_dir/manifest.json"
+    chmod 600 "$media_dir/manifest.json"
+}
+
 erase_and_upload() {
     local environment="$1"
     # Each visual fixture must start without a previous board's persisted
@@ -122,7 +150,21 @@ erase_and_upload() {
     # reflashed after erase; no other serial device is selected.
     refresh_local_first_party_dependencies "$environment"
     pio run -d test/compile-project -e "$environment" -t erase --upload-port "$port"
+    wait_for_serial_port
     pio run -d test/compile-project -e "$environment" -t upload --upload-port "$port"
+}
+
+wait_for_serial_port() {
+    local attempt
+    # Some USB-UART bridges briefly remove their tty node while the erased
+    # board resets.  Keep using only the caller-supplied stable path; never
+    # discover or substitute another connected device.
+    for attempt in {1..15}; do
+        [[ -e "$port" ]] && return 0
+        sleep 1
+    done
+    echo "Serial port did not return after erase: $port" >&2
+    return 1
 }
 
 refresh_local_first_party_dependencies() {
@@ -175,8 +217,8 @@ upload_station_fixture() {
 }
 
 wait_for_web_url() {
-    local hostname="${1:-df-web-${platform}.local}" resolved_host="" attempt status
-    if [[ -n "${DEVICEFRAMEWORK_TEST_DEVICE_HOST:-}" ]]; then
+    local hostname="${1:-df-web-${platform}.local}" allow_configured_host="${2:-yes}" resolved_host="" attempt status
+    if [[ "$allow_configured_host" == "yes" && -n "${DEVICEFRAMEWORK_TEST_DEVICE_HOST:-}" ]]; then
         resolved_host="$DEVICEFRAMEWORK_TEST_DEVICE_HOST"
     elif command -v avahi-resolve >/dev/null 2>&1; then
         for attempt in {1..45}; do
@@ -231,6 +273,13 @@ run_browser() {
     export DEVICE_UI_TEST_DEVICE_NAME="df-portal-${platform}"
     export LOCAL_UID="$(id -u)"
     export LOCAL_GID="$(id -g)"
+    if [[ "$capture_readme_media" == "yes" ]]; then
+        export DEVICE_UI_CAPTURE_README_MEDIA=1
+        export DEVICE_UI_DOCKER_TARGET=media
+    else
+        export DEVICE_UI_CAPTURE_README_MEDIA=0
+        export DEVICE_UI_DOCKER_TARGET=device-ui
+    fi
     compose_files=(-f "$project_dir/tests/device-ui/compose.yaml")
     if [[ -r "$env_file" && "$mode" == "portal" ]]; then
         station_mount="$(cd "$(dirname "$env_file")" && pwd)/$(basename "$env_file")"
@@ -246,6 +295,18 @@ run_browser() {
     fi
     sanitize_browser_artifacts "$directory"
     return "$browser_status"
+}
+
+render_readme_media() {
+    local directory="$1"
+    export DEVICE_UI_MODE=media-render
+    export DEVICE_UI_URL=http://127.0.0.1
+    export DEVICE_UI_ARTIFACT_DIR="$directory"
+    export DEVICE_UI_CAPTURE_README_MEDIA=1
+    export DEVICE_UI_DOCKER_TARGET=media
+    docker compose -f "$project_dir/tests/device-ui/compose.yaml" build device-ui
+    docker compose -f "$project_dir/tests/device-ui/compose.yaml" \
+        run --rm --entrypoint /work/render-readme-media.sh device-ui
 }
 
 sanitize_browser_artifacts() {
@@ -313,6 +374,7 @@ cleanup() {
 
 case "$command_name" in
     doctor)
+        [[ "$capture_readme_media" == "no" ]] || usage
         [[ -n "$client_interface" ]] || usage
         require_common
         dfui_acquire_hardware_lock
@@ -320,7 +382,7 @@ case "$command_name" in
         echo "DeviceFramework device-UI prerequisites are ready; primary route is untouched."
         ;;
     down)
-        [[ -z "$platform$port$client_interface$output_dir$web_url" ]] || usage
+        [[ -z "$platform$port$client_interface$output_dir$web_url" && "$capture_readme_media" == "no" ]] || usage
         dfui_acquire_hardware_lock
         dfui_load_state
         dfui_remove_portal_connection
@@ -328,6 +390,7 @@ case "$command_name" in
         ;;
     portal)
         validate_platform
+        validate_readme_media_capture
         require_common
         dfui_acquire_hardware_lock
         prepare_output_dir
@@ -338,6 +401,7 @@ case "$command_name" in
         ;;
     web)
         validate_platform
+        validate_readme_media_capture
         require_common
         dfui_acquire_hardware_lock
         prepare_output_dir
@@ -347,6 +411,7 @@ case "$command_name" in
         ;;
     full)
         validate_platform
+        validate_readme_media_capture
         require_common
         require_port
         [[ -n "$client_interface" ]] || usage
@@ -366,13 +431,19 @@ case "$command_name" in
         else
             # ESP32 can drop the portal client while moving AP+STA to the
             # selected station channel. The portal test has already proved
-            # the accepted save; now require the named DeviceFramework board
-            # to appear on the LAN before testing its own UI.
-            web_url="$(wait_for_web_url "df-portal-${platform}.local")"
+            # the accepted save; now require the just-provisioned named board
+            # to appear on the LAN. Do not reuse DEVICEFRAMEWORK_TEST_DEVICE_HOST:
+            # it is an optional standalone-web target and can still name the
+            # portal gateway from a prior local test session.
+            web_url="$(wait_for_web_url "df-portal-${platform}.local" no)"
         fi
         wait_for_station_status "$web_url"
         run_web "$output_dir/web"
         write_manifest full "$output_dir"
+        if [[ "$capture_readme_media" == "yes" ]]; then
+            render_readme_media "$output_dir"
+            write_readme_media_manifest
+        fi
         echo "DeviceFramework full portal-to-web contract passed. Artifacts: $output_dir"
         [[ "$keep" != "yes" ]] || echo "Portal client remains connected; run ./tools/device-ui-hardware down when finished."
         ;;

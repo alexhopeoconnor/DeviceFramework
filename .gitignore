@@ -13,3 +13,4 @@ scripts/endpoint-fetcher/obj/
 __pycache__/
 artifacts/ha-hardware/
 artifacts/device-ui/
+artifacts/readme-media/

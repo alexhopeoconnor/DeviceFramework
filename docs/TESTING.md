@@ -90,6 +90,48 @@ it receives the final save response. The harness accepts that transport change
 only after the selected test hostname resolves and the post-handoff web checks
 pass; a rejected or failed station association still fails the run.
 
+## Refresh README media
+
+README media is an explicit ESP32-only capture, not part of normal tests or
+CI. It runs the same real portal-to-station-to-web browser contract and writes
+candidate PNGs, videos, reports, and a manifest under the ignored
+`artifacts/readme-media/` directory by default:
+
+```bash
+./tools/device-ui-hardware full \
+  --platform esp32 \
+  --port /dev/serial/by-id/usb-... \
+  --client-interface USB_WIFI_ADAPTER \
+  --capture-readme-media
+```
+
+The capture records the branded provisioning portal, connected Device Status,
+WebSerial, and Controls journey. Review the printed artifact directory, or use
+`--output DIRECTORY` to retain it elsewhere. Promote the approved web assets
+only after review:
+
+```bash
+./tools/promote-readme-media \
+  --from artifacts/readme-media/TIMESTAMP-esp32 \
+  --replace
+./scripts/check-docs.sh
+```
+
+ESP8266 remains covered by the normal real-board tests but does not generate
+duplicate documentation media. The Home Assistant screenshot is captured
+separately by its pinned fixture. The command above preserves the existing HA
+image; when creating it for the first time or refreshing it, follow [Home
+Assistant hardware testing](HA_HARDWARE_TESTING.md#native-device-page-evidence)
+and add its `--ha-from artifacts/readme-media/ha-TIMESTAMP` argument to the
+promotion command.
+
+The renderer preserves the real portal and web recordings but presents the GIF
+at 1.25× duration and 5 fps, with deliberate pauses only in the media-only
+recording. Normal browser-contract timing and assertions are unchanged. The
+Docker renderer validates the GIF duration. The promotion command validates the
+successful capture manifest, media type, and size; it never copies raw videos,
+browser reports, or arbitrary artifact files.
+
 Run `./scripts/check-docs.sh` after changing Markdown, examples, or generated web assets. It verifies local documentation links, required guides, web assets, and that every numbered example remains a buildable project shape.
 
 CI always runs both compile-only variants. Hardware tests remain an explicit

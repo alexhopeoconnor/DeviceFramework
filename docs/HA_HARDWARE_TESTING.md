@@ -197,17 +197,31 @@ artifacts before deliberately replacing a baseline:
 ./tools/ha-hardware fixture --ui-capture --update-snapshots
 ```
 
-To preserve a successful run for manual review instead of the ignored default
-artifact path, choose an explicit output directory:
+To refresh the native Home Assistant screenshot used in DeviceFramework
+documentation, retain a successful fixture capture under the ignored README
+media artifact directory:
 
 ```bash
 ./tools/ha-hardware fixture --ui-capture \
-  --output ~/Desktop/DeviceFramework-Visual-Harness/$(date +%F)/ha-fixture
+  --output artifacts/readme-media/ha-$(date -u +%Y%m%dT%H%M%SZ)
 ```
 
 The directory contains the captured screenshots, discovery/state summaries, raw
 MQTT discovery data, and Playwright report. It contains no local Wi-Fi or MQTT
-credentials.
+credentials. After reviewing the native device-page screenshot, promote it with
+the corresponding successful ESP32 Device UI capture:
+
+```bash
+./tools/promote-readme-media \
+  --from artifacts/readme-media/DEVICE_UI_TIMESTAMP-esp32 \
+  --ha-from artifacts/readme-media/ha-TIMESTAMP \
+  --replace
+./scripts/check-docs.sh
+```
+
+The promotion tool only accepts a successful HA fixture summary and copies the
+native desktop device-page image; it does not copy reports, discovery data, or
+the test-suite pixel baselines.
 
 A retained visual session must be started with `--ha-version ui`; this selects the
 reviewed HA version without copying a version string into local configuration.

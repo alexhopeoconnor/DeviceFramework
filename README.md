@@ -2,6 +2,14 @@
 
 DeviceFramework is the ESP8266/ESP32 foundation for a complete connected device: interactive Wi-Fi provisioning, persistent configuration, MQTT and Home Assistant discovery, OTA updates, mDNS, and an optional local web interface. A firmware declares its identity and device-specific behaviour; the framework handles the shared lifecycle.
 
+## See the device lifecycle
+
+![A short DeviceFramework tour showing provisioning, connected status,
+WebSerial, and controls on an ESP32.](docs/assets/readme/device-lifecycle-tour.gif)
+
+Provision a device locally, then use its optional web UI, OTA, MQTT, and Home
+Assistant integration without repeating lifecycle boilerplate.
+
 ## Build a first device
 
 ```cpp

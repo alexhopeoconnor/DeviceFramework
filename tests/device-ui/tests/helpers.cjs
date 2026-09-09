@@ -18,6 +18,15 @@ async function capture(page, name, options = {}) {
   });
 }
 
+function readmeMediaPath(...parts) {
+  return artifactPath("readme-media", ...parts);
+}
+
+async function moveRecordedVideo(video, target) {
+  const source = await video.path();
+  fs.renameSync(source, target);
+}
+
 function writeArtifact(name, value) {
   fs.writeFileSync(artifactPath(name), `${JSON.stringify(value, null, 2)}\n`, { mode: 0o600 });
 }
@@ -78,11 +87,50 @@ function readStationCredentials() {
   return { ssid, password };
 }
 
+async function waitForDeviceStatus(request) {
+  let status;
+  await require("@playwright/test").expect.poll(async () => {
+    try {
+      const response = await request.get("/api/status", {
+        headers: {
+          Authorization: `Basic ${Buffer.from(`${process.env.DEVICE_UI_USERNAME}:${process.env.DEVICE_UI_PASSWORD}`).toString("base64")}`,
+        },
+      });
+      if (!response.ok()) return false;
+      status = await response.json();
+      return Boolean(status && status.hardware && status.runtime);
+    } catch {
+      return false;
+    }
+  }, { timeout: 20_000, intervals: [500, 800, 1_000] }).toBe(true);
+  return status;
+}
+
+async function navigateDevicePage(page, path, selector) {
+  for (let attempt = 0; attempt < 12; attempt += 1) {
+    try {
+      await page.goto(path, { waitUntil: "domcontentloaded" });
+      if (await page.locator(selector).isVisible({ timeout: 1_500 })) return;
+    } catch {
+      // The ESP8266 can deliberately reject a concurrent low-priority request
+      // while it completes a portal hand-off or closes WebSerial. Retrying the
+      // same independent page request proves it recovers without hiding a
+      // persistent failure.
+    }
+    await page.waitForTimeout(500);
+  }
+  throw new Error(`DeviceFramework page did not become ready: ${path}`);
+}
+
 module.exports = {
   artifactPath,
   attachBrowserDiagnostics,
   attachBrowserNetworkDiagnostics,
   capture,
+  moveRecordedVideo,
+  navigateDevicePage,
+  readmeMediaPath,
   readStationCredentials,
+  waitForDeviceStatus,
   writeArtifact,
 };

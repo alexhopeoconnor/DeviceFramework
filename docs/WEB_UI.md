@@ -5,6 +5,9 @@ setup. `DeviceFrameworkUIConfig` applies them to DeviceFramework's existing web
 interface and passes compatible presentation settings to WiFiManager's existing
 provisioning portal.
 
+![DeviceFramework Device Status page on an ESP32 after the provisioning portal
+has handed off to a station network.](assets/readme/device-status.png)
+
 ## Configure once before setup
 
 UI values are non-owning static data in RAM or PROGMEM. Configure them before
