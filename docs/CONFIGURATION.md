@@ -27,7 +27,7 @@ Configuration has one normal runtime owner: the current V4 storage record. Frame
 A selected local profile is compiled into the image and evaluated at boot.
 Editing its JSON has no effect until that new image is uploaded. The order is:
 
-```cpp
+```text
 registerParametersWithDefaults();  // framework and sketch defaults
 loadPersistentStorage();           // matching stored configuration; migrate if needed
 applyProfileIfEligible();          // optional bootstrap or changed reconcile revision
@@ -119,21 +119,32 @@ DeviceFramework 2.1.x records are DFC3. They are deliberately not decoded by 2.2
 Use the public API to rotate it at runtime:
 
 ```cpp
-if (!DeviceFramework::setDevicePassword("new-local-password")) {
-    // Invalid value or verified storage write failed; the old password remains active.
+void rotateDevicePassword() {
+    if (!DeviceFramework::setDevicePassword("new-local-password")) {
+        // Invalid value or verified storage write failed; the old password remains active.
+        return;
+    }
+
+    // Restart with the framework marker so every protected transport reloads it.
+    DeviceFramework::restart(DeviceFrameworkRestartReason::PasswordChanged);
 }
 ```
 
-The optional web interface provides the same operation at **System Controls → Device Password**. The one active value protects the provisioning AP, Arduino OTA, HTTP Basic authentication, and WebSerial. For OTA, the build-time profile supplies `espota --auth`; after runtime rotation, update that ignored JSON value before the next OTA upload. Matching the JSON only authenticates the uploader—the verified V4 record remains the device’s runtime source of truth.
+The optional web interface provides the same operation at **System Controls → Device Password**. The one active value protects the provisioning AP, Arduino OTA, HTTP Basic authentication, and WebSerial. For OTA, the build-time profile supplies `espota --auth`; after runtime rotation, update that ignored JSON value before the next OTA upload. Matching the JSON only authenticates the uploader—the verified V4 record remains the device’s runtime source of truth. ESP32 OTA also requires an A/B-capable partition table installed by USB/serial; see [Target organization](TARGETS.md#esp32-ota-partitions).
 
 ## ESP8266 mDNS heap guard
 
 The ESP8266 core allocates from its Wi-Fi system context while probing and parsing multicast mDNS traffic. DeviceFramework therefore starts and keeps the responder active only when it has both 4 KB free heap and a 4 KB contiguous heap block. When headroom drops, it closes the responder before lwIP can parse another multicast packet; the normal network loop starts it again once headroom returns. On ESP8266, DeviceFramework also starts ArduinoOTA without its independent mDNS path, so this remains the single responder lifecycle. OTA remains available at its normal UDP port by IP at all times, and by the configured hostname while the responder has headroom. This avoids an allocator reset when otherwise-adequate free heap is fragmented. A numeric endpoint such as an MQTT broker IP bypasses mDNS resolution while the responder is deferred. The guard is sampled at most every 25 ms, rather than every application-loop iteration, because the ESP8266 heap-stat query itself scans allocator state. These are conservative defaults. Leave them unchanged unless measurement on the target device shows a different trade-off is required.
 
+For a measured target that needs a more conservative guard, call a helper before
+`DeviceFramework::setup()`:
+
 ```cpp
-setConfigMDNSMinFreeHeap(5120);      // Require 5 KB total free heap before mDNS work.
-setConfigMDNSMinLargestBlock(5120);  // Require a 5 KB contiguous block before mDNS work.
-setConfigMDNSUpdateInterval(50);     // Check and process mDNS at most 20 times per second.
+void configureMDNSHeapGuard() {
+    setConfigMDNSMinFreeHeap(5120);      // Require 5 KB total free heap before mDNS work.
+    setConfigMDNSMinLargestBlock(5120);  // Require a 5 KB contiguous block before mDNS work.
+    setConfigMDNSUpdateInterval(50);     // Check and process mDNS at most 20 times per second.
+}
 ```
 
 `DeviceFrameworkMDNS::getUpdateCount()` and
@@ -149,12 +160,15 @@ Use a migration callback only after increasing `CONFIGURATION_SCHEMA` for a sema
 
 ```cpp
 inline bool migrate(uint16_t fromSchema, DeviceFrameworkConfigMigration& values) {
+    // This firmware understands the previous schema only.
     if (fromSchema != 1) return false;
+    // Preserve the old meaning while moving the value to its new unit and ID.
     return values.rename("sampleperiod", "sampleinterval") &&
            values.multiplyUInt("sampleinterval", 60);
 }
 
 inline bool configure() {
+    // Bump the schema only because this migration changes a saved value's meaning.
     return DeviceFramework::configureApplication(
         APPLICATION_ID, FIRMWARE_VERSION, 2, migrate
     );

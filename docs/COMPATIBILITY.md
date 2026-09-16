@@ -2,7 +2,7 @@
 
 DeviceFramework releases document the library stack in one place instead of duplicating a compatibility table in every dependency.
 
-| DeviceFramework | WiFiManager | DFTE | ArduinoHA | Platforms |
+| DeviceFramework | WiFiManager | DFTE | ArduinoHA (`home-assistant-integration`) | Platforms |
 | --- | --- | --- | --- | --- |
 | 2.8.x | 3.2.4 | 1.2.1 | 3.2.1 | ESP8266, ESP32 |
 | 2.7.x | 3.2.1 | 1.2.0 | 3.1.0 | ESP8266, ESP32 |

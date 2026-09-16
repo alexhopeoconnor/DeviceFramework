@@ -1,0 +1,12 @@
+# 4 MB ESP32: two equal OTA application slots and no filesystem.
+#
+# DeviceFramework's web assets are compiled into the firmware image. This is
+# the maintained ESP32 test layout: it leaves each application 0x1F0000 bytes
+# (~1.94 MiB), which is larger than Arduino-ESP32's default 0x140000-byte OTA
+# slots while retaining safe A/B OTA updates.
+# Name,   Type, SubType, Offset,   Size,     Flags
+nvs,      data, nvs,     0x9000,   0x5000,
+otadata,  data, ota,     0xe000,   0x2000,
+app0,     app,  ota_0,   0x10000,  0x1F0000,
+app1,     app,  ota_1,   0x200000, 0x1F0000,
+coredump, data, coredump,0x3F0000, 0x10000,

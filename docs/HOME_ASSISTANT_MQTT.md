@@ -79,23 +79,26 @@ hand-writing parallel MQTT parsing. For example, a selectable motion-sensor
 mode:
 
 ```cpp
-DeviceFrameworkParameterMetadata mode;
-mode.id = "motionmode";
-mode.label = "Motion sensitivity";
-mode.defaultValue = "normal";
-mode.maxLength = 8;
-mode.order = 80;
-mode.valueType = DeviceFrameworkParameterValueType::Enum;
-mode.allowedValues = "quiet;normal;high";
-mode.sources = SOURCE_WIFI_MANAGER | SOURCE_HOME_ASSISTANT;
-mode.htmlAttributes.inputType = "select";
-mode.htmlAttributes.options = "quiet;normal;high";
-mode.haDeviceType = HAConfigDeviceType::SELECT;
-mode.haConstraints.options = "quiet;normal;high";
-DeviceFramework::getParameterRegistry().registerParameter(mode);
+void registerMotionMode() {
+    DeviceFrameworkParameterMetadata mode;
+    mode.id = "motionmode";
+    mode.label = "Motion sensitivity";
+    mode.defaultValue = "normal";
+    mode.maxLength = 8;
+    mode.order = 80;
+    mode.valueType = DeviceFrameworkParameterValueType::Enum;
+    mode.allowedValues = "quiet;normal;high";
+    mode.sources = SOURCE_WIFI_MANAGER | SOURCE_HOME_ASSISTANT;
+    mode.htmlAttributes.inputType = "select";
+    mode.htmlAttributes.options = "quiet;normal;high";
+    mode.haDeviceType = HAConfigDeviceType::SELECT;
+    mode.haConstraints.options = "quiet;normal;high";
+    DeviceFramework::getParameterRegistry().registerParameter(mode);
+}
 ```
 
-The framework validates incoming portal and HA values, updates the registry,
+Call `registerMotionMode()` from the `beforeSetup()` registration callback. The
+framework validates incoming portal and HA values, updates the registry,
 persists framework-originated edits, keeps the other supported surface in sync,
 and performs a paced full parameter re-sync after MQTT returns. Your change
 callback should only request a non-blocking hardware update; see

@@ -79,13 +79,15 @@ For enum/select values, use the same semicolon-separated options on both
 surfaces:
 
 ```cpp
-mode.valueType = DeviceFrameworkParameterValueType::Enum;
-mode.allowedValues = "auto;quiet;boost";
-mode.sources = SOURCE_WIFI_MANAGER | SOURCE_HOME_ASSISTANT;
-mode.htmlAttributes.inputType = "select";
-mode.htmlAttributes.options = "auto;quiet;boost";
-mode.haDeviceType = HAConfigDeviceType::SELECT;
-mode.haConstraints.options = "auto;quiet;boost";
+void configureModeMetadata(DeviceFrameworkParameterMetadata& mode) {
+    mode.valueType = DeviceFrameworkParameterValueType::Enum;
+    mode.allowedValues = "auto;quiet;boost";
+    mode.sources = SOURCE_WIFI_MANAGER | SOURCE_HOME_ASSISTANT;
+    mode.htmlAttributes.inputType = "select";
+    mode.htmlAttributes.options = "auto;quiet;boost";
+    mode.haDeviceType = HAConfigDeviceType::SELECT;
+    mode.haConstraints.options = "auto;quiet;boost";
+}
 ```
 
 ## Defaults, saved values, profiles, and live updates
@@ -115,9 +117,11 @@ supported surfaces, but do **not** implicitly save. Call
 wants to commit such a direct change:
 
 ```cpp
-auto& parameters = DeviceFramework::getParameterRegistry();
-if (parameters.setValue(kSampleInterval, 15)) {
-    DeviceFramework::saveParameters();
+void setSampleInterval(uint16_t seconds) {
+    auto& parameters = DeviceFramework::getParameterRegistry();
+    if (parameters.setValue(kSampleInterval, String(seconds))) {
+        DeviceFramework::saveParameters();
+    }
 }
 ```
 

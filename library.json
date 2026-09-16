@@ -74,6 +74,7 @@
       "assets",
       "src",
       "examples",
+      "partitions",
       "README.md",
       "CHANGELOG.md",
       "LICENSE",

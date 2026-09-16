@@ -55,16 +55,18 @@ pressure.
 The counters are available to a sketch for its own diagnostic surface; they are not a versioned extension to the built-in status JSON:
 
 ```cpp
-const DeviceFrameworkWebResourceStats web = DeviceFrameworkWeb::getResourceStats();
-Serial.printf("web: streams=%u ws=%u stream-rejected=%lu (memory=%lu capacity=%lu) ws-rejected=%lu evicted=%lu dropped=%lu\n",
-              web.activeStreamResponses,
-              web.activeWebSerialClients,
-              static_cast<unsigned long>(web.rejectedStreamResponses),
-              static_cast<unsigned long>(web.rejectedStreamResponsesForMemory),
-              static_cast<unsigned long>(web.rejectedStreamResponsesForCapacity),
-              static_cast<unsigned long>(web.rejectedWebSerialClients),
-              static_cast<unsigned long>(web.evictedWebSerialClients),
-              static_cast<unsigned long>(web.droppedWebSerialBytes));
+void logWebResourceStats() {
+    const DeviceFrameworkWebResourceStats web = DeviceFrameworkWeb::getResourceStats();
+    Serial.printf("web: streams=%u ws=%u stream-rejected=%lu (memory=%lu capacity=%lu) ws-rejected=%lu evicted=%lu dropped=%lu\n",
+                  web.activeStreamResponses,
+                  web.activeWebSerialClients,
+                  static_cast<unsigned long>(web.rejectedStreamResponses),
+                  static_cast<unsigned long>(web.rejectedStreamResponsesForMemory),
+                  static_cast<unsigned long>(web.rejectedStreamResponsesForCapacity),
+                  static_cast<unsigned long>(web.rejectedWebSerialClients),
+                  static_cast<unsigned long>(web.evictedWebSerialClients),
+                  static_cast<unsigned long>(web.droppedWebSerialBytes));
+}
 ```
 
 rejectedStreamResponses remains the aggregate for lightweight existing diagnostics. The reason counters distinguish a deliberately conservative memory-headroom refusal from the configured concurrent-response capacity.

@@ -91,8 +91,11 @@ application's compact restart-resilient state:
 
 ```cpp
 struct RelayIntent { uint8_t requestedOn; };
-RelayIntent intent{1};
-DeviceFrameworkRtcBlob::write("example.relay_intent", &intent, sizeof(intent));
+
+void saveRelayIntent(bool requestedOn) {
+    const RelayIntent intent{requestedOn ? 1 : 0};
+    DeviceFrameworkRtcBlob::write("example.relay_intent", &intent, sizeof(intent));
+}
 ```
 
 `write(name, data, len)`, `read(name, data, capacity, outLen?)`, and

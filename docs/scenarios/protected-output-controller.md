@@ -71,8 +71,11 @@ view and avoids an automation believing a load is running when it is not.
 
 ```cpp
 struct OutputIntent { uint8_t requestedOn; };
-OutputIntent intent{requestedOn ? 1 : 0};
-DeviceFrameworkRtcBlob::write("load.intent", &intent, sizeof(intent));
+
+void saveOutputIntent() {
+    const OutputIntent intent{requestedOn ? 1 : 0};
+    DeviceFrameworkRtcBlob::write("load.intent", &intent, sizeof(intent));
+}
 ```
 
 Read it only after driving the safe GPIO level, validate it, and pass it back

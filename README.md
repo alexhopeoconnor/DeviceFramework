@@ -17,16 +17,18 @@ Assistant integration without repeating lifecycle boilerplate.
 #include "FirmwareIdentity.h"
 
 void setup() {
+    // Configure identity before the framework reads persisted configuration.
     FirmwareIdentity::configure();
     DeviceFramework::beforeSetup([] {
+        // Register defaults and entities before saved values are restored.
         auto& parameters = DeviceFramework::getParameterRegistry();
         parameters.setDefaultValue(DeviceFrameworkParameters::PARAM_DEVICE_NAME, "Example device");
     });
-    DeviceFramework::setup();
+    DeviceFramework::setup();  // Starts provisioning, connectivity, and framework services.
 }
 
 void loop() {
-    DeviceFramework::loop();
+    DeviceFramework::loop();  // Advances every framework-managed service.
 }
 ```
 
@@ -78,7 +80,8 @@ dependencies.
 See the [documentation index](docs/README.md) for the complete map, including
 [getting started](docs/GETTING_STARTED.md), [configuration](docs/CONFIGURATION.md),
 [web UI branding](docs/WEB_UI.md), [web resource limits](docs/WEB_RESOURCES.md),
-and [examples](examples/README.md).
+the [toolchain and cache guide](docs/TOOLCHAINS.md), and
+[examples](examples/README.md).
 
 ## Documentation by task
 
@@ -87,9 +90,16 @@ want to add.
 
 | When you need to… | Read |
 | --- | --- |
+| Build a first device or understand the setup lifecycle | [Getting started](docs/GETTING_STARTED.md) |
 | Understand exact `setup()`/`loop()` ordering, portal mode, and hardware boot policy | [Lifecycle](docs/LIFECYCLE.md) |
 | Add durable editable settings with portal and Home Assistant presentation | [Parameters](docs/PARAMETERS.md) |
 | Add native ArduinoHA entities or a custom MQTT command | [Home Assistant and MQTT](docs/HOME_ASSISTANT_MQTT.md) |
 | Look up supported sketch-facing APIs and advanced constraints | [API reference](docs/API_REFERENCE.md) |
+| Provision with a private profile, migrate V4 data, or rotate a password | [Configuration and profiles](docs/CONFIGURATION.md) |
+| Brand the existing admin UI and provisioning portal together | [Web UI and provisioning branding](docs/WEB_UI.md) |
+| Choose an ESP target pin or repair a stale PlatformIO tool package | [Toolchains and package cache](docs/TOOLCHAINS.md) |
 | Deploy, reset, rotate credentials, or diagnose field behaviour | [Operations](docs/OPERATIONS.md) and [Troubleshooting](docs/TROUBLESHOOTING.md) |
 | Build a sensor, protected controller, presence light, or product family | [Real-world scenarios](docs/SCENARIOS.md) |
+| See tested dependency versions and supported targets | [Compatibility](docs/COMPATIBILITY.md) |
+| Run compile or connected-device checks | [Testing](docs/TESTING.md) |
+| Work on the framework or prepare a release | [Development and releases](docs/DEVELOPMENT.md) |

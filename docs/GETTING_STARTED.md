@@ -27,11 +27,12 @@ Create `include/FirmwareIdentity.h`:
 #include <DeviceFramework.h>
 
 namespace FirmwareIdentity {
-static const char APPLICATION_ID[] = "example-device";
-static const char FIRMWARE_VERSION[] = "1.0.0";
-static const uint16_t CONFIGURATION_SCHEMA = 1;
+static const char APPLICATION_ID[] = "example-device";  // Stable across ordinary releases.
+static const char FIRMWARE_VERSION[] = "1.0.0";         // Reported by the running device.
+static const uint16_t CONFIGURATION_SCHEMA = 1;           // Changes only with a semantic migration.
 
 inline bool configure() {
+    // Must run before framework setup reads persisted configuration.
     return DeviceFramework::configureApplication(
         APPLICATION_ID, FIRMWARE_VERSION, CONFIGURATION_SCHEMA
     );
@@ -46,15 +47,17 @@ inline bool configure() {
 ```cpp
 void setup() {
     FirmwareIdentity::configure();
+
+    // Register defaults and entities before saved configuration is loaded.
     DeviceFramework::beforeSetup([]() {
         auto& registry = DeviceFramework::getParameterRegistry();
         registry.setDefaultValue(DeviceFrameworkParameters::PARAM_DEVICE_NAME, "Example device");
     });
-    DeviceFramework::setup();
+    DeviceFramework::setup();  // Starts Wi-Fi, MQTT, OTA, and optional web services.
 }
 
 void loop() {
-    DeviceFramework::loop();
+    DeviceFramework::loop();  // Services the framework instead of duplicating subsystem loops.
 }
 ```
 

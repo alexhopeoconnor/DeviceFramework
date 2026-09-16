@@ -29,7 +29,7 @@ CI runs these normal and profile-fixture checks for every push and pull request,
 
 The normal ESP8266 command also checks the web-interface-free configuration.
 
-## ESP32 framework pin
+## Target toolchains
 
 The maintained ESP32 environments use the PlatformIO-compatible
 `pioarduino/platform-espressif32` 55.03.311 package. It packages Espressif's
@@ -48,6 +48,13 @@ header. ESP32 environments also ignore `ESPAsyncTCP`, which is the ESP8266-only
 transport; `AsyncTCP` is selected instead. The maintained PlatformIO files
 already carry these settings—copy them when creating another ESP32 consuming
 sketch.
+
+The framework pin belongs to each `platformio.ini`, not to `library.json`; a
+consuming application owns its platform selection and validation. See
+[PlatformIO toolchains and package cache](TOOLCHAINS.md) for the complete pin
+rationale, ESP8266 linker workaround, and narrow recovery for a stale shared
+toolchain. Do not replace a platform-owned compiler package with an unrelated
+`platform_packages` toolchain override.
 
 ## Run the connected-device suite
 

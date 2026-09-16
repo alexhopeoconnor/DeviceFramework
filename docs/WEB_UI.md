@@ -24,13 +24,15 @@ tokens. WiFiManager owns provisioning routes, forms, navigation, captive
 behavior, and its browser protocol. DeviceFramework uses only WiFiManager's
 public `setPortalConfig()` API; WiFiManager never depends on DeviceFramework.
 
-This is source-owned presentation, not deployment configuration. It does not
-create routes, custom pages, stored fields, profile values, or schema
-migrations. A firmware may opt into one fixed framework-owned **About** section
-with a short summary and up to two static HTTPS links.
+This is source-owned presentation configuration, not deployment configuration.
+It creates no routes, consumer-defined pages, arbitrary HTML surfaces, stored
+fields, profile values, or schema migrations. A firmware may opt into one fixed
+framework-owned **About** section with a short summary and up to two static
+HTTPS links.
 
 ```cpp
 #include <DeviceFramework.h>
+#include "FirmwareIdentity.h"
 
 namespace {
 const char kBrand[] PROGMEM = "Example Devices";
@@ -43,10 +45,15 @@ const char kSurface[] PROGMEM = "#ffffff";
 const char kText[] PROGMEM = "#1c251e";
 const char kAccent[] PROGMEM = "#347a45";
 const char kAccentText[] PROGMEM = "#ffffff";
+const char kAbout[] PROGMEM = "A compact connected controller for the workshop.";
+const char kWebsiteLabel[] PROGMEM = "Example Devices";
+const char kWebsiteUrl[] PROGMEM = "https://example.test";
 }
 
 void configureUI() {
     DeviceFrameworkUIConfig ui;
+
+    // These values appear in the existing web UI and provisioning portal.
     ui.branding.brandName = DeviceFrameworkText::progmem(kBrand);
     ui.branding.productName = DeviceFrameworkText::progmem(kProduct);
     ui.branding.provisioningTitle = DeviceFrameworkText::progmem(kSetupTitle);
@@ -61,13 +68,29 @@ void configureUI() {
     ui.theme.accentText = DeviceFrameworkText::progmem(kAccentText);
     ui.theme.cornerRadiusPx = 10;
 
+    // The About section is optional; assign it before applying the config.
+    ui.about.summary = DeviceFrameworkText::progmem(kAbout);
+    ui.about.primaryLink = {
+        DeviceFrameworkText::progmem(kWebsiteLabel),
+        DeviceFrameworkText::progmem(kWebsiteUrl),
+    };
+
+    // Apply the complete presentation config before framework services start.
     DeviceFramework::setUIConfig(ui);
 }
 
 void setup() {
+    // Configure persistent identity before the framework reads saved values.
+    FirmwareIdentity::configure();
     configureUI();
-    DeviceFramework::beforeSetup([] { /* register parameters */ });
-    DeviceFramework::setup();
+    DeviceFramework::beforeSetup([] {
+        // Register parameters and Home Assistant entities here.
+    });
+    DeviceFramework::setup();  // Starts the configured framework services.
+}
+
+void loop() {
+    DeviceFramework::loop();  // Services the framework instead of duplicate loops.
 }
 ```
 
@@ -97,19 +120,7 @@ The generated web-theme block contains only CSS custom-property values. Existing
 
 ## Optional product About section
 
-The framework owns the markup, navigation, spacing, and safe link attributes. A product only supplies plain static text and at most two complete label/HTTPS URL pairs:
-
-```cpp
-const char kAbout[] PROGMEM = "A compact connected controller for the workshop.";
-const char kWebsiteLabel[] PROGMEM = "Example Devices";
-const char kWebsiteUrl[] PROGMEM = "https://example.test";
-
-ui.about.summary = DeviceFrameworkText::progmem(kAbout);
-ui.about.primaryLink = {
-    DeviceFrameworkText::progmem(kWebsiteLabel),
-    DeviceFrameworkText::progmem(kWebsiteUrl),
-};
-```
+The `ui.about` assignments in the complete setup example above are optional. The framework owns the markup, navigation, spacing, and safe link attributes; a product only supplies plain static text and at most two complete label/HTTPS URL pairs.
 
 Links are optional, but a label and URL must be provided together. URLs must use
 `https://` and are validated before setup; labels and summary are HTML-escaped

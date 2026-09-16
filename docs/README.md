@@ -8,6 +8,7 @@
 | Add native ArduinoHA entities or custom MQTT commands | [Home Assistant and MQTT](HOME_ASSISTANT_MQTT.md) |
 | Look up supported sketch-facing APIs and advanced caveats | [API reference](API_REFERENCE.md) |
 | Add another board family or inspect the target layout | [Target organization](TARGETS.md) |
+| Understand framework pins or diagnose a PlatformIO package-cache mismatch | [PlatformIO toolchains and package cache](TOOLCHAINS.md) |
 | Use local profiles, migration, reset, or the shared password | [Configuration and profiles](CONFIGURATION.md) |
 | Deploy, reset, rotate credentials, or diagnose a device | [Operations](OPERATIONS.md) and [Troubleshooting](TROUBLESHOOTING.md) |
 | Tune web work for an unusually constrained or resource-heavy device | [Web resource limits](WEB_RESOURCES.md) |

@@ -33,7 +33,11 @@ new value before it becomes the runtime authority. Restart after a successful
 programmatic rotation so already-started transports use the new value:
 
 ```cpp
-if (DeviceFramework::setDevicePassword("new-local-password")) {
+void rotateDevicePassword() {
+    if (!DeviceFramework::setDevicePassword("new-local-password")) {
+        return;  // The verified stored password remains active.
+    }
+
     DeviceFramework::restart(DeviceFrameworkRestartReason::PasswordChanged);
 }
 ```
