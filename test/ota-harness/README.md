@@ -46,6 +46,14 @@ automatic outage plus two fresh B marker observations. It leaves the board in
 the clean no-station portal state; its temporary adapter connection is removed
 unless `--keep` is requested.
 
+The dedicated adapter is a host-side NetworkManager resource, not an OTA
+profile secret. A graphical Polkit session may authorize it directly. A
+headless runner validates sudo before flashing and elevates only its named
+adapter and generated connection actions; it does not run the browser runner
+or store private artifacts as root. See
+[`docs/TESTING.md`](../../docs/TESTING.md#networkmanager-authorization) for
+the `DFUI_NMCLI_AUTH` behavior.
+
 ## Station ArduinoOTA
 
 The station-mode environments intentionally take their profile path from

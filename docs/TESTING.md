@@ -103,6 +103,25 @@ so normal LAN and internet traffic stay on the primary adapter:
   --output ~/Desktop/DeviceFramework-Visual-Harness/$(date +%F)/esp8266
 ```
 
+### NetworkManager authorization
+
+The secondary portal adapter is host setup, not a test credential. The runner
+never reads a sudo password from ignored `test/.env`, a profile, or source
+control. `doctor` reports whether NetworkManager is directly authorized or
+whether a headless invocation will need scoped sudo. A graphical desktop can
+normally use Polkit directly. In SSH or another session with no Polkit agent,
+the runner visibly validates `sudo -v` before it erases or flashes the board,
+then uses `sudo -n nmcli` only for scanning, joining, and removing the generated
+connection on the named secondary adapter.
+
+`DFUI_NMCLI_AUTH=auto` is the default. Set `DFUI_NMCLI_AUTH=sudo` to require
+that same scoped path deliberately, or `DFUI_NMCLI_AUTH=direct` only when a
+working Polkit policy grants the actions already. Do not run the whole runner
+as root: private state, credentials, and browser artifacts remain owned by the
+developer. A lost sudo ticket stops with a clear host-authorization error; it
+is never silently reclassified as a missing portal SSID. `down` uses the same
+scoped path to remove a retained connection.
+
 `full` erases and reflashes only the named board, runs the real portal-to-station
 journey, and leaves screenshots, browser diagnostics, and a credential-free
 manifest in the supplied directory. It reads the ignored `test/.env` only at

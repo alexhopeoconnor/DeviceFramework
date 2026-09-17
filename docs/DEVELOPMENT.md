@@ -103,7 +103,10 @@ To inspect the browser-facing DeviceFramework-to-WiFiManager integration on a
 board, use `./tools/device-ui-hardware`. It uses only an explicitly named
 secondary Wi-Fi adapter for the portal and will refuse the primary/default-route
 adapter. The [testing guide](TESTING.md#browser-evidence-on-a-real-board) has the
-complete command and artifact contract.
+complete command, host-authorization, and artifact contract. In a headless SSH
+session it may validate sudo before flashing so only scoped NetworkManager
+actions on that adapter are elevated; do not put sudo data in `test/.env` or
+run the complete browser runner as root.
 
 ## Work against sibling checkouts
 

@@ -13,6 +13,106 @@ dfui_require() {
     }
 }
 
+dfui_nmcli_permission() {
+    local permission="$1"
+    awk -F: -v permission="$permission" '$1 == permission { print $2; exit }' \
+        <<<"${DFUI_NMCLI_PERMISSIONS:-}"
+}
+
+dfui_prepare_networkmanager_authorization() {
+    # A graphical Polkit agent can authorize direct nmcli actions. SSH and
+    # other headless shells often lack one, so select the scoped sudo path
+    # before the board is erased instead of hiding a rejected scan and calling
+    # it an AP-discovery failure later.
+    local permission value direct=yes
+    case "${DFUI_NMCLI_AUTH:-auto}" in
+        auto|direct|sudo) ;;
+        *)
+            echo 'DFUI_NMCLI_AUTH must be auto, direct, or sudo.' >&2
+            return 2
+            ;;
+    esac
+    [[ "${DFUI_NMCLI_AUTH_READY:-no}" == yes ]] && return 0
+
+    DFUI_NMCLI_PERMISSIONS="$(nmcli -t -f PERMISSION,VALUE general permissions 2>/dev/null || true)"
+    for permission in \
+        org.freedesktop.NetworkManager.wifi.scan \
+        org.freedesktop.NetworkManager.network-control \
+        org.freedesktop.NetworkManager.settings.modify.system; do
+        value="$(dfui_nmcli_permission "$permission")"
+        [[ "$value" == yes ]] || direct=no
+    done
+
+    case "${DFUI_NMCLI_AUTH:-auto}" in
+        direct)
+            DFUI_NMCLI_MODE=direct
+            ;;
+        sudo)
+            DFUI_NMCLI_MODE=sudo
+            ;;
+        auto)
+            if [[ "$direct" == yes ]]; then
+                DFUI_NMCLI_MODE=direct
+            elif [[ -z "${DISPLAY:-}" && -z "${WAYLAND_DISPLAY:-}" && -z "${DBUS_SESSION_BUS_ADDRESS:-}" ]]; then
+                DFUI_NMCLI_MODE=sudo
+            else
+                # Let a graphical Polkit agent authorize the command. Any
+                # genuine NetworkManager error remains visible to the caller.
+                DFUI_NMCLI_MODE=direct
+            fi
+            ;;
+    esac
+
+    if [[ "$DFUI_NMCLI_MODE" == sudo ]]; then
+        command -v sudo >/dev/null 2>&1 || {
+            echo 'NetworkManager requires authorization, but sudo is unavailable. Use a graphical Polkit session or install/configure sudo.' >&2
+            return 1
+        }
+        echo 'NetworkManager requires scoped authorization for the named portal adapter; validating sudo before the board is flashed.' >&2
+        sudo -v || {
+            echo 'Could not validate sudo for the scoped NetworkManager portal actions.' >&2
+            return 1
+        }
+    fi
+    DFUI_NMCLI_AUTH_READY=yes
+    export DFUI_NMCLI_MODE DFUI_NMCLI_AUTH_READY DFUI_NMCLI_PERMISSIONS
+}
+
+dfui_report_networkmanager_authorization() {
+    local permission value direct=yes
+    DFUI_NMCLI_PERMISSIONS="$(nmcli -t -f PERMISSION,VALUE general permissions 2>/dev/null || true)"
+    for permission in \
+        org.freedesktop.NetworkManager.wifi.scan \
+        org.freedesktop.NetworkManager.network-control \
+        org.freedesktop.NetworkManager.settings.modify.system; do
+        value="$(dfui_nmcli_permission "$permission")"
+        [[ "$value" == yes ]] || direct=no
+    done
+    if [[ "$direct" == yes ]]; then
+        echo 'NetworkManager portal authorization: direct.'
+    elif [[ -z "${DISPLAY:-}" && -z "${WAYLAND_DISPLAY:-}" && -z "${DBUS_SESSION_BUS_ADDRESS:-}" ]]; then
+        echo 'NetworkManager portal authorization: scoped sudo will be requested before a portal command flashes the board.'
+    else
+        echo 'NetworkManager portal authorization: graphical Polkit may authorize actions; set DFUI_NMCLI_AUTH=sudo to use scoped sudo instead.'
+    fi
+}
+
+dfui_nmcli() {
+    # The browser runner, its artifacts, and its private state remain owned by
+    # the developer. Only these named NetworkManager actions use sudo when the
+    # preflight selected it, and they remain constrained to the explicit
+    # non-default adapter or a generated temporary connection.
+    if [[ "${DFUI_NMCLI_MODE:-direct}" == sudo ]]; then
+        sudo -n true || {
+            echo 'The sudo authorization for scoped NetworkManager actions expired; run sudo -v and retry the portal command.' >&2
+            return 1
+        }
+        sudo -n -- nmcli "$@"
+    else
+        nmcli "$@"
+    fi
+}
+
 dfui_default_route_interface() {
     ip route show default 2>/dev/null | awk '/^default/{print $5; exit}'
 }
@@ -39,7 +139,7 @@ dfui_require_client_adapter() {
         echo "Refusing to use the host default-route interface: $interface" >&2
         return 1
     }
-    active_connection="$(nmcli -g GENERAL.CONNECTION device show "$interface" 2>/dev/null || true)"
+    active_connection="$(dfui_nmcli -g GENERAL.CONNECTION device show "$interface" 2>/dev/null || true)"
     if [[ -n "$active_connection" && "$active_connection" != "--" && "$allow_takeover" != "yes" ]]; then
         echo "Client adapter $interface already has connection '$active_connection'." >&2
         echo "Pass --take-over-client-adapter to replace only that adapter's connection." >&2
@@ -56,14 +156,24 @@ dfui_portal_ssid() {
 }
 
 dfui_wait_for_portal_ssid() {
-    local interface="$1" ssid="$2" attempt
-    nmcli device wifi rescan ifname "$interface" >/dev/null 2>&1 || true
+    local interface="$1" ssid="$2" attempt advertised
+    if ! dfui_nmcli device wifi rescan ifname "$interface"; then
+        echo "NetworkManager could not scan the selected portal adapter: $interface" >&2
+        return 1
+    fi
     for attempt in $(seq 1 45); do
-        if nmcli -t -f SSID device wifi list ifname "$interface" | grep -Fxq "$ssid"; then
+        if ! advertised="$(dfui_nmcli -t -f SSID device wifi list ifname "$interface")"; then
+            echo "NetworkManager could not read Wi-Fi scan results from $interface." >&2
+            return 1
+        fi
+        if grep -Fxq "$ssid" <<<"$advertised"; then
             return 0
         fi
         sleep 1
-        nmcli device wifi rescan ifname "$interface" >/dev/null 2>&1 || true
+        if ! dfui_nmcli device wifi rescan ifname "$interface"; then
+            echo "NetworkManager could not refresh Wi-Fi scan results from $interface." >&2
+            return 1
+        fi
     done
     echo "DeviceFramework portal SSID was not detected on $interface: $ssid" >&2
     return 1
@@ -72,8 +182,8 @@ dfui_wait_for_portal_ssid() {
 dfui_remove_connection_by_name() {
     local name="$1"
     [[ -n "$name" ]] || return 0
-    nmcli connection down "$name" >/dev/null 2>&1 || true
-    nmcli connection delete "$name" >/dev/null 2>&1 || true
+    dfui_nmcli connection down "$name" >/dev/null 2>&1 || true
+    dfui_nmcli connection delete "$name" >/dev/null 2>&1 || true
 }
 
 dfui_create_portal_connection() {
@@ -94,12 +204,12 @@ dfui_create_portal_connection() {
         unset DFUI_PORTAL_CONNECTION_UUID DFUI_PORTAL_CONNECTION_NAME
         return 1
     fi
-    nmcli device disconnect "$interface" >/dev/null 2>&1 || true
+    dfui_nmcli device disconnect "$interface" >/dev/null 2>&1 || true
     if ! dfui_wait_for_portal_ssid "$interface" "$ssid"; then
         dfui_remove_portal_connection
         return 1
     fi
-    if ! nmcli connection add type wifi ifname "$interface" con-name "$name" ssid "$ssid" \
+    if ! dfui_nmcli connection add type wifi ifname "$interface" con-name "$name" ssid "$ssid" \
         ipv4.method auto ipv4.never-default yes ipv6.method ignore connection.autoconnect no >/dev/null; then
         dfui_remove_portal_connection
         return 1
@@ -107,7 +217,7 @@ dfui_create_portal_connection() {
     # The UUID is assigned at creation time, so capture it before subsequent
     # security, autoconnect, or association operations introduce an
     # interruption window.
-    uuid="$(nmcli -g connection.uuid connection show "$name")"
+    uuid="$(dfui_nmcli -g connection.uuid connection show "$name")"
     if [[ -z "$uuid" || "$uuid" == "--" ]]; then
         dfui_remove_portal_connection
         echo "NetworkManager did not return a UUID for the portal connection." >&2
@@ -126,15 +236,15 @@ dfui_create_portal_connection() {
     # NetworkManager connection has no wireless-security settings, so do not
     # manufacture a WPA configuration in that case. The caller has already
     # been restricted to an explicit non-default adapter.
-    if [[ -n "$password" ]] && ! nmcli connection modify "$name" wifi-sec.key-mgmt wpa-psk wifi-sec.psk "$password"; then
+    if [[ -n "$password" ]] && ! dfui_nmcli connection modify "$name" wifi-sec.key-mgmt wpa-psk wifi-sec.psk "$password"; then
         dfui_remove_portal_connection
         return 1
     fi
-    if [[ "$reconnect_after_drop" == "yes" ]] && ! nmcli connection modify "$name" connection.autoconnect yes; then
+    if [[ "$reconnect_after_drop" == "yes" ]] && ! dfui_nmcli connection modify "$name" connection.autoconnect yes; then
         dfui_remove_portal_connection
         return 1
     fi
-    if ! nmcli connection up "$name" ifname "$interface"; then
+    if ! dfui_nmcli connection up "$name" ifname "$interface"; then
         dfui_remove_portal_connection
         return 1
     fi
@@ -153,8 +263,8 @@ dfui_remove_portal_connection() {
     local uuid="${DFUI_PORTAL_CONNECTION_UUID:-}" name="${DFUI_PORTAL_CONNECTION_NAME:-}"
     [[ -n "$uuid" || -n "$name" ]] || return 0
     if [[ -n "$uuid" ]]; then
-        nmcli connection down uuid "$uuid" >/dev/null 2>&1 || true
-        nmcli connection delete uuid "$uuid" >/dev/null 2>&1 || true
+        dfui_nmcli connection down uuid "$uuid" >/dev/null 2>&1 || true
+        dfui_nmcli connection delete uuid "$uuid" >/dev/null 2>&1 || true
     else
         dfui_remove_connection_by_name "$name"
     fi

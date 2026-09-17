@@ -603,6 +603,7 @@ start_portal_connection() {
     [[ -n "$client_interface" ]] || usage
     dfui_require_client_adapter "$client_interface" "$takeover"
     dfui_require_no_active_session
+    dfui_prepare_networkmanager_authorization
     upload_portal_fixture
     ssid="$(dfui_portal_ssid "$platform")"
     dfui_create_portal_connection "$client_interface" "$ssid" 'default1' no "$platform"
@@ -615,6 +616,7 @@ start_portal_ota_connection() {
     [[ -n "$client_interface" ]] || usage
     dfui_require_client_adapter "$client_interface" "$takeover"
     dfui_require_no_active_session
+    dfui_prepare_networkmanager_authorization
     upload_portal_ota_a_fixture
     ssid="$(dfui_portal_ssid "$platform")"
     password="$(portal_ota_profile_password)"
@@ -672,6 +674,7 @@ case "$command_name" in
         require_common
         dfui_acquire_hardware_lock
         dfui_require_client_adapter "$client_interface" "$takeover"
+        dfui_report_networkmanager_authorization
         echo "DeviceFramework device-UI prerequisites are ready; primary route is untouched."
         ;;
     down)
@@ -679,6 +682,7 @@ case "$command_name" in
         [[ -z "$platform$port$client_interface$output_dir$web_url" && "$capture_readme_media" == "no" ]] || usage
         dfui_acquire_hardware_lock
         dfui_load_state
+        dfui_prepare_networkmanager_authorization
         dfui_remove_portal_connection
         echo "DeviceFramework portal client connection removed."
         ;;

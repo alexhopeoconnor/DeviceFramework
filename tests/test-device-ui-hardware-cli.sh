@@ -6,6 +6,9 @@ tool="$project_dir/tools/device-ui-hardware"
 tmp="$(mktemp -d "${TMPDIR:-/tmp}/deviceframework-device-ui-cli.XXXXXX")"
 cleanup_tmp() { rm -rf "$tmp"; }
 trap cleanup_tmp EXIT
+# The ordinary mock cases represent a desktop session with direct Polkit
+# authorization. The dedicated case below selects the headless sudo path.
+export DFUI_NMCLI_AUTH=direct
 
 bash -n "$tool" "$project_dir/tools/lib/device-ui-session.sh" \
     "$project_dir/tools/lib/platformio.sh" "$project_dir/tools/check-ota-partitions.sh"
@@ -49,17 +52,48 @@ printf '%s\n' '#!/usr/bin/env bash' \
 'echo "192.168.4.1 dev wlan-client src 192.168.4.2"' >"$stub_bin/ip"
 printf '%s\n' '#!/usr/bin/env bash' \
 'printf "%s\\n" "$*" >>"$SIGNAL_LOG"' \
+'if [[ "${NMCLI_REQUIRE_SUDO:-}" == "yes" && "${RUN_AS_SUDO:-}" != "yes" ]]; then echo "Error: Insufficient privileges" >&2; exit 7; fi' \
+'if [[ "${NMCLI_FAIL_SCAN:-}" == "yes" && "$1" == "device" && "$2" == "wifi" && "$3" == "rescan" ]]; then echo "fixture scan failure" >&2; exit 7; fi' \
 'if [[ "$1" == "-t" && "$2" == "-f" && "$3" == "SSID" ]]; then echo "DF-Portal-ESP8266"; exit 0; fi' \
 'if [[ "$1" == "-g" && "$2" == "connection.uuid" ]]; then echo "stub-uuid"; exit 0; fi' \
 'if [[ "$1" == "-g" ]]; then echo "--"; exit 0; fi' \
 'if [[ "${NMCLI_FAIL_ADD:-}" == "yes" && "$1" == "connection" && "$2" == "add" ]]; then exit 7; fi' \
 'if [[ "${NMCLI_SIGNAL_PARENT:-}" == "yes" && "$1" == "connection" && "$2" == "add" ]]; then kill -TERM "$PPID"; exit 0; fi' \
 'exit 0' >"$stub_bin/nmcli"
+printf '%s\n' '#!/usr/bin/env bash' \
+'printf "sudo %s\\n" "$*" >>"$SIGNAL_LOG"' \
+'if [[ "${SUDO_FAIL:-}" == "yes" ]]; then exit 1; fi' \
+'if [[ "$1" == "-v" ]]; then exit 0; fi' \
+'if [[ "$1" == "-n" ]]; then shift; fi' \
+'if [[ "$1" == "true" ]]; then exit 0; fi' \
+'[[ "$1" == "--" ]] && shift' \
+'RUN_AS_SUDO=yes exec "$@"' >"$stub_bin/sudo"
 printf '%s\n' '#!/usr/bin/env bash' 'exit 0' >"$stub_bin/pio"
 printf '%s\n' '#!/usr/bin/env bash' \
 'if [[ "$1" == "compose" && "$2" == "version" ]]; then exit 0; fi' \
 'exit 0' >"$stub_bin/docker"
 chmod 755 "$stub_bin"/*
+
+# A rejected NetworkManager scan must be reported as an authorization/host
+# failure, not mislabelled as an absent portal SSID or followed by a connection
+# creation attempt.
+: >"$signal_log"
+if scan_output="$(ROOT="$project_dir" PATH="$stub_bin:$PATH" SIGNAL_LOG="$signal_log" \
+    DFUI_NMCLI_AUTH=direct NMCLI_FAIL_SCAN=yes bash -c '
+        source "$ROOT/tools/lib/device-ui-session.sh"
+        dfui_wait_for_portal_ssid wlan-client "fixture portal"
+    ' 2>&1)"; then
+    echo "device-ui accepted a failed Wi-Fi scan" >&2
+    exit 1
+fi
+[[ "$scan_output" == *'NetworkManager could not scan the selected portal adapter'* ]] || {
+    echo "device-ui did not report the failed NetworkManager scan" >&2
+    exit 1
+}
+if grep -Fq 'connection add' "$signal_log"; then
+    echo "device-ui continued into connection creation after a failed scan" >&2
+    exit 1
+fi
 
 runner_state="$tmp/runner-state"
 if PATH="$stub_bin:$PATH" \
@@ -96,6 +130,38 @@ grep -Eq 'connection delete deviceframework-portal-' "$signal_log"
     echo "device-ui rejected creation left pending recovery state behind" >&2
     exit 1
 }
+
+# A non-graphical SSH shell may have no Polkit agent. Preflight the scoped
+# sudo path once, then use it only for named portal adapter operations; the
+# browser runner itself remains the invoking user.
+auth_state="$tmp/auth-state"
+if ! ROOT="$project_dir" PATH="$stub_bin:$PATH" XDG_STATE_HOME="$auth_state" \
+    SIGNAL_LOG="$signal_log" NMCLI_REQUIRE_SUDO=yes DFUI_NMCLI_AUTH=sudo bash -c '
+        set -euo pipefail
+        source "$ROOT/tools/lib/device-ui-session.sh"
+        dfui_prepare_networkmanager_authorization
+        dfui_wait_for_portal_ssid() { return 0; }
+        dfui_create_portal_connection wlan-client "fixture portal" placeholder no esp8266
+        dfui_remove_portal_connection
+    '; then
+    echo "device-ui authorization fallback did not create the portal connection" >&2
+    exit 1
+fi
+grep -Fq 'sudo -n -- nmcli connection add' "$signal_log"
+[[ ! -e "$auth_state/deviceframework-device-ui/session.env" ]] || {
+    echo "device-ui authorization fallback left portal recovery state behind" >&2
+    exit 1
+}
+
+# A failed sudo validation must stop before a portal runner can flash a board.
+if ROOT="$project_dir" PATH="$stub_bin:$PATH" SIGNAL_LOG="$signal_log" \
+    DFUI_NMCLI_AUTH=sudo SUDO_FAIL=yes bash -c '
+        source "$ROOT/tools/lib/device-ui-session.sh"
+        dfui_prepare_networkmanager_authorization
+    ' >/dev/null 2>&1; then
+    echo "device-ui accepted a failed scoped sudo validation" >&2
+    exit 1
+fi
 
 # The portal scan failure is explicit too: do not proceed to connection add
 # merely because the helper was called from a conditional context.
