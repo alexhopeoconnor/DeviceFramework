@@ -217,10 +217,38 @@ A normal pass requires Avahi *and* the host system resolver to agree on
 `df-ota-<platform>.local` both before the upload and again after B has rebooted;
 the actual uploader receives that hostname, not its resolved IP. The runner
 selects the matching normal-route source address and checks that it can bind the
-callback TCP port, but never alters the firewall.
+callback TCP port. The board then connects **back** to that host address and
+port. TCP 8266/3232 are board-side ArduinoOTA listener ports; allowing those
+ports inbound on the host does not allow this reverse connection.
+
+`--firewall check` is the default. It never prompts for sudo or changes policy:
+it reports a detectable UFW service but cannot prove that an inbound callback
+is allowed. `--firewall manual` likewise changes nothing; it prints the exact,
+route-specific UFW rule so it can be preconfigured before the run. Use the
+explicit one-command path when UFW is the host firewall:
+
+```bash
+./tools/ota-hardware arduino \
+  --platform esp8266 --port /dev/serial/by-id/usb-... \
+  --env-file test/.env --auth both --firewall allow
+```
+
+In `allow` mode the runner asks for sudo only after A is verified. If UFW is
+active, it temporarily permits exactly TCP `<callback-port>` from the resolved
+board IP to the route-selected host IP on that route interface. It tags the
+rule uniquely, records the recovery command in the private artifact directory,
+and removes only that exact tagged rule after each protected/open contract or
+on a normal interruption. An already-existing matching **allow** rule is left
+wholly unchanged; a matching deny/reject rule stops with a diagnostic rather
+than being replaced. If a hard kill or expired sudo ticket prevents cleanup, run
+`sudo ufw status numbered` and remove only the entry bearing the artifact's
+unique comment.
+
 If the UDP invitation gets no reply, investigate the listener, Wi-Fi/VLAN, or
-client isolation. If authentication succeeds but no TCP callback arrives,
-investigate the host firewall, reverse route, or client isolation.
+client isolation. If the wrong password is not reported as `Authentication
+Failed`, the run rejects it as a transport failure rather than treating it as
+an auth success. If authentication succeeds but no TCP callback arrives,
+inspect the host firewall's callback rule, reverse route, or client isolation.
 
 An IP mode exists solely for diagnosis and prints that mDNS was not exercised:
 

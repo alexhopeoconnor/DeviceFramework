@@ -7,6 +7,8 @@ project_dir="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$project_dir"
 # shellcheck source=tools/lib/platformio.sh
 source "$project_dir/tools/lib/platformio.sh"
+# shellcheck source=tools/lib/ota-firewall.sh
+source "$project_dir/tools/lib/ota-firewall.sh"
 
 usage() {
     cat <<'EOF' >&2
@@ -15,7 +17,7 @@ Usage:
   ./tools/ota-hardware arduino --platform esp8266|esp32 --port DEVICE
       [--env-file test/.env] [--auth protected|open|both]
       [--host-port PORT] [--device-ip IPv4] [--output DIRECTORY]
-      [--defer-mdns]
+      [--defer-mdns] [--firewall check|manual|allow]
   ./tools/ota-hardware cleanup --platform esp8266|esp32 --port DEVICE
 
 Normal ArduinoOTA mode proves both Avahi and the system resolver can resolve
@@ -37,6 +39,7 @@ host_port="43123"
 device_ip=""
 output_root=""
 defer_mdns="no"
+firewall_mode="check"
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -48,6 +51,7 @@ while [[ $# -gt 0 ]]; do
         --device-ip) [[ $# -ge 2 ]] || usage; device_ip="$2"; shift 2 ;;
         --output) [[ $# -ge 2 ]] || usage; output_root="$2"; shift 2 ;;
         --defer-mdns) defer_mdns="yes"; shift ;;
+        --firewall) [[ $# -ge 2 ]] || usage; firewall_mode="$2"; shift 2 ;;
         *) usage ;;
     esac
 done
@@ -71,14 +75,35 @@ validate_platform() {
 }
 
 validate_ipv4() {
-    [[ "$1" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]] || {
+    local value="$1" octet
+    local -a octets
+    [[ "$value" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]] || {
         echo "Not an IPv4 address: $1" >&2
         return 1
     }
+    IFS=. read -r -a octets <<<"$value"
+    [[ ${#octets[@]} -eq 4 ]] || {
+        echo "Not an IPv4 address: $1" >&2
+        return 1
+    }
+    for octet in "${octets[@]}"; do
+        [[ "$octet" =~ ^[0-9]{1,3}$ ]] && (( 10#$octet <= 255 )) || {
+            echo "Not an IPv4 address: $1" >&2
+            return 1
+        }
+    done
+}
+
+validate_firewall_mode() {
+    case "$firewall_mode" in
+        check|manual|allow) ;;
+        *) echo "--firewall must be check, manual, or allow" >&2; usage ;;
+    esac
 }
 
 validate_args() {
     validate_platform
+    validate_firewall_mode
     case "$auth_mode" in protected|open|both) ;; *) echo "--auth must be protected, open, or both" >&2; usage ;; esac
     [[ "$host_port" =~ ^[0-9]+$ ]] && (( host_port >= 1024 && host_port <= 65535 )) || {
         echo "--host-port must be from 1024 through 65535." >&2
@@ -119,12 +144,20 @@ firmware_a=""
 firmware_b=""
 firmware_a_artifact=""
 firmware_b_artifact=""
+route_interface=""
+ufw_path=""
+firewall_rule_comment=""
+firewall_rule_note=""
+firewall_rule_added="no"
 
 cleanup() {
-    local status=$?
-    trap - EXIT INT TERM
+    local status="${1:-0}"
+    trap - EXIT HUP INT TERM
     [[ -z "$monitor_pid" ]] || kill "$monitor_pid" >/dev/null 2>&1 || true
     [[ -z "$monitor_pid" ]] || wait "$monitor_pid" >/dev/null 2>&1 || true
+    if ! release_callback_firewall; then
+        status=1
+    fi
     [[ -z "$profile_file" ]] || rm -f -- "$profile_file"
     [[ -z "$profile_build_override_file" ]] || rm -f -- "$profile_build_override_file"
     exit "$status"
@@ -343,7 +376,7 @@ resolve_mdns() {
         # the intended polling window under `set -e -o pipefail`.
         avahi_ip="$(avahi-resolve -4 -n "$device_hostname" 2>/dev/null | awk 'NR == 1 {print $2; exit}' || true)"
         getent_ip="$(getent ahostsv4 "$device_hostname" 2>/dev/null | awk 'NR == 1 {print $1; exit}' || true)"
-        if [[ -n "$avahi_ip" && "$avahi_ip" == "$getent_ip" ]]; then
+        if [[ -n "$avahi_ip" && "$avahi_ip" == "$getent_ip" ]] && validate_ipv4 "$avahi_ip"; then
             resolved_ip="$avahi_ip"
             transport_endpoint="$device_hostname"
             status_endpoint="$device_hostname"
@@ -394,20 +427,22 @@ route_source() {
     local route
     route="$(ip -4 route get "$resolved_ip" 2>/dev/null || true)"
     route_source_ip="$(awk '{for (i=1;i<=NF;i++) if ($i=="src") {print $(i+1); exit}}' <<<"$route")"
-    [[ -n "$route_source_ip" ]] || {
+    route_interface="$(awk '{for (i=1;i<=NF;i++) if ($i=="dev") {print $(i+1); exit}}' <<<"$route")"
+    [[ -n "$route_source_ip" && -n "$route_interface" ]] || {
         echo "No route source for $resolved_ip: $route" >&2
         return 1
     }
-    printf 'Route: source %s; device UDP %s; callback TCP %s\n' "$route_source_ip" "$ota_port" "$host_port"
+    validate_ipv4 "$route_source_ip"
+    [[ "$route_interface" =~ ^[[:alnum:]_.:-]+$ ]] || {
+        echo "Unexpected route interface name: $route_interface" >&2
+        return 1
+    }
+    printf 'Route: interface %s; source %s; device UDP %s; callback TCP %s\n' \
+        "$route_interface" "$route_source_ip" "$ota_port" "$host_port"
     python3 -c 'import socket,sys;s=socket.socket();s.bind((sys.argv[1],int(sys.argv[2])));s.close()' "$route_source_ip" "$host_port" || {
         echo "Cannot bind the callback listener on $route_source_ip:$host_port." >&2
         return 1
     }
-    if command -v ufw >/dev/null 2>&1 && ufw status 2>/dev/null | grep -q '^Status: active'; then
-        echo "Firewall: UFW active; the runner did not change callback-port policy."
-    else
-        echo "Firewall: no policy was changed."
-    fi
 }
 
 status_request() {
@@ -594,10 +629,17 @@ run_one() {
     route_source
     assert_http_auth_contract
     verify_a
+    # Open an explicit temporary callback rule only immediately before the OTA
+    # traffic, so the sudo ticket is fresh and the exposure is brief.
+    configure_callback_firewall
     if [[ "$auth_mode" == protected ]]; then
         wrong_log="$run_dir/upload-wrong-auth.log"
         if upload wrong-ota-password "$firmware_b_artifact" "$wrong_log"; then
             echo "Wrong ArduinoOTA password was accepted." >&2
+            return 1
+        fi
+        if ! grep -Fq 'Authentication Failed' "$wrong_log"; then
+            echo "Wrong-password transfer failed before the device rejected authentication: $wrong_log" >&2
             return 1
         fi
         echo "Wrong ArduinoOTA password was rejected as required."
@@ -627,6 +669,7 @@ run_one() {
     sleep 1
     response="$(wait_marker 0.0.0-udp-ota-b)"
     echo "Running B marker (fresh request): $(status_version "$response")"
+    release_callback_firewall
     echo "ArduinoOTA $auth_mode contract passed for $platform. Artifacts: $run_dir"
 }
 
@@ -640,7 +683,10 @@ run_arduino() {
     # per-run private build directory is owner-only.
     umask 077
     prepare_output
-    trap cleanup EXIT INT TERM
+    trap 'cleanup "$?"' EXIT
+    trap 'cleanup 129' HUP
+    trap 'cleanup 130' INT
+    trap 'cleanup 143' TERM
     if [[ "$auth_mode" == both ]]; then
         auth_mode=protected
         run_one
@@ -657,6 +703,7 @@ run_arduino() {
 
 run_doctor() {
     validate_platform
+    validate_firewall_mode
     need_common
     lock_board
     if [[ "$defer_mdns" == yes || -n "$device_ip" ]]; then
@@ -669,6 +716,7 @@ run_doctor() {
 
 run_cleanup() {
     validate_platform
+    validate_firewall_mode
     [[ -n "$serial_port" && -e "$serial_port" ]] || {
         echo "Serial port not found: $serial_port" >&2
         return 1

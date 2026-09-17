@@ -6,9 +6,11 @@ tool="$project_dir/tools/ota-hardware"
 cd "$project_dir"
 
 bash -n "$tool" "$project_dir/tools/check-ota-partitions.sh" \
-    "$project_dir/tools/lib/platformio.sh"
+    "$project_dir/tools/lib/platformio.sh" "$project_dir/tools/lib/ota-firewall.sh" \
+    "$project_dir/tests/test-ota-firewall.sh"
 python3 -m py_compile "$project_dir/tools/capture-serial-boot.py"
 python3 "$project_dir/tests/test-capture-serial-boot.py"
+"$project_dir/tests/test-ota-firewall.sh"
 "$project_dir/tools/check-ota-partitions.sh"
 
 fixture_port="$(mktemp)"
@@ -38,10 +40,39 @@ if "$tool" arduino --platform esp8266 --port "$fixture_port" --defer-mdns >/dev/
     echo "ota-hardware accepted deferred-mDNS without an explicit IP" >&2
     exit 1
 fi
+if "$tool" arduino --platform esp8266 --port "$fixture_port" --firewall unexpected >/dev/null 2>&1; then
+    echo "ota-hardware accepted an invalid firewall mode" >&2
+    exit 1
+fi
+if "$tool" arduino --platform esp8266 --port "$fixture_port" --device-ip 999.1.1.1 >/dev/null 2>&1; then
+    echo "ota-hardware accepted an invalid IPv4 override" >&2
+    exit 1
+fi
+if "$tool" arduino --platform esp8266 --port "$fixture_port" --device-ip 1.2.3.4. >/dev/null 2>&1; then
+    echo "ota-hardware accepted a trailing-dot IPv4 override" >&2
+    exit 1
+fi
+if "$tool" doctor --platform esp8266 --firewall unexpected >/dev/null 2>&1; then
+    echo "ota-hardware doctor accepted an invalid firewall mode" >&2
+    exit 1
+fi
 
 rg -Fq 'mDNS: not exercised; diagnostic transport mode only.' "$tool"
 rg -Fq 'Avahi and system resolver agree' "$tool"
 rg -Fq 'Wrong ArduinoOTA password was rejected as required.' "$tool"
+rg -Fq "grep -Fq 'Authentication Failed'" "$tool"
+rg -Fq -- '--firewall check|manual|allow' "$tool"
+firewall_helper="$project_dir/tools/lib/ota-firewall.sh"
+rg -Fq 'Firewall: --firewall check does not change policy' "$firewall_helper"
+rg -Fq 'Firewall: --firewall manual did not change policy.' "$firewall_helper"
+rg -Fq 'temporary UFW callback rule tagged' "$firewall_helper"
+rg -Fq 'show added' "$firewall_helper"
+rg -Fq 'comment "$firewall_rule_comment"' "$firewall_helper"
+rg -Fq 'UFW updates the comment' "$firewall_helper"
+rg -Fq 'incompatible user-owned UFW rule' "$firewall_helper"
+rg -Fq "trap 'cleanup \"\$?\"' EXIT" "$tool"
+rg -Fq "trap 'cleanup 130' INT" "$tool"
+rg -Fq 'Host-side TCP 8266/3232 rules do not permit this callback.' "$firewall_helper"
 rg -Fq 'firmware_a_artifact' "$tool"
 rg -Fq "printf 'OTA %s fits:" "$tool"
 rg -Fq 'platformio.local.ini.ota-hardware' "$tool"
