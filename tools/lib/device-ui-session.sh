@@ -75,7 +75,7 @@ dfui_remove_connection_by_name() {
 }
 
 dfui_create_portal_connection() {
-    local interface="$1" ssid="$2" password="$3" name uuid
+    local interface="$1" ssid="$2" password="$3" reconnect_after_drop="${4:-no}" name uuid
     name="deviceframework-portal-${RANDOM}-$(date +%s)"
     nmcli device disconnect "$interface" >/dev/null 2>&1 || true
     dfui_wait_for_portal_ssid "$interface" "$ssid"
@@ -83,7 +83,15 @@ dfui_create_portal_connection() {
         ipv4.method auto ipv4.never-default yes ipv6.method ignore connection.autoconnect no >/dev/null; then
         return 1
     fi
-    if ! nmcli connection modify "$name" wifi-sec.key-mgmt wpa-psk wifi-sec.psk "$password"; then
+    # An empty fixture password deliberately means an open portal. A fresh
+    # NetworkManager connection has no wireless-security settings, so do not
+    # manufacture a WPA configuration in that case. The caller has already
+    # been restricted to an explicit non-default adapter.
+    if [[ -n "$password" ]] && ! nmcli connection modify "$name" wifi-sec.key-mgmt wpa-psk wifi-sec.psk "$password"; then
+        dfui_remove_connection_by_name "$name"
+        return 1
+    fi
+    if [[ "$reconnect_after_drop" == "yes" ]] && ! nmcli connection modify "$name" connection.autoconnect yes; then
         dfui_remove_connection_by_name "$name"
         return 1
     fi

@@ -4,6 +4,8 @@ set -euo pipefail
 project_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # shellcheck source=tools/lib/device-ui-session.sh
 source "$project_dir/tools/lib/device-ui-session.sh"
+# shellcheck source=tools/lib/platformio.sh
+source "$project_dir/tools/lib/platformio.sh"
 cd "$project_dir"
 
 usage() {
@@ -13,6 +15,9 @@ Usage:
   ./tools/device-ui-hardware portal --platform esp8266|esp32 --port DEVICE \
       --client-interface IFACE [--take-over-client-adapter] [--env-file test/.env] \
       [--output DIRECTORY] [--keep]
+  ./tools/device-ui-hardware ota-portal --platform esp8266|esp32 --port DEVICE \
+      --client-interface IFACE [--take-over-client-adapter] \
+      [--profile protected|open] [--output DIRECTORY] [--keep]
   ./tools/device-ui-hardware web --platform esp8266|esp32 [--port DEVICE] \
       [--env-file test/.env] [--url URL] [--output DIRECTORY]
   ./tools/device-ui-hardware full --platform esp8266|esp32 --port DEVICE \
@@ -24,7 +29,10 @@ Usage:
 DeviceFramework -> WiFiManager portal integration. With an env file it also
 provisions the board and records its station hand-off. `web` tests the normal
 DeviceFramework UI, either at --url or after flashing a local station fixture.
-`full` performs both without touching the host default-route Wi-Fi adapter.
+`ota-portal` uses safe tracked no-Wi-Fi profiles to flash image A, submit image
+B through the real portal firmware-update form, and require its automatic
+reboot. `full` performs portal plus web coverage without touching the host
+default-route Wi-Fi adapter.
 EOF
     exit 2
 }
@@ -39,9 +47,16 @@ client_interface=""
 takeover="no"
 keep="no"
 env_file="test/.env"
+env_file_requested="no"
 output_dir=""
 web_url=""
 capture_readme_media="no"
+portal_profile="protected"
+portal_profile_requested="no"
+ota_firmware=""
+ota_firmware_a=""
+ota_expected_portal_protected=""
+ota_browser_prebuilt="no"
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -50,9 +65,10 @@ while [[ $# -gt 0 ]]; do
         --client-interface) [[ $# -ge 2 ]] || usage; client_interface="$2"; shift 2 ;;
         --take-over-client-adapter) takeover="yes"; shift ;;
         --keep) keep="yes"; shift ;;
-        --env-file) [[ $# -ge 2 ]] || usage; env_file="$2"; shift 2 ;;
+        --env-file) [[ $# -ge 2 ]] || usage; env_file="$2"; env_file_requested="yes"; shift 2 ;;
         --output) [[ $# -ge 2 ]] || usage; output_dir="$2"; shift 2 ;;
         --url) [[ $# -ge 2 ]] || usage; web_url="$2"; shift 2 ;;
+        --profile) [[ $# -ge 2 ]] || usage; portal_profile="$2"; portal_profile_requested="yes"; shift 2 ;;
         --capture-readme-media) capture_readme_media="yes"; shift ;;
         *) usage ;;
     esac
@@ -65,6 +81,7 @@ require_common() {
     dfui_require ip
     dfui_require nmcli
     dfui_require pio
+    dfui_require python3
     dfui_require docker
     dfui_require curl
     docker compose version >/dev/null
@@ -84,6 +101,37 @@ prepare_output_dir() {
 
 validate_platform() {
     [[ "$platform" == "esp8266" || "$platform" == "esp32" ]] || usage
+}
+
+validate_portal_profile() {
+    case "$portal_profile" in
+        protected)
+            ota_expected_portal_protected="true"
+            ;;
+        open)
+            ota_expected_portal_protected="false"
+            ;;
+        *)
+            echo "--profile must be protected or open" >&2
+            usage
+            ;;
+    esac
+}
+
+reject_portal_profile_option() {
+    [[ "$portal_profile_requested" == "no" ]] || {
+        echo "--profile is only supported by ota-portal" >&2
+        usage
+        return 1
+    }
+}
+
+reject_station_env_option() {
+    [[ "$env_file_requested" == "no" ]] || {
+        echo "ota-portal uses only tracked no-Wi-Fi profiles; --env-file is not supported" >&2
+        usage
+        return 1
+    }
 }
 
 validate_readme_media_capture() {
@@ -149,9 +197,9 @@ erase_and_upload() {
     # configuration. The explicitly supplied test board is immediately
     # reflashed after erase; no other serial device is selected.
     refresh_local_first_party_dependencies "$environment"
-    pio run -d test/compile-project -e "$environment" -t erase --upload-port "$port"
+    df_pio run -d test/compile-project -e "$environment" -t erase --upload-port "$port"
     wait_for_serial_port
-    pio run -d test/compile-project -e "$environment" -t upload --upload-port "$port"
+    df_pio run -d test/compile-project -e "$environment" -t upload --upload-port "$port"
 }
 
 wait_for_serial_port() {
@@ -178,13 +226,178 @@ refresh_local_first_party_dependencies() {
     # Refresh only this disposable consumer fixture before an explicit flash.
     [[ -e "${local_overrides[0]}" ]] || return 0
     for dependency in DeviceFramework WiFiManager DeviceFrameworkTemplateEngine home-assistant-integration; do
-        pio pkg uninstall -d test/compile-project -e "$environment" \
+        df_pio pkg uninstall -d test/compile-project -e "$environment" \
+            -l "$dependency" --no-save --skip-dependencies >/dev/null || true
+    done
+}
+
+refresh_ota_harness_dependencies() {
+    local environment="$1" dependency
+    local -a local_overrides=(test/ota-harness/platformio.local.ini.*)
+
+    # The ignored sibling-worktree override is opt-in. When present, remove
+    # only disposable harness dependencies before an explicit board flash so
+    # PlatformIO cannot reuse a released package from a previous run.
+    [[ -e "${local_overrides[0]}" ]] || return 0
+    for dependency in DeviceFramework WiFiManager DeviceFrameworkTemplateEngine home-assistant-integration; do
+        df_pio pkg uninstall -d test/ota-harness -e "$environment" \
             -l "$dependency" --no-save --skip-dependencies >/dev/null || true
     done
 }
 
 upload_portal_fixture() {
     erase_and_upload "${platform}_ui_portal"
+}
+
+portal_ota_environment() {
+    local image="$1"
+    printf '%s_portal_ota_%s_%s\n' "$platform" "$portal_profile" "$image"
+}
+
+portal_ota_profile_password() {
+    case "$portal_profile" in
+        protected) printf '%s\n' 'ota-portal-password' ;;
+        open) printf '%s\n' '' ;;
+        *) return 1 ;;
+    esac
+}
+
+build_portal_ota_fixtures() {
+    local a_environment b_environment a_source b_source
+    a_environment="$(portal_ota_environment a)"
+    b_environment="$(portal_ota_environment b)"
+    refresh_ota_harness_dependencies "$a_environment"
+    refresh_ota_harness_dependencies "$b_environment"
+    df_pio run -d test/ota-harness -e "$a_environment"
+    df_pio run -d test/ota-harness -e "$b_environment"
+    a_source="$project_dir/test/ota-harness/.pio/build/${a_environment}/firmware.bin"
+    b_source="$project_dir/test/ota-harness/.pio/build/${b_environment}/firmware.bin"
+    [[ -s "$a_source" && -s "$b_source" ]] || {
+        echo "Portal OTA build did not produce both A and B images." >&2
+        return 1
+    }
+    if cmp -s "$a_source" "$b_source"; then
+        echo "Portal OTA A and B images are unexpectedly identical." >&2
+        return 1
+    fi
+    if [[ "$platform" == "esp32" ]]; then
+        "$project_dir/tools/check-ota-partitions.sh"
+    fi
+    # Preserve immutable inputs before the board is touched. A subsequent
+    # PlatformIO invocation cannot silently replace the browser's B upload.
+    ota_firmware_a="$output_dir/${platform}-portal-ota-a.bin"
+    ota_firmware="$output_dir/${platform}-portal-ota-b.bin"
+    install -m 600 "$a_source" "$ota_firmware_a"
+    install -m 600 "$b_source" "$ota_firmware"
+    if [[ "$platform" == "esp32" ]]; then
+        assert_portal_ota_firmware_fits "$ota_firmware_a" "app0" "ota_0" "A"
+        assert_portal_ota_firmware_fits "$ota_firmware" "app1" "ota_1" "B"
+    fi
+}
+
+esp32_portal_ota_slot_bytes() {
+    local partition="$1" subtype="$2" table="$project_dir/partitions/esp32_ota_4m_no_fs.csv" value
+    value="$(awk -F, -v partition="$partition" -v subtype="$subtype" '
+        function trim(value) {
+            gsub(/^[[:space:]]+|[[:space:]]+$/, "", value)
+            return value
+        }
+        /^[[:space:]]*#/ || NF < 5 { next }
+        trim($1) == partition && trim($2) == "app" && trim($3) == subtype {
+            print trim($5)
+            exit
+        }
+    ' "$table")"
+    [[ "$value" =~ ^0x[0-9A-Fa-f]+$ ]] || {
+        echo "ESP32 OTA partition table has no valid $partition application slot: $table" >&2
+        return 1
+    }
+    printf '%d\n' "$((value))"
+}
+
+assert_portal_ota_firmware_fits() {
+    local firmware="$1" partition="$2" subtype="$3" image="$4" capacity size
+    capacity="$(esp32_portal_ota_slot_bytes "$partition" "$subtype")"
+    size="$(wc -c < "$firmware" | tr -d '[:space:]')"
+    [[ "$size" =~ ^[0-9]+$ && "$size" -gt 0 && "$size" -le "$capacity" ]] || {
+        echo "Portal OTA image $image (${size:-unknown} bytes) does not fit $partition (${capacity:-unknown} bytes)." >&2
+        return 1
+    }
+    printf 'Portal OTA image %s fits %s: %s <= %s bytes\n' "$image" "$partition" "$size" "$capacity"
+}
+
+upload_portal_ota_a_fixture() {
+    local a_environment a_source
+    a_environment="$(portal_ota_environment a)"
+    a_source="$project_dir/test/ota-harness/.pio/build/${a_environment}/firmware.bin"
+    cmp -s "$a_source" "$ota_firmware_a" || {
+        echo "The PlatformIO portal A build changed after its immutable artifact was captured." >&2
+        return 1
+    }
+    df_pio run -d test/ota-harness -e "$a_environment" -t erase --upload-port "$port"
+    wait_for_serial_port
+    cmp -s "$a_source" "$ota_firmware_a" || {
+        echo "The PlatformIO portal A build changed while the board was being erased." >&2
+        return 1
+    }
+    df_pio run -d test/ota-harness -e "$a_environment" -t upload --upload-port "$port"
+}
+
+portal_ota_marker_field() {
+    local marker="$1" field="$2"
+    printf '%s' "$marker" | python3 -c '
+import json
+import sys
+document = json.load(sys.stdin)
+value = document[sys.argv[1]]
+if isinstance(value, bool):
+    print("true" if value else "false")
+else:
+    print(value)
+' "$field"
+}
+
+wait_for_portal_ota_marker() {
+    local expected_image="$1" deadline marker image version actual_policy expected_policy
+    deadline=$((SECONDS + 75))
+    while (( SECONDS < deadline )); do
+        marker="$(curl --silent --show-error --fail --interface "$client_interface" \
+            --connect-timeout 2 --max-time 2 \
+            'http://192.168.4.1/api/test/firmware-marker' 2>/dev/null || true)"
+        image="$(portal_ota_marker_field "$marker" image 2>/dev/null || true)"
+        version="$(portal_ota_marker_field "$marker" version 2>/dev/null || true)"
+        actual_policy="$(portal_ota_marker_field "$marker" portalProtected 2>/dev/null || true)"
+        expected_policy="$(portal_ota_marker_field "$marker" expectedPortalProtected 2>/dev/null || true)"
+        if [[ "$image" == "$expected_image" && \
+              "$version" == "0.0.0-portal-ota-${expected_image,,}" && \
+              "$actual_policy" == "$ota_expected_portal_protected" && \
+              "$expected_policy" == "$ota_expected_portal_protected" ]]; then
+            printf '%s' "$marker"
+            return 0
+        fi
+        sleep 0.5
+    done
+    echo "Portal OTA fixture did not expose the expected $expected_image marker within 75 seconds." >&2
+    return 1
+}
+
+verify_portal_ota_capacity() {
+    local marker capacity firmware_size
+    marker="$(wait_for_portal_ota_marker A)"
+    capacity="$(portal_ota_marker_field "$marker" otaCapacity)"
+    [[ "$capacity" =~ ^[0-9]+$ && "$capacity" -gt 0 ]] || {
+        echo "Portal OTA fixture did not report a valid live OTA capacity." >&2
+        return 1
+    }
+    firmware_size="$(wc -c < "$ota_firmware" | tr -d '[:space:]')"
+    [[ "$firmware_size" =~ ^[0-9]+$ && "$firmware_size" -gt 0 ]] || {
+        echo "Portal OTA image B has no valid size: $ota_firmware" >&2
+        return 1
+    }
+    if (( firmware_size > capacity )); then
+        echo "Portal OTA image B (${firmware_size} bytes) exceeds A's live update capacity (${capacity} bytes)." >&2
+        return 1
+    fi
 }
 
 write_station_profile() {
@@ -217,10 +430,8 @@ upload_station_fixture() {
 }
 
 wait_for_web_url() {
-    local hostname="${1:-df-web-${platform}.local}" allow_configured_host="${2:-yes}" resolved_host="" attempt status
-    if [[ "$allow_configured_host" == "yes" && -n "${DEVICEFRAMEWORK_TEST_DEVICE_HOST:-}" ]]; then
-        resolved_host="$DEVICEFRAMEWORK_TEST_DEVICE_HOST"
-    elif command -v avahi-resolve >/dev/null 2>&1; then
+    local hostname="${1:-df-web-${platform}.local}" resolved_host="" attempt status
+    if command -v avahi-resolve >/dev/null 2>&1; then
         for attempt in {1..45}; do
             resolved_host="$(avahi-resolve -4 -n "$hostname" 2>/dev/null | awk 'NR == 1 { print $2; exit }')"
             [[ -n "$resolved_host" ]] && break
@@ -228,7 +439,7 @@ wait_for_web_url() {
         done
     fi
     [[ -n "$resolved_host" ]] || {
-        echo "Could not resolve $hostname. Set DEVICEFRAMEWORK_TEST_DEVICE_HOST in $env_file or pass --url." >&2
+        echo "Could not resolve $hostname through mDNS; pass --url only to test an already-running endpoint explicitly." >&2
         return 1
     }
     for attempt in {1..45}; do
@@ -261,6 +472,35 @@ wait_for_station_status() {
     return 1
 }
 
+prepare_portal_ota_browser() {
+    local directory="$1"
+    [[ -n "$ota_firmware" && -s "$ota_firmware" ]] || {
+        echo "Portal OTA browser prebuild has no immutable image B." >&2
+        return 1
+    }
+    # Build before A is flashed. A first Playwright image build can otherwise
+    # outlast the fixture's finite portal timeout and turn a correct device
+    # into a false failure before the browser has even started.
+    export DEVICE_UI_MODE=ota-portal
+    export DEVICE_UI_URL='http://192.168.4.1'
+    export DEVICE_UI_ARTIFACT_DIR="$directory"
+    export DEVICE_UI_USERNAME='admin'
+    export DEVICE_UI_PASSWORD='default1'
+    export DEVICE_UI_TEST_DEVICE_NAME="df-portal-${platform}"
+    export DEVICE_UI_CAPTURE_README_MEDIA=0
+    export DEVICE_UI_DOCKER_TARGET=device-ui
+    export DEVICE_UI_OTA_FIRMWARE_HOST="$ota_firmware"
+    export DEVICE_UI_OTA_EXPECTED_IMAGE='B'
+    export DEVICE_UI_OTA_EXPECTED_PORTAL_PROTECTED="$ota_expected_portal_protected"
+    export LOCAL_UID="$(id -u)"
+    export LOCAL_GID="$(id -g)"
+    docker compose \
+        -f "$project_dir/tests/device-ui/compose.yaml" \
+        -f "$project_dir/tests/device-ui/compose.ota.yaml" \
+        build device-ui
+    ota_browser_prebuilt="yes"
+}
+
 run_browser() {
     local mode="$1" url="$2" directory="$3" station_mount=""
     install -d -m 700 "$directory"
@@ -281,19 +521,35 @@ run_browser() {
         export DEVICE_UI_DOCKER_TARGET=device-ui
     fi
     compose_files=(-f "$project_dir/tests/device-ui/compose.yaml")
-    if [[ -r "$env_file" && "$mode" == "portal" ]]; then
-        station_mount="$(cd "$(dirname "$env_file")" && pwd)/$(basename "$env_file")"
-        export DEVICE_UI_STATION_ENV_HOST="$station_mount"
-        compose_files+=(-f "$project_dir/tests/device-ui/compose.station.yaml")
-    fi
+    case "$mode" in
+        portal)
+            if [[ -r "$env_file" ]]; then
+                station_mount="$(cd "$(dirname "$env_file")" && pwd)/$(basename "$env_file")"
+                export DEVICE_UI_STATION_ENV_HOST="$station_mount"
+                compose_files+=(-f "$project_dir/tests/device-ui/compose.station.yaml")
+            fi
+            ;;
+        ota-portal)
+            [[ -n "$ota_firmware" && -s "$ota_firmware" ]] || {
+                echo "Portal OTA browser test has no image B to mount." >&2
+                return 1
+            }
+            export DEVICE_UI_OTA_FIRMWARE_HOST="$ota_firmware"
+            export DEVICE_UI_OTA_EXPECTED_IMAGE='B'
+            export DEVICE_UI_OTA_EXPECTED_PORTAL_PROTECTED="$ota_expected_portal_protected"
+            compose_files+=(-f "$project_dir/tests/device-ui/compose.ota.yaml")
+            ;;
+    esac
     local browser_status=0
-    docker compose "${compose_files[@]}" build device-ui
+    if [[ "$mode" != "ota-portal" || "$ota_browser_prebuilt" != "yes" ]]; then
+        docker compose "${compose_files[@]}" build device-ui
+    fi
     if docker compose "${compose_files[@]}" run --rm device-ui; then
         browser_status=0
     else
         browser_status=$?
     fi
-    sanitize_browser_artifacts "$directory"
+    sanitize_browser_artifacts "$directory" "$mode"
     return "$browser_status"
 }
 
@@ -310,9 +566,13 @@ render_readme_media() {
 }
 
 sanitize_browser_artifacts() {
-    local directory="$1" key value
+    local directory="$1" mode="$2" key value
     local -a matching_files=()
 
+    # Portal OTA uses tracked, non-secret profiles and mounts only firmware B.
+    # Do not read a developer's ignored station environment merely to sanitize
+    # artifacts that cannot contain it.
+    [[ "$mode" != "ota-portal" ]] || return 0
     [[ -r "$env_file" ]] || return 0
     # Failure-only Playwright diagnostics can include a DOM snapshot. A password
     # field is visually masked in screenshots but its DOM value may be present
@@ -347,10 +607,37 @@ start_portal_connection() {
     dfui_write_state "$client_interface" "$platform" "$DFUI_PORTAL_CONNECTION_UUID" "$DFUI_PORTAL_CONNECTION_NAME"
 }
 
+start_portal_ota_connection() {
+    local ssid password
+    require_port
+    [[ -n "$client_interface" ]] || usage
+    dfui_require_client_adapter "$client_interface" "$takeover"
+    dfui_require_no_active_session
+    upload_portal_ota_a_fixture
+    ssid="$(dfui_portal_ssid "$platform")"
+    password="$(portal_ota_profile_password)"
+    # The board must reboot itself after POST /u. Retain automatic reconnect
+    # on this one disposable, never-default adapter connection so the browser
+    # can observe the returning portal; cleanup still removes it on exit.
+    dfui_create_portal_connection "$client_interface" "$ssid" "$password" yes
+    portal_connected="yes"
+    dfui_verify_portal_route "$client_interface"
+    dfui_write_state "$client_interface" "$platform" "$DFUI_PORTAL_CONNECTION_UUID" "$DFUI_PORTAL_CONNECTION_NAME"
+    verify_portal_ota_capacity
+}
+
 run_portal() {
     local directory="$1"
     start_portal_connection
     run_browser portal 'http://192.168.4.1' "$directory"
+}
+
+run_portal_ota() {
+    local directory="$1"
+    build_portal_ota_fixtures
+    prepare_portal_ota_browser "$directory"
+    start_portal_ota_connection
+    run_browser ota-portal 'http://192.168.4.1' "$directory"
 }
 
 run_web() {
@@ -374,6 +661,7 @@ cleanup() {
 
 case "$command_name" in
     doctor)
+        reject_portal_profile_option
         [[ "$capture_readme_media" == "no" ]] || usage
         [[ -n "$client_interface" ]] || usage
         require_common
@@ -382,6 +670,7 @@ case "$command_name" in
         echo "DeviceFramework device-UI prerequisites are ready; primary route is untouched."
         ;;
     down)
+        reject_portal_profile_option
         [[ -z "$platform$port$client_interface$output_dir$web_url" && "$capture_readme_media" == "no" ]] || usage
         dfui_acquire_hardware_lock
         dfui_load_state
@@ -389,6 +678,7 @@ case "$command_name" in
         echo "DeviceFramework portal client connection removed."
         ;;
     portal)
+        reject_portal_profile_option
         validate_platform
         validate_readme_media_capture
         require_common
@@ -399,7 +689,21 @@ case "$command_name" in
         echo "DeviceFramework portal integration contract passed. Artifacts: $output_dir"
         [[ "$keep" != "yes" ]] || echo "Portal client remains connected; run ./tools/device-ui-hardware down when finished."
         ;;
+    ota-portal)
+        validate_platform
+        validate_portal_profile
+        reject_station_env_option
+        validate_readme_media_capture
+        require_common
+        dfui_acquire_hardware_lock
+        prepare_output_dir
+        trap cleanup EXIT INT TERM
+        run_portal_ota "$output_dir"
+        echo "DeviceFramework portal OTA contract passed (${portal_profile}). Artifacts: $output_dir"
+        [[ "$keep" != "yes" ]] || echo "Portal client remains connected; run ./tools/device-ui-hardware down when finished."
+        ;;
     web)
+        reject_portal_profile_option
         validate_platform
         validate_readme_media_capture
         require_common
@@ -410,6 +714,7 @@ case "$command_name" in
         echo "DeviceFramework web UI contract passed. Artifacts: $output_dir"
         ;;
     full)
+        reject_portal_profile_option
         validate_platform
         validate_readme_media_capture
         require_common
@@ -432,10 +737,9 @@ case "$command_name" in
             # ESP32 can drop the portal client while moving AP+STA to the
             # selected station channel. The portal test has already proved
             # the accepted save; now require the just-provisioned named board
-            # to appear on the LAN. Do not reuse DEVICEFRAMEWORK_TEST_DEVICE_HOST:
-            # it is an optional standalone-web target and can still name the
-            # portal gateway from a prior local test session.
-            web_url="$(wait_for_web_url "df-portal-${platform}.local" no)"
+            # to appear on the LAN through its unique mDNS identity. Do not
+            # reuse a cached portal gateway or an IP from a prior session.
+            web_url="$(wait_for_web_url "df-portal-${platform}.local")"
         fi
         wait_for_station_status "$web_url"
         run_web "$output_dir/web"

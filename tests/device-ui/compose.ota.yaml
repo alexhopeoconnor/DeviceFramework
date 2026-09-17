@@ -1,0 +1,8 @@
+services:
+  device-ui:
+    environment:
+      DEVICE_UI_OTA_FIRMWARE: /firmware/firmware.bin
+      DEVICE_UI_OTA_EXPECTED_IMAGE: ${DEVICE_UI_OTA_EXPECTED_IMAGE:?OTA image marker is required}
+      DEVICE_UI_OTA_EXPECTED_PORTAL_PROTECTED: ${DEVICE_UI_OTA_EXPECTED_PORTAL_PROTECTED:?portal protection expectation is required}
+    volumes:
+      - ${DEVICE_UI_OTA_FIRMWARE_HOST:?OTA firmware path is required}:/firmware/firmware.bin:ro

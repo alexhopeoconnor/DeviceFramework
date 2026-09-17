@@ -1,0 +1,10 @@
+{
+  "format": 2,
+  "application": "deviceframework",
+  "profile": {
+    "id": "deviceframework-ota-portal-open",
+    "revision": 1,
+    "policy": "bootstrap"
+  },
+  "device_password": ""
+}

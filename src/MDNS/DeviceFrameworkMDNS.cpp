@@ -24,6 +24,7 @@ unsigned long DeviceFrameworkMDNS::lastPacketDrainTime = 0;
 unsigned long DeviceFrameworkMDNS::lastMDNSUpdateAttemptTime = 0;
 uint32_t DeviceFrameworkMDNS::mdnsUpdateCount = 0;
 uint32_t DeviceFrameworkMDNS::mdnsUpdateSkippedForHeapCount = 0;
+bool DeviceFrameworkMDNS::startDeferredForHeap = false;
 
 namespace {
 
@@ -42,6 +43,27 @@ bool hasMDNSHeapHeadroom(uint32_t minimumFreeHeap) {
 
 } // namespace
 
+void DeviceFrameworkMDNS::logStartDeferredForHeap() {
+    uint32_t freeHeap = 0;
+    uint32_t largestFreeBlock = 0;
+    uint8_t fragmentation = 0;
+    DF_GET_HEAP_STATS(freeHeap, largestFreeBlock, fragmentation);
+
+    LOG_WARN_SP(F("mDNS responder deferred for low heap: free="), true);
+    LOG_WARN_SP(freeHeap, false);
+    LOG_WARN_SP(F(" largest_block="), false);
+    LOG_WARN_SP(largestFreeBlock, false);
+    LOG_WARN_SP(F(" required_free="), false);
+    LOG_WARN_SP(getConfigMDNSMinFreeHeap(), false);
+#ifdef DF_PLATFORM_ESP8266
+    LOG_WARN_SP(F(" required_largest_block="), false);
+    LOG_WARN_SP(getConfigMDNSMinLargestBlock(), false);
+    LOG_WARN_SP(F(" fragmentation="), false);
+    LOG_WARN_SP(fragmentation, false);
+#endif
+    LOG_WARNLN_SP(F(""), false);
+}
+
 void DeviceFrameworkMDNS::setup(const char* hostname) {
     if (initialized) {
         LOG_DEBUGLN(F("MDNSManager already initialized"));
@@ -56,8 +78,13 @@ void DeviceFrameworkMDNS::setup(const char* hostname) {
     // ESP8266 mDNS allocates from the Wi-Fi system context after begin().
     // Do not start it until both total and contiguous heap leave a safe margin.
     if (!hasMDNSHeapHeadroom(getConfigMDNSMinFreeHeap())) {
+        if (!startDeferredForHeap) {
+            startDeferredForHeap = true;
+            logStartDeferredForHeap();
+        }
         return;
     }
+    startDeferredForHeap = false;
 
     // Start mDNS responder
     if (!MDNS.begin(hostname)) {
@@ -97,7 +124,10 @@ void DeviceFrameworkMDNS::onNetworkReady(const char* hostname) {
 }
 
 void DeviceFrameworkMDNS::onNetworkLost() {
-    if (!initialized && currentResolverIP == INADDR_NONE) return;
+    if (!initialized && currentResolverIP == INADDR_NONE) {
+        startDeferredForHeap = false;
+        return;
+    }
 
     if (initialized) {
         #ifdef DF_PLATFORM_ESP8266
@@ -108,6 +138,7 @@ void DeviceFrameworkMDNS::onNetworkLost() {
     }
 
     initialized = false;
+    startDeferredForHeap = false;
     currentResolverIP = INADDR_NONE;
     cachedIP = INADDR_NONE;
     activeHostname = "";
@@ -143,6 +174,7 @@ void DeviceFrameworkMDNS::loop() {
             lastPacketDrainTime = 0;
             isResolving = false;
             ++mdnsUpdateSkippedForHeapCount;
+            startDeferredForHeap = true;
             LOG_WARNLN(F("mDNS responder suspended for low heap"));
             return;
         }

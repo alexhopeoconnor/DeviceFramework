@@ -4,6 +4,8 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+# shellcheck source=tools/lib/platformio.sh
+source "$PROJECT_DIR/tools/lib/platformio.sh"
 HARNESS_DIR="$PROJECT_DIR/tests/ha-hardware"
 NETWORK_HELPER="$SCRIPT_DIR/ha-hardware-network"
 DEFAULT_AHA_DIR="$PROJECT_DIR/../arduino-home-assistant"
@@ -262,7 +264,6 @@ write_test_env() {
         printf 'DEVICEFRAMEWORK_TEST_MQTT_SERVER=%q\n' "$server"
         printf 'DEVICEFRAMEWORK_TEST_MQTT_USER=%q\n' ""
         printf 'DEVICEFRAMEWORK_TEST_MQTT_PASSWORD=%q\n' ""
-        printf 'DEVICEFRAMEWORK_TEST_DEVICE_HOST=%q\n' ""
     } > "$temporary_env"
     chmod 600 "$temporary_env"
 }
@@ -617,7 +618,7 @@ compile_hardware_fixture() {
     command -v pio >/dev/null || { echo "PlatformIO is required for compile" >&2; return 1; }
     configure_local_dependency_stack
     write_compile_config
-    pio test -e "${platform}_ha_e2e" --filter test_ha_e2e --without-uploading --without-testing
+    df_pio test -e "${platform}_ha_e2e" --filter test_ha_e2e --without-uploading --without-testing
 }
 
 run_hardware() {
@@ -692,8 +693,9 @@ load_retained_session() {
 }
 
 copy_esp32_boot_app0() {
-    local pio_home="${PLATFORMIO_CORE_DIR:-${HOME}/.platformio}"
-    local source_file="$pio_home/packages/framework-arduinoespressif32/tools/partitions/boot_app0.bin"
+    local packages_dir
+    packages_dir="$(df_pio_packages_dir)"
+    local source_file="$packages_dir/framework-arduinoespressif32/tools/partitions/boot_app0.bin"
     local target_file="$runtime_dir/pio/build/esp32_ha_e2e/boot_app0.bin"
     [[ -f "$source_file" ]] || {
         echo "Missing ESP32 boot_app0.bin from the installed PlatformIO framework" >&2
@@ -706,7 +708,7 @@ copy_esp32_boot_app0() {
 compile_session_hardware() {
     [[ "$platform" == "esp8266" || "$platform" == "esp32" ]] || usage
     command -v pio >/dev/null || { echo "PlatformIO is required for compile" >&2; return 1; }
-    pio test -e "${platform}_ha_e2e" --filter test_ha_e2e --without-uploading --without-testing
+    df_pio test -e "${platform}_ha_e2e" --filter test_ha_e2e --without-uploading --without-testing
     if [[ "$platform" == "esp32" ]]; then
         copy_esp32_boot_app0
     fi

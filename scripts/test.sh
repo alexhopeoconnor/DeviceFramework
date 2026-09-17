@@ -3,18 +3,21 @@ set -euo pipefail
 
 project_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$project_dir"
+# shellcheck source=tools/lib/platformio.sh
+source "$project_dir/tools/lib/platformio.sh"
 usage() {
     cat <<'EOF'
 Usage:
   ./scripts/test.sh compile  --platform esp8266|esp32 [--profile-fixture] [--release]
   ./scripts/test.sh examples --platform esp8266|esp32
+  ./scripts/test.sh packages --platform esp8266|esp32
   ./scripts/test.sh hardware --platform esp8266|esp32 --port /dev/ttyUSB0 [--env-file test/.env] [--profile-fixture] [--ha-e2e] [--config-header PATH]
 EOF
     exit 2
 }
 
 mode="${1:-}"
-[[ "$mode" == "compile" || "$mode" == "examples" || "$mode" == "hardware" ]] || usage
+[[ "$mode" == "compile" || "$mode" == "examples" || "$mode" == "packages" || "$mode" == "hardware" ]] || usage
 shift
 platform=""
 profile_fixture=false
@@ -76,9 +79,16 @@ if [[ "$mode" == "examples" ]]; then
         exit 1
     fi
     for example in "${examples[@]}"; do
-        pio run -d "$example" -e "$platform" </dev/null
+        df_pio run -d "$example" -e "$platform" </dev/null
     done
     echo "DeviceFramework examples compile check passed for $platform"
+    exit 0
+fi
+
+if [[ "$mode" == "packages" ]]; then
+    # Print the graph selected by the consuming fixture, not stale metadata
+    # from an unrelated global PlatformIO package directory.
+    df_pio pkg list -d test/compile-project -e "$platform"
     exit 0
 fi
 
@@ -102,7 +112,7 @@ refresh_clean_consumer_dependency() {
         # `pio pkg uninstall` has no --project-conf option.  It only removes
         # the named cached package; the following `pio run` is what resolves
         # the selected release or local project configuration afresh.
-        pio pkg uninstall -d test/compile-project -e "$target_environment" \
+        df_pio pkg uninstall -d test/compile-project -e "$target_environment" \
             -l "$dependency" --no-save --skip-dependencies >/dev/null
     done
 }
@@ -123,14 +133,14 @@ if [[ "$mode" == "compile" ]]; then
     fi
 
     for consumer_environment in "${consumer_environments[@]}"; do
-        pio run -d test/compile-project "${consumer_config_args[@]}" -e "$consumer_environment" -t clean >/dev/null
+        df_pio run -d test/compile-project "${consumer_config_args[@]}" -e "$consumer_environment" -t clean >/dev/null
         refresh_clean_consumer_dependency "$consumer_environment"
-        pio run -d test/compile-project "${consumer_config_args[@]}" -e "$consumer_environment"
+        df_pio run -d test/compile-project "${consumer_config_args[@]}" -e "$consumer_environment"
     done
     if [[ "$profile_fixture" == "false" && "$platform" == "esp8266" ]]; then
         # Prove that callers can omit the optional local web interface.
         refresh_clean_consumer_dependency esp8266_no_web
-        pio run -d test/compile-project "${consumer_config_args[@]}" -e esp8266_no_web
+        df_pio run -d test/compile-project "${consumer_config_args[@]}" -e esp8266_no_web
     fi
     exit 0
 fi
@@ -209,12 +219,12 @@ run_unity_hardware_test() {
     output_file="$(mktemp -p /tmp deviceframework-unity.XXXXXX)"
 
     if [[ "$profile_fixture" == "true" ]]; then
-        if ! DEVICEFRAMEWORK_HARDWARE_PROFILE="$hardware_profile" pio test -e "$environment" --filter "$test_filter" --upload-port "$port" --without-testing >"$output_file" 2>&1; then
+        if ! DEVICEFRAMEWORK_HARDWARE_PROFILE="$hardware_profile" df_pio test -e "$environment" --filter "$test_filter" --upload-port "$port" --without-testing >"$output_file" 2>&1; then
             cat "$output_file"
             rm -f "$output_file"
             return 1
         fi
-    elif ! pio test -e "$environment" --filter "$test_filter" --upload-port "$port" --without-testing >"$output_file" 2>&1; then
+    elif ! df_pio test -e "$environment" --filter "$test_filter" --upload-port "$port" --without-testing >"$output_file" 2>&1; then
         cat "$output_file"
         rm -f "$output_file"
         return 1
@@ -249,7 +259,7 @@ assert_http_endpoint() {
     local response_file
     response_file="$(mktemp -p /tmp deviceframework-http.XXXXXX)"
     local curl_args=(
-        --silent --show-error
+        --silent --show-error --noproxy '*'
         --connect-timeout 3 --max-time 20
         --retry 3 --retry-all-errors
         --output "$response_file" --write-out '%{http_code}'
@@ -286,7 +296,7 @@ assert_password_endpoint() {
     local response_file
     response_file="$(mktemp -p /tmp deviceframework-password.XXXXXX)"
     local status_code
-    if ! status_code="$(curl --silent --show-error --connect-timeout 3 --max-time 20 \
+    if ! status_code="$(curl --silent --show-error --noproxy '*' --connect-timeout 3 --max-time 20 \
         --output "$response_file" --write-out '%{http_code}' \
         -u "admin:$password" -X POST \
         --data-urlencode "new_password=$password" \
@@ -314,7 +324,7 @@ wait_for_password_restart() {
     # A successful password update deliberately schedules a reboot. Observe
     # both the outage and recovered authentication rather than racing it.
     for attempt in {1..15}; do
-        status_code="$(curl --silent --connect-timeout 1 --max-time 2 --output /dev/null \
+        status_code="$(curl --silent --noproxy '*' --connect-timeout 1 --max-time 2 --output /dev/null \
             --write-out '%{http_code}' -u "admin:$password" \
             "http://${device_host}/api/status" 2>/dev/null || true)"
         [[ "$status_code" != "200" ]] && break
@@ -326,7 +336,7 @@ wait_for_password_restart() {
     fi
 
     for attempt in {1..45}; do
-        status_code="$(curl --silent --connect-timeout 1 --max-time 2 --output /dev/null \
+        status_code="$(curl --silent --noproxy '*' --connect-timeout 1 --max-time 2 --output /dev/null \
             --write-out '%{http_code}' -u "admin:$password" \
             "http://${device_host}/api/status" 2>/dev/null || true)"
         if [[ "$status_code" == "200" ]]; then
@@ -352,31 +362,55 @@ verify_web_interface() {
     else
         default_host="${platform}-controller.local"
     fi
-    device_host="${DEVICEFRAMEWORK_TEST_DEVICE_HOST:-${ha_e2e_device_ip:-$default_host}}"
-    if [[ "$device_host" == *.local ]]; then
-        command -v avahi-resolve >/dev/null || {
-            echo "avahi-resolve is required for automatic .local discovery; set DEVICEFRAMEWORK_TEST_DEVICE_HOST to an IP address instead" >&2
-            return 1
-        }
-        local mdns_name="$device_host"
-        local attempt
-        device_host=""
-        for attempt in {1..45}; do
-            device_host="$(avahi-resolve -4 -n "$mdns_name" 2>/dev/null | awk 'NR == 1 { print $2; exit }')"
-            [[ -n "$device_host" ]] && break
-            sleep 1
-        done
-        [[ -n "$device_host" ]] || {
-            echo "Could not resolve the test device mDNS name within 45 seconds; set DEVICEFRAMEWORK_TEST_DEVICE_HOST to an IP address instead" >&2
-            return 1
-        }
-    fi
-    local profile_password=""
+    # Normal hardware coverage is specifically an mDNS contract.  A private
+    # IP override used to turn an mDNS regression into a false green result;
+    # keep direct-IP access in the explicit OTA diagnostic command instead.
+    [[ -z "${DEVICEFRAMEWORK_TEST_DEVICE_HOST:-}" ]] || {
+        echo "DEVICEFRAMEWORK_TEST_DEVICE_HOST is no longer accepted by the normal hardware suite; it must prove ${default_host} through mDNS." >&2
+        return 1
+    }
+    command -v avahi-resolve >/dev/null || {
+        echo "avahi-resolve is required because the normal hardware suite verifies mDNS." >&2
+        return 1
+    }
+    command -v getent >/dev/null || {
+        echo "getent is required because the normal hardware suite verifies the system mDNS resolver." >&2
+        return 1
+    }
+    local mdns_name="$default_host"
+    local attempt avahi_ip system_ip
+    device_host=""
+    for attempt in {1..45}; do
+        avahi_ip="$(avahi-resolve -4 -n "$mdns_name" 2>/dev/null | awk 'NR == 1 { print $2; exit }')"
+        system_ip="$(getent ahostsv4 "$mdns_name" 2>/dev/null | awk 'NR == 1 { print $1; exit }')"
+        if [[ -n "$avahi_ip" && "$avahi_ip" == "$system_ip" ]]; then
+            # Keep the hostname in the actual HTTP URL. Resolution and
+            # transport are both part of this normal mDNS contract.
+            device_host="$mdns_name"
+            echo "mDNS: $mdns_name -> $avahi_ip (Avahi and system resolver agree)"
+            break
+        fi
+        sleep 1
+    done
+    [[ -n "$device_host" ]] || {
+        echo "Could not resolve the test device mDNS name through both Avahi and the system resolver within 45 seconds: $mdns_name" >&2
+        return 1
+    }
+    # An erased, unprofiled DeviceFramework board deliberately retains the
+    # library's safe test default.  The normal hardware path must prove that
+    # protected routes reject anonymous requests and then authenticate with
+    # that known value; otherwise the positive checks below would incorrectly
+    # expect a protected endpoint to be public.
+    local profile_password="default1"
     if [[ "$profile_fixture" == "true" ]]; then
         local profile_source="${hardware_smoke_profile:-test/profiles/profile-fixture.json}"
         profile_password="$(sed -nE 's/^[[:space:]]*"device_password"[[:space:]]*:[[:space:]]*"([^"]*)"[[:space:]]*,?[[:space:]]*$/\1/p' "$profile_source")"
         [[ -n "$profile_password" ]] || { echo "Profile fixture has no device_password" >&2; return 1; }
         assert_http_endpoint "superseded bootstrap password" "/api/status" 401 "default1"
+        assert_http_endpoint "unauthenticated API status" "/api/status" 401 ""
+        assert_http_endpoint "unauthenticated stylesheet" "/assets/deviceframework.css" 401 ""
+        assert_http_endpoint "unauthenticated logo" "/assets/deviceframework-logo" 401 ""
+    else
         assert_http_endpoint "unauthenticated API status" "/api/status" 401 ""
         assert_http_endpoint "unauthenticated stylesheet" "/assets/deviceframework.css" 401 ""
         assert_http_endpoint "unauthenticated logo" "/assets/deviceframework-logo" 401 ""
@@ -417,7 +451,7 @@ write_config
 if [[ "$profile_fixture" == "true" ]]; then
     write_hardware_profile
     run_unity_hardware_test
-    DEVICEFRAMEWORK_HARDWARE_PROFILE="$hardware_smoke_profile" pio run -d test/compile-project -e "$environment" -t upload --upload-port "$port"
+    DEVICEFRAMEWORK_HARDWARE_PROFILE="$hardware_smoke_profile" df_pio run -d test/compile-project -e "$environment" -t upload --upload-port "$port"
 else
     run_unity_hardware_test
 fi

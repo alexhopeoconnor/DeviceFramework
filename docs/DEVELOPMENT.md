@@ -16,15 +16,18 @@ firmware, so no board or credentials are needed:
 
 ```bash
 ./scripts/test.sh compile --platform esp8266
+./scripts/test.sh packages --platform esp8266
 ./scripts/test.sh compile --platform esp8266 --profile-fixture
 ./scripts/test.sh compile --platform esp32
+./scripts/test.sh packages --platform esp32
 ./scripts/test.sh compile --platform esp32 --profile-fixture
 ```
 
 The `--profile-fixture` command compiles bootstrap, no-Wi-Fi, and reconcile-profile consumers. The physical profile run additionally proves the reconcile image changes its explicit device value while retaining the broker setting persisted by the preceding firmware; the fixture test also proves profile-ID and revision changes independently.
 
-The runner refreshes its generated PlatformIO package cache before each check, so
-CI and local runs compile the current source rather than a stale `.pio` copy.
+The runner keeps its PlatformIO Core, packages, and download cache in a dedicated
+DeviceFramework location; each clean-consumer check refreshes its fixture dependency
+instead of trusting a stale `.pio` copy.
 CI runs these normal and profile-fixture checks for every push and pull request, and the tag workflow repeats them before it creates a GitHub Release.
 
 The normal ESP8266 command also checks the web-interface-free configuration.
@@ -60,9 +63,12 @@ toolchain. Do not replace a platform-owned compiler package with an unrelated
 
 The optional hardware suite exercises WiFi, MQTT, V4 storage, password
 persistence, web-interface restart, and direct HTTP requests from the
-development host to a connected board. It needs
-curl and Avahi for automatic mDNS discovery (or an explicit device address), a reachable MQTT broker, a WiFi network,
-and an unused development device. Copy the template;
+development host to a connected board. It needs curl, Avahi, and a host system
+resolver capable of resolving the board's `.local` hostname, plus a reachable
+MQTT broker, a WiFi network, and an unused development device. Normal hardware
+coverage deliberately has no IP/host override: an explicit address can help
+diagnose reachability, but cannot turn an mDNS failure into a passing test.
+Copy the template;
 the real file is ignored and must never be committed:
 
 ```bash
@@ -81,10 +87,11 @@ For a profile fixture, it then flashes the minimal consuming sketch with a
 separate reconcile-profile identity and password. That makes the WiFi seed and
 the shared-password rotation apply after the Unity run has left a valid V4
 record, exercising the intended non-erased-device path. The runner waits for
-its unique mDNS name before it verifies authenticated
-status, pages, CSS/JavaScript/logo assets, and password persistence through a
-reboot. Set `DEVICEFRAMEWORK_TEST_DEVICE_HOST` in the ignored env file when
-Avahi or mDNS is unavailable.
+its unique mDNS name through both Avahi and the system resolver before it
+verifies authenticated status, pages, CSS/JavaScript/logo assets, and password
+persistence through a reboot. Normal hardware coverage deliberately rejects
+`DEVICEFRAMEWORK_TEST_DEVICE_HOST`: an IP can diagnose reachability but cannot
+make an mDNS contract pass.
 
 For an end-to-end local Home Assistant run (board -> Wi-Fi -> Mosquitto -> HA and HA commands back to the board), use the [local HA hardware test harness](HA_HARDWARE_TESTING.md). It creates and removes Docker state automatically, can bind to the existing Wi-Fi network without sudo, and has an opt-in NetworkManager USB-adapter AP mode when a dedicated adapter is available. For several boards, retain one session, compile each target once, and run its Docker-contained USB workers in parallel.
 

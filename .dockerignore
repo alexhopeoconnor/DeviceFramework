@@ -1,0 +1,15 @@
+# The browser image copies only tests/device-ui. Keep the build context small
+# and ensure ignored local credentials, PlatformIO outputs, and failure
+# artifacts never reach the Docker daemon.
+.git
+.pio
+**/.pio
+artifacts
+test/.env
+test/**/test_config.generated.h
+platformio.local.ini
+platformio.local.ini.*
+**/platformio.local.ini
+**/platformio.local.ini.*
+__pycache__
+**/__pycache__

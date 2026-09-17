@@ -7,6 +7,8 @@ tag="${1:-}"
 version="${tag#v}"
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$root"
+# shellcheck source=tools/lib/platformio.sh
+source "$root/tools/lib/platformio.sh"
 manifest_version="$(sed -n 's/.*"version": "\([^"]*\)".*/\1/p' library.json | head -n 1)"
 build_version="$(sed -n -E '/DEVICEFRAMEWORK_LIBRARY_VERSION=/s/.*([0-9]+\.[0-9]+\.[0-9]+).*/\1/p' library.json)"
 source_version="$(sed -n -E 's/^#define DEVICEFRAMEWORK_LIBRARY_VERSION "([^"]+)"/\1/p' src/Configuration/DeviceFrameworkIdentity.h)"
@@ -59,7 +61,7 @@ grep -Fqx "$expected_compatibility_row" docs/COMPATIBILITY.md || {
 git diff --check
 package_dir="$(mktemp -d)"
 trap 'rm -rf "$package_dir"' EXIT
-pio pkg pack . --output "$package_dir/package.tar.gz" >/dev/null
+df_pio pkg pack . --output "$package_dir/package.tar.gz" >/dev/null
 echo "Validated release metadata and PlatformIO package for $tag"
 if [[ "${2:-}" == "--tag" ]]; then
     git diff --quiet && git diff --cached --quiet

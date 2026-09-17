@@ -47,8 +47,9 @@ void DeviceFrameworkOTA::setup() {
 
     // On ESP8266 ArduinoOTA otherwise creates and updates the global mDNS
     // responder itself. DeviceFramework owns that responder so it can keep the
-    // core's packet parser out of a fragmented heap; OTA remains reachable by
-    // the device hostname or IP on its normal UDP port.
+    // core's packet parser out of a fragmented heap. OTA remains reachable by
+    // IP on its normal UDP port; hostname resolution is available while the
+    // framework-owned responder has enough heap headroom to stay active.
 #ifdef DF_PLATFORM_ESP8266
     ArduinoOTA.begin(false);
 #else

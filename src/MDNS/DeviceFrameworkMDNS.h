@@ -36,9 +36,14 @@ private:
     static unsigned long lastMDNSUpdateAttemptTime;
     static uint32_t mdnsUpdateCount;
     static uint32_t mdnsUpdateSkippedForHeapCount;
+    // `onNetworkReady()` is called repeatedly while a station link is healthy.
+    // Remember a low-heap start deferral so serial diagnostics explain why the
+    // host cannot resolve the device without flooding the log every loop.
+    static bool startDeferredForHeap;
 
     // Internal methods
     static void updateResolverIP();
+    static void logStartDeferredForHeap();
 
 public:
     // Initialization

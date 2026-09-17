@@ -20,8 +20,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      - run: bash -n scripts/*.sh
+      - run: bash -n scripts/*.sh tools/lib/platformio.sh tools/check-ota-partitions.sh
       - run: ./scripts/check-docs.sh
+      - run: ./tools/check-ota-partitions.sh
+      - run: ./tests/test-ota-hardware-cli.sh
 
   compile-tests:
     runs-on: ubuntu-latest
@@ -34,7 +36,68 @@ jobs:
       - uses: actions/setup-python@v7
         with:
           python-version: '3.11'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
       - run: python -m pip install --upgrade platformio==6.2.0
       - run: ./scripts/test.sh compile --platform ${{ matrix.target }}
+      - run: ./scripts/test.sh packages --platform ${{ matrix.target }}
       - run: ./scripts/test.sh examples --platform ${{ matrix.target }}
       - run: ./scripts/test.sh compile --platform ${{ matrix.target }} --profile-fixture
+      - run: ./tests/test-device-ui-hardware-cli.sh
+      - run: |
+          slot_size() {
+            awk -F, -v partition="$1" '
+              function trim(value) { gsub(/^[[:space:]]+|[[:space:]]+$/, "", value); return value }
+              /^[[:space:]]*#/ || NF < 5 { next }
+              trim($1) == partition && trim($2) == "app" { print trim($5); exit }
+            ' partitions/esp32_ota_4m_no_fs.csv
+          }
+          assert_fits() {
+            image="$1"
+            slot="$2"
+            test -s "$image"
+            test "$(wc -c < "$image" | tr -d '[:space:]')" -le "$((slot))"
+          }
+          # Match the maintained scripts: do not pull framework/tool metadata
+          # from a generic global PlatformIO package directory.
+          source tools/lib/platformio.sh
+          for profile in protected open; do
+            for image in a b; do
+              df_pio run -d test/ota-harness \
+                -e "${{ matrix.target }}_portal_ota_${profile}_${image}"
+            done
+            a="test/ota-harness/.pio/build/${{ matrix.target }}_portal_ota_${profile}_a/firmware.bin"
+            b="test/ota-harness/.pio/build/${{ matrix.target }}_portal_ota_${profile}_b/firmware.bin"
+            test -s "$a" && test -s "$b"
+            ! cmp -s "$a" "$b"
+            if [ "${{ matrix.target }}" = esp32 ]; then
+              assert_fits "$a" "$(slot_size app0)"
+              assert_fits "$b" "$(slot_size app1)"
+            fi
+          done
+          for profile in protected open; do
+            # custom_device_profile is resolved from test/ota-harness, not
+            # the repository root used by this workflow step.
+            export DEVICEFRAMEWORK_OTA_PROFILE="../profiles/ota-lan-${profile}-fixture.json"
+            for image in a b; do
+              df_pio run -d test/ota-harness -e "${{ matrix.target }}_udp_ota_${image}"
+            done
+            a="test/ota-harness/.pio/build/${{ matrix.target }}_udp_ota_a/firmware.bin"
+            b="test/ota-harness/.pio/build/${{ matrix.target }}_udp_ota_b/firmware.bin"
+            test -s "$a" && test -s "$b"
+            ! cmp -s "$a" "$b"
+            if [ "${{ matrix.target }}" = esp32 ]; then
+              assert_fits "$a" "$(slot_size app0)"
+              assert_fits "$b" "$(slot_size app1)"
+            fi
+          done
+          if [ "${{ matrix.target }}" = esp8266 ]; then
+            export DEVICEFRAMEWORK_OTA_PROFILE=../profiles/ota-lan-protected-fixture.json
+            df_pio run -d test/ota-harness -e esp8266_udp_ota_deferred_a
+            df_pio run -d test/ota-harness -e esp8266_udp_ota_deferred_b
+            a="test/ota-harness/.pio/build/esp8266_udp_ota_deferred_a/firmware.bin"
+            b="test/ota-harness/.pio/build/esp8266_udp_ota_deferred_b/firmware.bin"
+            test -s "$a" && test -s "$b"
+            ! cmp -s "$a" "$b"
+          fi

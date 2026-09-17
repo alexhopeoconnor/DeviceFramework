@@ -73,21 +73,61 @@ pio pkg list -e esp32dev
 ```
 
 For example, a project pinned to pioarduino `55.03.311` should report
-Arduino-ESP32 3.3.11 and `toolchain-xtensa-esp-elf` 14.2. If that report names
-the expected graph but compilation tries an incompatible stale Xtensa tool,
-remove only that global tool and let the project's pinned platform restore it:
+Arduino-ESP32 3.3.11 and `toolchain-xtensa-esp-elf` 14.2. A report that looks
+right does not prove that the global PlatformIO cache is import-safe. One
+observed failure was a legacy flat `esptool.py` left in the global package
+cache shadowing the package-form `esptool` required by the current pioarduino
+stack. That is a cache/Python-import collision, not evidence that the project
+should override its compiler or framework packages.
+
+First reproduce with an isolated, disposable PlatformIO Core directory. This
+matters because the conflicting editable-import metadata lives alongside the
+Core-managed Python environment, not just in the framework package directory:
 
 ```bash
-pio pkg uninstall --global --tool toolchain-xtensa-esp-elf
-pio run -e esp32dev
+df_pio_core="$(mktemp -d /tmp/deviceframework-pio-XXXXXX)"
+PLATFORMIO_CORE_DIR="$df_pio_core" \
+PLATFORMIO_PACKAGES_DIR="$df_pio_core/packages" \
+PLATFORMIO_CACHE_DIR="$df_pio_core/cache" \
+  pio run -e esp32dev
+rm -rf -- "$df_pio_core"
 ```
 
-This is deliberately narrower than deleting `~/.platformio`: it preserves
-unrelated frameworks, upload tools, libraries, and IDE state. Do not add a
-`platform_packages` toolchain override merely to work around this condition;
-the selected pioarduino platform owns the compatible toolchain version. Use a
-separate `PLATFORMIO_PACKAGES_DIR` only when deliberately isolating an
-experiment, and do not commit that large package directory.
+If the isolated run succeeds, retain the selected platform pin and repair the
+developer's shared PlatformIO installation deliberately (or keep a dedicated
+Core/cache for this project). Do **not** delete a global toolchain just because
+a different stack was previously installed, and do not add a
+`platform_packages` toolchain override to mask the problem: the selected
+pioarduino platform owns the compatible uploader and toolchain versions.
+Never commit the disposable Core/cache directory.
+
+The maintained DeviceFramework runners already use that safer model. Their
+PlatformIO calls use one dedicated Core, package directory, and cache by
+default:
+
+```text
+${XDG_CACHE_HOME:-$HOME/.cache}/deviceframework-platformio/current
+```
+
+This applies to `scripts/test.sh`, `scripts/test-nonhardware.sh`, the portal
+runner, the ArduinoOTA runner, and release package validation. It keeps the
+ESP8266 workaround snapshot and the ESP32 3.3.11 package graph together while
+keeping unrelated legacy projects out. To place the complete graph elsewhere,
+set `DEVICEFRAMEWORK_PLATFORMIO_CORE_DIR`; the package and cache directories
+then default beneath it. Advanced callers may set
+`DEVICEFRAMEWORK_PLATFORMIO_PACKAGES_DIR` and
+`DEVICEFRAMEWORK_PLATFORMIO_CACHE_DIR` explicitly as well. For example:
+
+```bash
+df_pio_core="$(mktemp -d /tmp/deviceframework-pio-XXXXXX)"
+DEVICEFRAMEWORK_PLATFORMIO_CORE_DIR="$df_pio_core" \
+  ./scripts/test.sh compile --platform esp32
+rm -rf -- "$df_pio_core"
+```
+
+The runner never removes a persistent cache automatically. The explicit
+temporary-directory command above is the only appropriate cleanup pattern for
+a diagnostic cache.
 
 ## Changing a target contract
 

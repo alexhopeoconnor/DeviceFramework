@@ -1,0 +1,696 @@
+#!/usr/bin/env bash
+# Real-board ArduinoOTA contract runner. It deliberately owns no Wi-Fi adapter:
+# station traffic uses the normal LAN route, unlike the portal runner.
+set -euo pipefail
+
+project_dir="$(cd "$(dirname "$0")/.." && pwd)"
+cd "$project_dir"
+# shellcheck source=tools/lib/platformio.sh
+source "$project_dir/tools/lib/platformio.sh"
+
+usage() {
+    cat <<'EOF' >&2
+Usage:
+  ./tools/ota-hardware doctor --platform esp8266|esp32
+  ./tools/ota-hardware arduino --platform esp8266|esp32 --port DEVICE
+      [--env-file test/.env] [--auth protected|open|both]
+      [--host-port PORT] [--device-ip IPv4] [--output DIRECTORY]
+      [--defer-mdns]
+  ./tools/ota-hardware cleanup --platform esp8266|esp32 --port DEVICE
+
+Normal ArduinoOTA mode proves both Avahi and the system resolver can resolve
+the device hostname, and uploads to that hostname. --device-ip is a labelled
+diagnostic transport mode and never passes the mDNS contract.
+EOF
+    exit 2
+}
+
+command="${1:-}"
+[[ -n "$command" ]] || usage
+shift || true
+
+platform=""
+serial_port=""
+env_file="test/.env"
+auth_mode="protected"
+host_port="43123"
+device_ip=""
+output_root=""
+defer_mdns="no"
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --platform) [[ $# -ge 2 ]] || usage; platform="$2"; shift 2 ;;
+        --port) [[ $# -ge 2 ]] || usage; serial_port="$2"; shift 2 ;;
+        --env-file) [[ $# -ge 2 ]] || usage; env_file="$2"; shift 2 ;;
+        --auth) [[ $# -ge 2 ]] || usage; auth_mode="$2"; shift 2 ;;
+        --host-port) [[ $# -ge 2 ]] || usage; host_port="$2"; shift 2 ;;
+        --device-ip) [[ $# -ge 2 ]] || usage; device_ip="$2"; shift 2 ;;
+        --output) [[ $# -ge 2 ]] || usage; output_root="$2"; shift 2 ;;
+        --defer-mdns) defer_mdns="yes"; shift ;;
+        *) usage ;;
+    esac
+done
+
+need() {
+    command -v "$1" >/dev/null 2>&1 || {
+        echo "Required command not found: $1" >&2
+        return 1
+    }
+}
+
+need_python_serial() {
+    python3 -c 'import serial' >/dev/null 2>&1 || {
+        echo "Python module 'serial' (pyserial) is required for boot capture." >&2
+        return 1
+    }
+}
+
+validate_platform() {
+    [[ "$platform" == "esp8266" || "$platform" == "esp32" ]] || usage
+}
+
+validate_ipv4() {
+    [[ "$1" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]] || {
+        echo "Not an IPv4 address: $1" >&2
+        return 1
+    }
+}
+
+validate_args() {
+    validate_platform
+    case "$auth_mode" in protected|open|both) ;; *) echo "--auth must be protected, open, or both" >&2; usage ;; esac
+    [[ "$host_port" =~ ^[0-9]+$ ]] && (( host_port >= 1024 && host_port <= 65535 )) || {
+        echo "--host-port must be from 1024 through 65535." >&2
+        return 1
+    }
+    [[ -n "$serial_port" && -e "$serial_port" ]] || {
+        echo "Serial port not found: $serial_port" >&2
+        return 1
+    }
+    [[ -z "$device_ip" ]] || validate_ipv4 "$device_ip"
+    if [[ "$defer_mdns" == "yes" ]]; then
+        [[ "$platform" == "esp8266" ]] || { echo "--defer-mdns is ESP8266-only." >&2; return 1; }
+        [[ -n "$device_ip" ]] || { echo "--defer-mdns requires --device-ip." >&2; return 1; }
+    fi
+}
+
+lock_board() {
+    exec 9>"${DEVICEFRAMEWORK_HARDWARE_LOCK_FILE:-/tmp/deviceframework-hardware-test.lock}"
+    if ! flock -n 9; then
+        echo "Another DeviceFramework hardware task is active; waiting for its board/build lock." >&2
+        flock 9
+    fi
+}
+
+profile_file=""
+profile_build_override_file=""
+profile_build_dir=""
+run_dir=""
+monitor_pid=""
+wifi_ssid=""
+wifi_password=""
+device_password=""
+device_name=""
+device_hostname=""
+environment_a=""
+environment_b=""
+firmware_a=""
+firmware_b=""
+firmware_a_artifact=""
+firmware_b_artifact=""
+
+cleanup() {
+    local status=$?
+    trap - EXIT INT TERM
+    [[ -z "$monitor_pid" ]] || kill "$monitor_pid" >/dev/null 2>&1 || true
+    [[ -z "$monitor_pid" ]] || wait "$monitor_pid" >/dev/null 2>&1 || true
+    [[ -z "$profile_file" ]] || rm -f -- "$profile_file"
+    [[ -z "$profile_build_override_file" ]] || rm -f -- "$profile_build_override_file"
+    exit "$status"
+}
+
+need_common() {
+    need pio
+    need python3
+    need_python_serial
+    need curl
+    need ip
+    need flock
+    need timeout
+    need getent
+    # Normal mode proves mDNS resolution; forced-defer also needs Avahi to
+    # prove that the deliberately unique hostname remains absent.
+    [[ -n "$device_ip" && "$defer_mdns" != "yes" ]] || need avahi-resolve
+}
+
+prepare_output() {
+    [[ -n "$output_root" ]] || output_root="$project_dir/artifacts/ota/$(date -u +%Y%m%dT%H%M%SZ)-$platform"
+    install -d -m 700 "$output_root"
+    output_root="$(cd "$output_root" && pwd)"
+}
+
+json_escape() {
+    python3 -c 'import json,sys; print(json.dumps(sys.stdin.read()))'
+}
+
+strip_quotes() {
+    local value="$1"
+    if [[ "$value" == \"*\" ]]; then
+        value="${value#\"}"
+        value="${value%\"}"
+    elif [[ "$value" == \'*\' ]]; then
+        value="${value#\'}"
+        value="${value%\'}"
+    fi
+    printf '%s' "$value"
+}
+
+load_station_env() {
+    local line value
+    [[ -r "$env_file" ]] || {
+        echo "Missing local test credentials: $env_file (copy test/.env.example)." >&2
+        return 1
+    }
+    while IFS= read -r line || [[ -n "$line" ]]; do
+        [[ -z "$line" || "$line" == \#* ]] && continue
+        case "$line" in
+            DEVICEFRAMEWORK_TEST_WIFI_SSID=*) value="${line#*=}"; wifi_ssid="$(strip_quotes "$value")" ;;
+            DEVICEFRAMEWORK_TEST_WIFI_PASSWORD=*) value="${line#*=}"; wifi_password="$(strip_quotes "$value")" ;;
+            DEVICEFRAMEWORK_TEST_MQTT_SERVER=*|DEVICEFRAMEWORK_TEST_MQTT_USER=*|DEVICEFRAMEWORK_TEST_MQTT_PASSWORD=*) ;;
+            *) echo "Unexpected key in $env_file; OTA accepts only DeviceFramework test-env keys." >&2; return 1 ;;
+        esac
+    done < "$env_file"
+    [[ -n "$wifi_ssid" && -n "$wifi_password" ]] || {
+        echo "DEVICEFRAMEWORK_TEST_WIFI_SSID and DEVICEFRAMEWORK_TEST_WIFI_PASSWORD are required." >&2
+        return 1
+    }
+}
+
+set_identity() {
+    if [[ "$defer_mdns" == "yes" ]]; then
+        device_name="df-ota-deferred-$platform"
+    else
+        device_name="df-ota-$platform"
+    fi
+    device_hostname="$device_name.local"
+    case "$auth_mode" in
+        protected) device_password="ota-test-password" ;;
+        open) device_password="" ;;
+        *) return 1 ;;
+    esac
+}
+
+write_profile() {
+    local ssid_json wifi_json name_json device_json
+    ssid_json="$(printf '%s' "$wifi_ssid" | json_escape)"
+    wifi_json="$(printf '%s' "$wifi_password" | json_escape)"
+    name_json="$(printf '%s' "$device_name" | json_escape)"
+    device_json="$(printf '%s' "$device_password" | json_escape)"
+    profile_file="$(mktemp -p /tmp deviceframework-ota-profile.XXXXXX)"
+    chmod 600 "$profile_file"
+    {
+        printf '%s\n' '{'
+        printf '%s\n' '  "format": 2,'
+        printf '%s\n' '  "application": "deviceframework",'
+        printf '  "profile": { "id": "ota-lan-%s-%s", "revision": 1, "policy": "bootstrap" },\n' "$platform" "$auth_mode"
+        printf '  "device_password": %s,\n' "$device_json"
+        printf '%s\n' '  "wifi": { "profiles": ['
+        printf '    { "ssid": %s, "password": %s }\n' "$ssid_json" "$wifi_json"
+        printf '%s\n' '  ] },'
+        printf '  "parameters": { "device": %s }\n' "$name_json"
+        printf '%s\n' '}'
+    } > "$profile_file"
+}
+
+prepare_private_profile_build() {
+    # profile.py deliberately compiles the station credentials into a generated
+    # header. Keep that header, object files, and the original firmware images
+    # below this mode-0700 run directory instead of an ordinary project .pio
+    # tree that may have been created with a permissive user umask.
+    profile_build_dir="$run_dir/platformio-build"
+    install -d -m 700 "$profile_build_dir"
+    profile_build_override_file="$(mktemp "$project_dir/test/ota-harness/platformio.local.ini.ota-hardware.XXXXXX")"
+    chmod 600 "$profile_build_override_file"
+    printf '[platformio]\nbuild_dir = %s\n' "$profile_build_dir" > "$profile_build_override_file"
+}
+
+remove_private_profile_build_override() {
+    [[ -z "$profile_build_override_file" ]] || rm -f -- "$profile_build_override_file"
+    profile_build_override_file=""
+}
+
+pio_with_profile() {
+    DEVICEFRAMEWORK_OTA_PROFILE="$profile_file" df_pio "$@"
+}
+
+environment_for() {
+    if [[ "$defer_mdns" == "yes" ]]; then
+        printf '%s_udp_ota_deferred_%s\n' "$platform" "$1"
+    else
+        printf '%s_udp_ota_%s\n' "$platform" "$1"
+    fi
+}
+
+wait_for_serial() {
+    local attempt
+    for attempt in $(seq 1 15); do
+        [[ -e "$serial_port" ]] && return 0
+        sleep 1
+    done
+    echo "Serial port did not return after erase: $serial_port" >&2
+    return 1
+}
+
+build_images() {
+    environment_a="$(environment_for a)"
+    environment_b="$(environment_for b)"
+    pio_with_profile run -d test/ota-harness -e "$environment_a"
+    pio_with_profile run -d test/ota-harness -e "$environment_b"
+    firmware_a="$profile_build_dir/$environment_a/firmware.bin"
+    firmware_b="$profile_build_dir/$environment_b/firmware.bin"
+    [[ -s "$firmware_a" && -s "$firmware_b" ]] || {
+        echo "OTA fixture build did not produce A and B." >&2
+        return 1
+    }
+    cmp -s "$firmware_a" "$firmware_b" && {
+        echo "OTA fixture A and B are identical." >&2
+        return 1
+    }
+    firmware_a_artifact="$run_dir/$platform-udp-ota-a.bin"
+    firmware_b_artifact="$run_dir/$platform-udp-ota-b.bin"
+    install -m 600 "$firmware_a" "$firmware_a_artifact"
+    install -m 600 "$firmware_b" "$firmware_b_artifact"
+}
+
+esp32_slot_size() {
+    local partition="$1" subtype="$2" value
+    value="$(awk -F, -v partition="$partition" -v subtype="$subtype" '
+      function trim(x) { gsub(/^[[:space:]]+|[[:space:]]+$/, "", x); return x }
+      /^[[:space:]]*#/ || NF < 5 { next }
+      trim($1) == partition && trim($2) == "app" && trim($3) == subtype { print trim($5); exit }
+    ' "$project_dir/partitions/esp32_ota_4m_no_fs.csv")"
+    [[ "$value" =~ ^0x[0-9A-Fa-f]+$ ]] || {
+        echo "No valid ESP32 $partition OTA slot." >&2
+        return 1
+    }
+    printf '%d\n' "$((value))"
+}
+
+assert_fits() {
+    local image="$1" capacity="$2" label="$3" size
+    size="$(wc -c < "$image" | tr -d '[:space:]')"
+    [[ "$capacity" =~ ^[0-9]+$ && "$capacity" -gt 0 ]] || {
+        echo "Invalid OTA capacity." >&2
+        return 1
+    }
+    (( size <= capacity )) || {
+        echo "OTA $label ($size bytes) exceeds capacity ($capacity bytes)." >&2
+        return 1
+    }
+    printf 'OTA %s fits: %s <= %s bytes\n' "$label" "$size" "$capacity"
+}
+
+flash_a() {
+    cmp -s "$firmware_a" "$firmware_a_artifact" || {
+        echo "The PlatformIO A build changed after its immutable artifact was captured." >&2
+        return 1
+    }
+    pio_with_profile run -d test/ota-harness -e "$environment_a" -t erase --upload-port "$serial_port"
+    wait_for_serial
+    cmp -s "$firmware_a" "$firmware_a_artifact" || {
+        echo "The PlatformIO A build changed while the board was being erased." >&2
+        return 1
+    }
+    pio_with_profile run -d test/ota-harness -e "$environment_a" -t upload --upload-port "$serial_port"
+}
+
+resolved_ip=""
+transport_endpoint=""
+status_endpoint=""
+route_source_ip=""
+ota_port=""
+espota_path=""
+
+resolve_mdns() {
+    local attempt avahi_ip getent_ip
+    for attempt in $(seq 1 60); do
+        avahi_ip="$(avahi-resolve -4 -n "$device_hostname" 2>/dev/null | awk 'NR == 1 {print $2; exit}')"
+        getent_ip="$(getent ahostsv4 "$device_hostname" 2>/dev/null | awk 'NR == 1 {print $1; exit}')"
+        if [[ -n "$avahi_ip" && "$avahi_ip" == "$getent_ip" ]]; then
+            resolved_ip="$avahi_ip"
+            transport_endpoint="$device_hostname"
+            status_endpoint="$device_hostname"
+            echo "mDNS: $device_hostname -> $resolved_ip (Avahi and system resolver agree)"
+            return 0
+        fi
+        sleep 1
+    done
+    echo "mDNS failed: both Avahi and the system resolver must resolve $device_hostname." >&2
+    return 1
+}
+
+assert_mdns_absent() {
+    local seconds="$1" deadline avahi_ip getent_ip
+    deadline=$((SECONDS + seconds))
+    while (( SECONDS < deadline )); do
+        avahi_ip="$(avahi-resolve -4 -n "$device_hostname" 2>/dev/null | awk 'NR == 1 {print $2; exit}')"
+        getent_ip="$(getent ahostsv4 "$device_hostname" 2>/dev/null | awk 'NR == 1 {print $1; exit}')"
+        if [[ -n "$avahi_ip" || -n "$getent_ip" ]]; then
+            echo "Deferred hostname unexpectedly resolved: $device_hostname (Avahi=${avahi_ip:-none}, system=${getent_ip:-none})" >&2
+            return 1
+        fi
+        sleep 1
+    done
+    echo "mDNS: intentionally deferred; no resolver response observed for ${seconds}s."
+}
+
+set_target() {
+    if [[ "$defer_mdns" == "yes" ]]; then
+        resolved_ip="$device_ip"
+        transport_endpoint="$device_ip"
+        status_endpoint="$device_ip"
+        echo "mDNS: intentionally deferred; direct-IP transport mode."
+        # Observe a post-boot interval, rather than accepting one negative
+        # lookup that could miss a delayed second mDNS owner.
+        assert_mdns_absent 10
+    elif [[ -n "$device_ip" ]]; then
+        resolved_ip="$device_ip"
+        transport_endpoint="$device_ip"
+        status_endpoint="$device_ip"
+        echo "mDNS: not exercised; diagnostic transport mode only."
+    else
+        resolve_mdns
+    fi
+}
+
+route_source() {
+    local route
+    route="$(ip -4 route get "$resolved_ip" 2>/dev/null || true)"
+    route_source_ip="$(awk '{for (i=1;i<=NF;i++) if ($i=="src") {print $(i+1); exit}}' <<<"$route")"
+    [[ -n "$route_source_ip" ]] || {
+        echo "No route source for $resolved_ip: $route" >&2
+        return 1
+    }
+    printf 'Route: source %s; device UDP %s; callback TCP %s\n' "$route_source_ip" "$ota_port" "$host_port"
+    python3 -c 'import socket,sys;s=socket.socket();s.bind((sys.argv[1],int(sys.argv[2])));s.close()' "$route_source_ip" "$host_port" || {
+        echo "Cannot bind the callback listener on $route_source_ip:$host_port." >&2
+        return 1
+    }
+    if command -v ufw >/dev/null 2>&1 && ufw status 2>/dev/null | grep -q '^Status: active'; then
+        echo "Firewall: UFW active; the runner did not change callback-port policy."
+    else
+        echo "Firewall: no policy was changed."
+    fi
+}
+
+status_request() {
+    local url="http://$status_endpoint/api/status"
+    if [[ "$auth_mode" == "protected" ]]; then
+        curl --disable --noproxy '*' -sS -f --connect-timeout 2 --max-time 5 -u "admin:$device_password" "$url"
+    else
+        curl --disable --noproxy '*' -sS -f --connect-timeout 2 --max-time 5 "$url"
+    fi
+}
+
+status_value() {
+    python3 -c 'import json,sys; print(json.load(sys.stdin)["hardware"][sys.argv[1]])' "$1"
+}
+
+status_version() {
+    printf '%s' "$1" | status_value version 2>/dev/null
+}
+
+status_free() {
+    printf '%s' "$1" | status_value free_sketch_space 2>/dev/null
+}
+
+has_marker() {
+    [[ "$(status_version "$1" || true)" == *"$2"* ]]
+}
+
+wait_marker() {
+    local expected="$1" deadline response
+    deadline=$((SECONDS + 90))
+    while (( SECONDS < deadline )); do
+        response="$(status_request 2>/dev/null || true)"
+        if has_marker "$response" "$expected"; then
+            printf '%s' "$response"
+            return 0
+        fi
+        sleep 1
+    done
+    echo "Device did not report marker $expected within 90 seconds." >&2
+    return 1
+}
+
+verify_a() {
+    local response
+    response="$(wait_marker 0.0.0-udp-ota-a)"
+    echo "Running A marker: $(status_version "$response")"
+    if [[ "$platform" == "esp8266" ]]; then
+        running_free_space="$(status_free "$response")"
+        [[ "$running_free_space" =~ ^[0-9]+$ && "$running_free_space" -gt 4096 ]] || {
+            echo "No usable ESP8266 free sketch space." >&2
+            return 1
+        }
+        assert_fits "$firmware_b_artifact" "$(( (running_free_space - 0x1000) & 0xFFFFF000 ))" B
+    fi
+}
+
+find_espota() {
+    # The uploader has to come from precisely the graph that built A and B.
+    # `df_pio` scopes its environment to each PlatformIO command, so query the
+    # same dedicated package root rather than falling back to a global store.
+    local packages_dir
+    packages_dir="$(df_pio_packages_dir)"
+    case "$platform" in
+        esp8266)
+            ota_port=8266
+            espota_path="$packages_dir/framework-arduinoespressif8266/tools/espota.py"
+            ;;
+        esp32)
+            ota_port=3232
+            espota_path="$packages_dir/framework-arduinoespressif32/tools/espota.py"
+            ;;
+    esac
+    [[ -r "$espota_path" ]] || {
+        echo "Selected framework espota.py is missing: $espota_path" >&2
+        return 1
+    }
+}
+
+upload() {
+    local password="$1" image="$2" log="$3"
+    if [[ -n "$password" ]]; then
+        timeout 150 python3 "$espota_path" --ip "$transport_endpoint" --host_ip "$route_source_ip" \
+            --port "$ota_port" --host_port "$host_port" --auth "$password" --file "$image" >"$log" 2>&1
+    else
+        timeout 150 python3 "$espota_path" --ip "$transport_endpoint" --host_ip "$route_source_ip" \
+            --port "$ota_port" --host_port "$host_port" --file "$image" >"$log" 2>&1
+    fi
+}
+
+monitor_file=""
+monitor_ready_file=""
+monitor_upload_started_file=""
+
+start_reboot_monitor() {
+    monitor_file="$run_dir/reboot-observation.txt"
+    monitor_ready_file="$run_dir/reboot-monitor-ready"
+    monitor_upload_started_file="$run_dir/reboot-upload-started"
+    rm -f -- "$monitor_file" "$monitor_ready_file" "$monitor_upload_started_file"
+    (
+        seen_a=no
+        seen_outage=no
+        b_count=0
+        # The uploader itself may legitimately spend up to 150 seconds in
+        # transfer/authentication. Start observing A before that transfer, so
+        # leave room for both the upload and the board's automatic reboot.
+        deadline=$((SECONDS + 300))
+        while (( SECONDS < deadline )); do
+            response="$(status_request 2>/dev/null || true)"
+            if has_marker "$response" 0.0.0-udp-ota-a; then
+                seen_a=yes
+                : > "$monitor_ready_file"
+                echo "$(date -u +%H:%M:%S) A reachable" >> "$monitor_file"
+            elif [[ -e "$monitor_upload_started_file" ]] && has_marker "$response" 0.0.0-udp-ota-b; then
+                ((b_count+=1))
+                echo "$(date -u +%H:%M:%S) B reachable $b_count" >> "$monitor_file"
+            elif [[ -e "$monitor_upload_started_file" && "$seen_a" == yes ]]; then
+                seen_outage=yes
+                echo "$(date -u +%H:%M:%S) unavailable" >> "$monitor_file"
+            fi
+            if [[ "$seen_a" == yes && "$seen_outage" == yes && "$b_count" -ge 2 ]]; then
+                echo result=passed >> "$monitor_file"
+                exit 0
+            fi
+            sleep 0.25
+        done
+        echo "result=failed seen_a=$seen_a seen_outage=$seen_outage b_count=$b_count" >> "$monitor_file"
+        exit 1
+    ) &
+    monitor_pid=$!
+    local attempt
+    for attempt in $(seq 1 20); do
+        [[ -e "$monitor_ready_file" ]] && return 0
+        sleep 0.25
+    done
+    echo "Reboot monitor never observed A before OTA." >&2
+    return 1
+}
+
+finish_reboot_monitor() {
+    if ! wait "$monitor_pid"; then
+        monitor_pid=""
+        echo "Automatic reboot contract failed:" >&2
+        cat "$monitor_file" >&2 || true
+        return 1
+    fi
+    monitor_pid=""
+}
+
+assert_http_auth_contract() {
+    local code
+    code="$(curl --disable --noproxy '*' --silent --output /dev/null --write-out '%{http_code}' \
+        --connect-timeout 2 --max-time 5 "http://$status_endpoint/api/status" 2>/dev/null || true)"
+    if [[ "$auth_mode" == protected ]]; then
+        [[ "$code" == 401 ]] || {
+            echo "Protected fixture allowed anonymous HTTP status access (HTTP $code)." >&2
+            return 1
+        }
+    else
+        [[ "$code" == 200 ]] || {
+            echo "Open fixture did not allow anonymous HTTP status access (HTTP $code)." >&2
+            return 1
+        }
+    fi
+    echo "HTTP auth contract verified for $auth_mode mode."
+}
+
+run_one() {
+    local wrong_log correct_log response
+    set_identity
+    run_dir="$output_root/$auth_mode"
+    install -d -m 700 "$run_dir"
+    prepare_private_profile_build
+    write_profile
+    build_images
+    find_espota
+    if [[ "$platform" == esp32 ]]; then
+        "$project_dir/tools/check-ota-partitions.sh"
+        assert_fits "$firmware_a_artifact" "$(esp32_slot_size app0 ota_0)" A
+        assert_fits "$firmware_b_artifact" "$(esp32_slot_size app1 ota_1)" B
+    fi
+    flash_a
+    capture_a_boot
+    set_target
+    route_source
+    assert_http_auth_contract
+    verify_a
+    if [[ "$auth_mode" == protected ]]; then
+        wrong_log="$run_dir/upload-wrong-auth.log"
+        if upload wrong-ota-password "$firmware_b_artifact" "$wrong_log"; then
+            echo "Wrong ArduinoOTA password was accepted." >&2
+            return 1
+        fi
+        echo "Wrong ArduinoOTA password was rejected as required."
+        wait_marker 0.0.0-udp-ota-a >/dev/null
+    fi
+    start_reboot_monitor
+    correct_log="$run_dir/upload-b.log"
+    # The monitor saw A first. Only observations after this point may satisfy
+    # the required outage/B sequence, so a pre-upload Wi-Fi blip cannot be
+    # misreported as the OTA-triggered reboot.
+    : > "$monitor_upload_started_file"
+    upload "$device_password" "$firmware_b_artifact" "$correct_log" || {
+        echo "ArduinoOTA upload failed: $correct_log" >&2
+        return 1
+    }
+    finish_reboot_monitor
+    if [[ "$defer_mdns" == "yes" ]]; then
+        assert_mdns_absent 10
+    fi
+    response="$(wait_marker 0.0.0-udp-ota-b)"
+    echo "Running B marker: $(status_version "$response")"
+    sleep 1
+    response="$(wait_marker 0.0.0-udp-ota-b)"
+    echo "Running B marker (fresh request): $(status_version "$response")"
+    echo "ArduinoOTA $auth_mode contract passed for $platform. Artifacts: $run_dir"
+}
+
+run_arduino() {
+    validate_args
+    need_common
+    load_station_env
+    lock_board
+    # The private profile header and original firmware images contain the
+    # local Wi-Fi password. Ensure every file PlatformIO creates beneath the
+    # per-run private build directory is owner-only.
+    umask 077
+    prepare_output
+    trap cleanup EXIT INT TERM
+    if [[ "$auth_mode" == both ]]; then
+        auth_mode=protected
+        run_one
+        rm -f -- "$profile_file"
+        profile_file=""
+        remove_private_profile_build_override
+        auth_mode=open
+        run_one
+    else
+        run_one
+    fi
+    echo "Board remains on B with test station credentials. Use cleanup only when explicitly desired."
+}
+
+run_doctor() {
+    validate_platform
+    need_common
+    lock_board
+    if [[ "$defer_mdns" == yes || -n "$device_ip" ]]; then
+        echo "Diagnostic transport selected; mDNS is not a success criterion."
+    else
+        echo "Normal mDNS will be proven after A joins Wi-Fi."
+    fi
+    echo "ArduinoOTA doctor passed: no board, adapter, or firewall state was changed."
+}
+
+run_cleanup() {
+    validate_platform
+    [[ -n "$serial_port" && -e "$serial_port" ]] || {
+        echo "Serial port not found: $serial_port" >&2
+        return 1
+    }
+    need pio
+    lock_board
+    environment_a="$(environment_for a)"
+    DEVICEFRAMEWORK_OTA_PROFILE="$project_dir/test/profiles/ota-lan-open-fixture.json" \
+        df_pio run -d test/ota-harness -e "$environment_a" -t erase --upload-port "$serial_port"
+    echo "The explicitly named board was erased."
+}
+
+capture_a_boot() {
+    local -a args=(
+        python3 "$project_dir/tools/capture-serial-boot.py"
+        --port "$serial_port"
+        --output "$run_dir/serial-a.log"
+        --timeout 60
+        --reset
+        --require "OTA Initialized with hostname:"
+        --require "DeviceFramework UDP OTA fixture image:"
+    )
+    if [[ "$defer_mdns" == "yes" ]]; then
+        args+=(--require "mDNS responder deferred for low heap:")
+    else
+        args+=(--require "mDNS responder started with hostname:")
+    fi
+    "${args[@]}"
+}
+
+case "$command" in
+    doctor) run_doctor ;;
+    arduino) run_arduino ;;
+    cleanup) run_cleanup ;;
+    *) usage ;;
+esac

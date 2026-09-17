@@ -1,0 +1,18 @@
+{
+  "format": 2,
+  "application": "deviceframework",
+  "profile": {
+    "id": "deviceframework-ota-lan-protected-fixture",
+    "revision": 1,
+    "policy": "bootstrap"
+  },
+  "device_password": "ota-test-password",
+  "wifi": {
+    "profiles": [
+      { "ssid": "ota-fixture-network", "password": "ota-fixture-password" }
+    ]
+  },
+  "parameters": {
+    "device": "df-ota-fixture"
+  }
+}
