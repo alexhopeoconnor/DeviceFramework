@@ -1,25 +1,50 @@
 const { test, expect } = require("@playwright/test");
 const {
   attachBrowserDiagnostics,
+  browserHttpCredentials,
   capture,
   navigateDevicePage,
   waitForDeviceStatus,
+  webAuthMode,
   writeArtifact,
 } = require("./helpers.cjs");
 
+async function assertWebAuthBoundary(request) {
+  const authMode = webAuthMode();
+  const root = await request.get("/");
+  const status = await request.get("/api/status");
+  const stylesheet = await request.get("/assets/deviceframework.css");
+  if (authMode === "protected") {
+    expect(root.status()).toBe(401);
+    expect(status.status()).toBe(401);
+    expect(stylesheet.status()).toBe(401);
+    const wrongCredentials = await request.get("/api/status", {
+      headers: {
+        Authorization: `Basic ${Buffer.from("admin:wrong-device-ui-password").toString("base64")}`,
+      },
+    });
+    expect(wrongCredentials.status()).toBe(401);
+  } else {
+    expect(root.status()).toBe(200);
+    expect(status.status()).toBe(200);
+    expect(stylesheet.status()).toBe(200);
+  }
+}
+
 test.describe("DeviceFramework board web UI", () => {
-  test.skip(process.env.DEVICE_UI_MODE !== "web", "Board web contract only.");
+  test.skip(process.env.DEVICE_UI_MODE !== "web", "Board web test harness only.");
 
   test("renders each server page and releases WebSerial on navigation", async ({ browser, request }) => {
+    await assertWebAuthBoundary(request);
     const status = await waitForDeviceStatus(request);
+    if (process.env.DEVICE_UI_TEST_DEVICE_NAME) {
+      expect(status.runtime.device.name).toBe(process.env.DEVICE_UI_TEST_DEVICE_NAME);
+    }
     writeArtifact("status.json", status);
 
     const context = await browser.newContext({
       viewport: { width: 1440, height: 1080 },
-      httpCredentials: {
-        username: process.env.DEVICE_UI_USERNAME,
-        password: process.env.DEVICE_UI_PASSWORD,
-      },
+      ...browserHttpCredentials(),
     });
     const page = await context.newPage();
     const errors = [];
@@ -55,10 +80,7 @@ test.describe("DeviceFramework board web UI", () => {
     const mobile = await browser.newContext({
       viewport: { width: 390, height: 844 },
       isMobile: true,
-      httpCredentials: {
-        username: process.env.DEVICE_UI_USERNAME,
-        password: process.env.DEVICE_UI_PASSWORD,
-      },
+      ...browserHttpCredentials(),
     });
     const mobilePage = await mobile.newPage();
     attachBrowserDiagnostics(mobilePage, errors);

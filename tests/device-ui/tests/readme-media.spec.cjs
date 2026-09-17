@@ -45,7 +45,7 @@ test.describe("DeviceFramework README media", () => {
     await page.goto("/", { waitUntil: "networkidle" });
     await expect(page.locator("#wm-reset-portal-timeout")).toBeVisible();
     // These pauses exist only in the README recording. The normal browser
-    // contract remains timing-focused; a documentation tour needs readable
+    // test harness remains timing-focused; a documentation tour needs readable
     // stable states after each meaningful transition.
     await page.waitForTimeout(1200);
     await page.locator('a[href="#/wifi"]').click();

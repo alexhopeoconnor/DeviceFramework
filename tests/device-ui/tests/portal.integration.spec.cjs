@@ -49,7 +49,7 @@ function assertSaveDiagnostics(errors, network) {
 }
 
 test.describe("DeviceFramework WiFiManager integration", () => {
-  test.skip(process.env.DEVICE_UI_MODE !== "portal", "Portal contract only.");
+  test.skip(process.env.DEVICE_UI_MODE !== "portal", "Portal test harness only.");
 
   test("launches DeviceFramework branding through the real provisioning portal", async ({ request, browser }) => {
     const root = await request.get("/");

@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
-"""Unit-check that passive boot capture never asserts ESP reset lines."""
+"""Unit-check passive OTA serial capture without real hardware."""
 
 import importlib.util
+import stat
 import sys
 import tempfile
 import types
@@ -10,6 +11,7 @@ from pathlib import Path
 
 class FakeSerial:
     events = []
+    read_calls = 0
 
     def __init__(self, port=None, **kwargs):
         assert port is None
@@ -61,7 +63,8 @@ class FakeSerial:
         self.events.append(("close",))
 
     def read(self, _size):
-        return b""
+        type(self).read_calls += 1
+        return b"OTA serial evidence\n" if type(self).read_calls == 1 else b""
 
     def __enter__(self):
         return self
@@ -73,10 +76,11 @@ class FakeSerial:
 def load_capture_module():
     fake_serial_module = types.ModuleType("serial")
     fake_serial_module.Serial = FakeSerial
+    fake_serial_module.SerialException = OSError
     sys.modules["serial"] = fake_serial_module
 
-    source = Path(__file__).resolve().parents[1] / "tools" / "capture-serial-boot.py"
-    spec = importlib.util.spec_from_file_location("capture_serial_boot", source)
+    source = Path(__file__).resolve().parents[1] / "tools" / "capture-serial.py"
+    spec = importlib.util.spec_from_file_location("capture_serial", source)
     assert spec and spec.loader
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
@@ -97,14 +101,32 @@ def main():
     serial_port.close()
 
     FakeSerial.events.clear()
-    module.reset = lambda _serial_port: (_ for _ in ()).throw(
-        AssertionError("passive capture called reset")
-    )
-    with tempfile.NamedTemporaryFile() as output:
-        assert module.capture("/dev/fake", output.name, 0, [], False) == 0
+    FakeSerial.read_calls = 0
+    with tempfile.TemporaryDirectory() as temporary_directory:
+        output = Path(temporary_directory) / "serial-ota.log"
+        ready = Path(temporary_directory) / "serial-ota.ready"
+        original_write_ready = module.write_ready
+
+        def checked_write_ready(path):
+            assert ("open", False, False, "/dev/fake") in FakeSerial.events
+            original_write_ready(path)
+
+        module.write_ready = checked_write_ready
+        assert module.capture(
+            "/dev/fake",
+            output,
+            ready,
+            should_stop=lambda: FakeSerial.read_calls >= 2,
+        ) == 0
+        assert ready.read_text() == "ready\n"
+        assert output.read_bytes() == b"OTA serial evidence\n"
+        assert stat.S_IMODE(output.stat().st_mode) == 0o600
+        assert stat.S_IMODE(ready.stat().st_mode) == 0o600
 
     assert ("open", False, False, "/dev/fake") in FakeSerial.events
-    print("Passive serial boot capture contract passed")
+    assert ("close",) in FakeSerial.events
+    assert FakeSerial.read_calls == 2
+    print("DeviceFramework passive OTA serial-capture test-harness check passed")
 
 
 if __name__ == "__main__":

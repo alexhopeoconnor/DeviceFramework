@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Real-board ArduinoOTA contract runner. It deliberately owns no Wi-Fi adapter:
+# Real-board ArduinoOTA test-harness runner. It deliberately owns no Wi-Fi adapter:
 # station traffic uses the normal LAN route, unlike the portal runner.
 set -euo pipefail
 
@@ -7,8 +7,6 @@ project_dir="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$project_dir"
 # shellcheck source=tools/lib/platformio.sh
 source "$project_dir/tools/lib/platformio.sh"
-# shellcheck source=tools/lib/ota-firewall.sh
-source "$project_dir/tools/lib/ota-firewall.sh"
 
 usage() {
     cat <<'EOF' >&2
@@ -17,12 +15,12 @@ Usage:
   ./tools/ota-hardware arduino --platform esp8266|esp32 --port DEVICE
       [--env-file test/.env] [--auth protected|open|both]
       [--host-port PORT] [--device-ip IPv4] [--output DIRECTORY]
-      [--defer-mdns] [--firewall check|manual|allow]
+      [--defer-mdns]
   ./tools/ota-hardware cleanup --platform esp8266|esp32 --port DEVICE
 
 Normal ArduinoOTA mode proves both Avahi and the system resolver can resolve
 the device hostname, and uploads to that hostname. --device-ip is a labelled
-diagnostic transport mode and never passes the mDNS contract.
+diagnostic transport mode and never passes the mDNS test harness.
 EOF
     exit 2
 }
@@ -39,7 +37,6 @@ host_port="43123"
 device_ip=""
 output_root=""
 defer_mdns="no"
-firewall_mode="check"
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -51,7 +48,6 @@ while [[ $# -gt 0 ]]; do
         --device-ip) [[ $# -ge 2 ]] || usage; device_ip="$2"; shift 2 ;;
         --output) [[ $# -ge 2 ]] || usage; output_root="$2"; shift 2 ;;
         --defer-mdns) defer_mdns="yes"; shift ;;
-        --firewall) [[ $# -ge 2 ]] || usage; firewall_mode="$2"; shift 2 ;;
         *) usage ;;
     esac
 done
@@ -65,7 +61,7 @@ need() {
 
 need_python_serial() {
     python3 -c 'import serial' >/dev/null 2>&1 || {
-        echo "Python module 'serial' (pyserial) is required for boot capture." >&2
+        echo "Python module 'serial' (pyserial) is required for passive OTA capture." >&2
         return 1
     }
 }
@@ -94,16 +90,8 @@ validate_ipv4() {
     done
 }
 
-validate_firewall_mode() {
-    case "$firewall_mode" in
-        check|manual|allow) ;;
-        *) echo "--firewall must be check, manual, or allow" >&2; usage ;;
-    esac
-}
-
 validate_args() {
     validate_platform
-    validate_firewall_mode
     case "$auth_mode" in protected|open|both) ;; *) echo "--auth must be protected, open, or both" >&2; usage ;; esac
     [[ "$host_port" =~ ^[0-9]+$ ]] && (( host_port >= 1024 && host_port <= 65535 )) || {
         echo "--host-port must be from 1024 through 65535." >&2
@@ -120,6 +108,30 @@ validate_args() {
     fi
 }
 
+validate_doctor_args() {
+    validate_platform
+    # `doctor` intentionally does not touch a board, read test credentials,
+    # open an OTA callback listener, or select diagnostic transport. Reject
+    # later-run flags instead of letting an invalid command appear healthy.
+    [[ -z "$serial_port$device_ip$output_root" && "$defer_mdns" == no && \
+       "$auth_mode" == protected && "$host_port" == 43123 && "$env_file" == test/.env ]] || {
+        echo "ArduinoOTA doctor accepts only --platform." >&2
+        return 1
+    }
+}
+
+validate_cleanup_args() {
+    validate_platform
+    # Cleanup deliberately erases a named board. Reject every argument that
+    # belongs to an OTA run so a copied command cannot quietly ignore a
+    # requested mode or diagnostic setting before touching flash.
+    [[ -z "$device_ip$output_root" && "$defer_mdns" == no && \
+       "$auth_mode" == protected && "$host_port" == 43123 && "$env_file" == test/.env ]] || {
+        echo "ArduinoOTA cleanup accepts only --platform and --port." >&2
+        return 1
+    }
+}
+
 lock_board() {
     exec 9>"${DEVICEFRAMEWORK_HARDWARE_LOCK_FILE:-${TMPDIR:-/tmp}/deviceframework-hardware-test.lock}"
     if ! flock -n 9; then
@@ -133,31 +145,44 @@ profile_build_override_file=""
 profile_build_dir=""
 run_dir=""
 monitor_pid=""
+serial_capture_pid=""
+serial_capture_ready_file=""
+serial_capture_log=""
 wifi_ssid=""
 wifi_password=""
 device_password=""
 device_name=""
 device_hostname=""
+run_token=""
 environment_a=""
 environment_b=""
 firmware_a=""
 firmware_b=""
 firmware_a_artifact=""
 firmware_b_artifact=""
-route_interface=""
-ufw_path=""
-firewall_rule_comment=""
-firewall_rule_note=""
-firewall_rule_added="no"
+
+reject_stale_private_profile_build_selector() {
+    local selector
+    # This selector is discovered through extra_configs. A hard termination
+    # can leave it behind and redirect a later OTA fixture build to a stale or
+    # no-longer-private directory. Require a deliberate, exact cleanup rather
+    # than deleting a file that might still belong to an active shell.
+    for selector in "$project_dir"/test/ota-harness/platformio.local.ini.ota-hardware.*; do
+        [[ -e "$selector" ]] || continue
+        printf 'A stale harness-owned PlatformIO selector was found: %s\n' "$selector" >&2
+        printf 'After confirming no DeviceFramework hardware runner is active, remove only it with: rm -f -- %q\n' \
+            "$selector" >&2
+        return 1
+    done
+}
 
 cleanup() {
     local status="${1:-0}"
     trap - EXIT HUP INT TERM
     [[ -z "$monitor_pid" ]] || kill "$monitor_pid" >/dev/null 2>&1 || true
     [[ -z "$monitor_pid" ]] || wait "$monitor_pid" >/dev/null 2>&1 || true
-    if ! release_callback_firewall; then
-        status=1
-    fi
+    [[ -z "$serial_capture_pid" ]] || kill "$serial_capture_pid" >/dev/null 2>&1 || true
+    [[ -z "$serial_capture_pid" ]] || wait "$serial_capture_pid" >/dev/null 2>&1 || true
     [[ -z "$profile_file" ]] || rm -f -- "$profile_file"
     [[ -z "$profile_build_override_file" ]] || rm -f -- "$profile_build_override_file"
     exit "$status"
@@ -166,7 +191,6 @@ cleanup() {
 need_common() {
     df_pio_available
     need python3
-    need_python_serial
     need curl
     need ip
     need flock
@@ -225,17 +249,33 @@ load_station_env() {
 }
 
 set_identity() {
-    if [[ "$defer_mdns" == "yes" ]]; then
-        device_name="df-ota-deferred-$platform"
-    else
-        device_name="df-ota-$platform"
-    fi
-    device_hostname="$device_name.local"
-    case "$auth_mode" in
-        protected) device_password="ota-test-password" ;;
-        open) device_password="" ;;
+    local platform_token auth_token prefix
+    case "$platform" in
+        esp8266) platform_token=8266 ;;
+        esp32) platform_token=32 ;;
         *) return 1 ;;
     esac
+    case "$auth_mode" in
+        protected)
+            auth_token=p
+            device_password="ota-test-password"
+            ;;
+        open)
+            auth_token=o
+            device_password=""
+            ;;
+        *) return 1 ;;
+    esac
+    if [[ "$defer_mdns" == "yes" ]]; then
+        prefix=dfotad
+    else
+        prefix=dfota
+    fi
+    # DeviceFramework's managed device-name field is capped at 24 characters.
+    # A per-run hostname avoids accepting an mDNS record from an earlier run;
+    # the compact ESP8266 deferred form is exactly within that bound.
+    device_name="${prefix}-${platform_token}-${auth_token}-${run_token}"
+    device_hostname="$device_name.local"
 }
 
 write_profile() {
@@ -427,18 +467,13 @@ route_source() {
     local route
     route="$(ip -4 route get "$resolved_ip" 2>/dev/null || true)"
     route_source_ip="$(awk '{for (i=1;i<=NF;i++) if ($i=="src") {print $(i+1); exit}}' <<<"$route")"
-    route_interface="$(awk '{for (i=1;i<=NF;i++) if ($i=="dev") {print $(i+1); exit}}' <<<"$route")"
-    [[ -n "$route_source_ip" && -n "$route_interface" ]] || {
+    [[ -n "$route_source_ip" ]] || {
         echo "No route source for $resolved_ip: $route" >&2
         return 1
     }
     validate_ipv4 "$route_source_ip"
-    [[ "$route_interface" =~ ^[[:alnum:]_.:-]+$ ]] || {
-        echo "Unexpected route interface name: $route_interface" >&2
-        return 1
-    }
-    printf 'Route: interface %s; source %s; device UDP %s; callback TCP %s\n' \
-        "$route_interface" "$route_source_ip" "$ota_port" "$host_port"
+    printf 'Route: source %s; device UDP %s; callback TCP %s\n' \
+        "$route_source_ip" "$ota_port" "$host_port"
     python3 -c 'import socket,sys;s=socket.socket();s.bind((sys.argv[1],int(sys.argv[2])));s.close()' "$route_source_ip" "$host_port" || {
         echo "Cannot bind the callback listener on $route_source_ip:$host_port." >&2
         return 1
@@ -532,6 +567,21 @@ upload() {
     fi
 }
 
+explain_callback_failure() {
+    local log="$1"
+    # espota has authenticated with the board at this point, then waits for
+    # ArduinoOTA's reverse TCP stream.  Make that environmental failure
+    # actionable without inspecting or changing the host firewall.
+    if grep -Fq '[ERROR]: No response from device' "$log"; then
+        cat >&2 <<EOF
+ArduinoOTA authenticated, but the board did not open its callback TCP connection.
+Allow TCP ${host_port} from ${resolved_ip} to ${route_source_ip} on the selected LAN path,
+or choose an already permitted callback port with --host-port. The test harness did not
+inspect or change firewall policy.
+EOF
+    fi
+}
+
 monitor_file=""
 monitor_ready_file=""
 monitor_upload_started_file=""
@@ -584,14 +634,14 @@ start_reboot_monitor() {
 finish_reboot_monitor() {
     if ! wait "$monitor_pid"; then
         monitor_pid=""
-        echo "Automatic reboot contract failed:" >&2
+        echo "Automatic reboot test-harness check failed:" >&2
         cat "$monitor_file" >&2 || true
         return 1
     fi
     monitor_pid=""
 }
 
-assert_http_auth_contract() {
+assert_http_auth_harness() {
     local code
     code="$(curl --disable --noproxy '*' --silent --output /dev/null --write-out '%{http_code}' \
         --connect-timeout 2 --max-time 5 "http://$status_endpoint/api/status" 2>/dev/null || true)"
@@ -606,7 +656,7 @@ assert_http_auth_contract() {
             return 1
         }
     fi
-    echo "HTTP auth contract verified for $auth_mode mode."
+    echo "HTTP auth test-harness check verified for $auth_mode mode."
 }
 
 run_one() {
@@ -624,14 +674,11 @@ run_one() {
         assert_fits "$firmware_b_artifact" "$(esp32_slot_size app1 ota_1)" B
     fi
     flash_a
-    capture_a_boot
+    start_serial_ota_capture
     set_target
     route_source
-    assert_http_auth_contract
+    assert_http_auth_harness
     verify_a
-    # Open an explicit temporary callback rule only immediately before the OTA
-    # traffic, so the sudo ticket is fresh and the exposure is brief.
-    configure_callback_firewall
     if [[ "$auth_mode" == protected ]]; then
         wrong_log="$run_dir/upload-wrong-auth.log"
         if upload wrong-ota-password "$firmware_b_artifact" "$wrong_log"; then
@@ -653,15 +700,16 @@ run_one() {
     : > "$monitor_upload_started_file"
     upload "$device_password" "$firmware_b_artifact" "$correct_log" || {
         echo "ArduinoOTA upload failed: $correct_log" >&2
+        explain_callback_failure "$correct_log"
         return 1
     }
     finish_reboot_monitor
     if [[ "$defer_mdns" == "yes" ]]; then
         assert_mdns_absent 10
     elif [[ -z "$device_ip" ]]; then
-        # The monitor's B requests prove the automatic reboot. Resolve again
-        # only after that reboot so a stale A-era cache cannot stand in for
-        # the responder lifecycle that B must provide.
+        # Recheck the normal hostname only after B is reachable. Resolver
+        # caches can still retain A's address, so the continuous serial record
+        # below separately proves B booted and ran its mDNS lifecycle.
         resolve_mdns
     fi
     response="$(wait_marker 0.0.0-udp-ota-b)"
@@ -669,13 +717,15 @@ run_one() {
     sleep 1
     response="$(wait_marker 0.0.0-udp-ota-b)"
     echo "Running B marker (fresh request): $(status_version "$response")"
-    release_callback_firewall
-    echo "ArduinoOTA $auth_mode contract passed for $platform. Artifacts: $run_dir"
+    stop_serial_ota_capture
+    echo "ArduinoOTA $auth_mode test harness passed for $platform. Artifacts: $run_dir"
 }
 
 run_arduino() {
     validate_args
+    reject_stale_private_profile_build_selector
     need_common
+    need_python_serial
     load_station_env
     lock_board
     # The private profile header and original firmware images contain the
@@ -683,6 +733,10 @@ run_arduino() {
     # per-run private build directory is owner-only.
     umask 077
     prepare_output
+    # This compact random token keeps the per-run hostname below the managed
+    # 24-character device-name limit while avoiding a stale mDNS collision on
+    # an immediate retry in the same second.
+    run_token="$(printf '%08x' "$((RANDOM * RANDOM))")"
     trap 'cleanup "$?"' EXIT
     trap 'cleanup 129' HUP
     trap 'cleanup 130' INT
@@ -702,8 +756,7 @@ run_arduino() {
 }
 
 run_doctor() {
-    validate_platform
-    validate_firewall_mode
+    validate_doctor_args
     need_common
     lock_board
     if [[ "$defer_mdns" == yes || -n "$device_ip" ]]; then
@@ -711,12 +764,11 @@ run_doctor() {
     else
         echo "Normal mDNS will be proven after A joins Wi-Fi."
     fi
-    echo "ArduinoOTA doctor passed: no board, adapter, or firewall state was changed."
+    echo "ArduinoOTA doctor passed: no board or adapter state was changed."
 }
 
 run_cleanup() {
-    validate_platform
-    validate_firewall_mode
+    validate_cleanup_args
     [[ -n "$serial_port" && -e "$serial_port" ]] || {
         echo "Serial port not found: $serial_port" >&2
         return 1
@@ -729,25 +781,104 @@ run_cleanup() {
     echo "The explicitly named board was erased."
 }
 
-capture_a_boot() {
-    local -a args=(
-        python3 "$project_dir/tools/capture-serial-boot.py"
-        --port "$serial_port"
-        --output "$run_dir/serial-a.log"
-        --timeout 60
-        --require "OTA Initialized with hostname:"
-        --require "DeviceFramework UDP OTA fixture image:"
-    )
-    # Serial upload already finished with the one application boot that must
-    # establish A. Attach with inactive modem-control lines; a second reset
-    # here is a real DeviceFramework rapid-reset gesture and would clear the
-    # bootstrap profile rather than prove the station OTA contract.
-    if [[ "$defer_mdns" == "yes" ]]; then
-        args+=(--require "mDNS responder deferred for low heap:")
-    else
-        args+=(--require "mDNS responder started with hostname:")
+start_serial_ota_capture() {
+    local attempt capture_output
+    serial_capture_log="$run_dir/serial-ota.log"
+    serial_capture_ready_file="$run_dir/serial-ota-ready"
+    capture_output="$run_dir/serial-ota-capture.log"
+    rm -f -- "$serial_capture_log" "$serial_capture_ready_file" "$capture_output"
+
+    # The uploader has released the serial port and fixture A intentionally
+    # pauses before framework logging. Attach passively now, then retain one
+    # continuous record through the real B reboot; never manufacture a reset.
+    python3 "$project_dir/tools/capture-serial.py" \
+        --port "$serial_port" --output "$serial_capture_log" \
+        --ready-file "$serial_capture_ready_file" >"$capture_output" 2>&1 &
+    serial_capture_pid=$!
+    for attempt in $(seq 1 40); do
+        [[ -e "$serial_capture_ready_file" ]] && return 0
+        if ! kill -0 "$serial_capture_pid" >/dev/null 2>&1; then
+            wait "$serial_capture_pid" || true
+            serial_capture_pid=""
+            echo "Passive serial OTA capture did not start: $capture_output" >&2
+            cat "$capture_output" >&2 || true
+            return 1
+        fi
+        sleep 0.25
+    done
+    echo "Passive serial OTA capture did not become ready: $capture_output" >&2
+    return 1
+}
+
+assert_serial_ota_lifecycle_segments() {
+    local lifecycle_marker="$1"
+    python3 - "$serial_capture_log" "$lifecycle_marker" <<'PY'
+import sys
+
+path, lifecycle = sys.argv[1:]
+with open(path, "r", encoding="utf-8", errors="replace") as source:
+    lines = source.readlines()
+
+def first_after(needle, start=0):
+    for index in range(start, len(lines)):
+        if needle in lines[index]:
+            return index
+    return None
+
+a = first_after("DeviceFramework UDP OTA fixture image: 0.0.0-udp-ota-a")
+update_started = first_after("OTA Update Started:", (a or 0) + 1)
+update_completed = first_after("OTA Update Completed.", (update_started or 0) + 1)
+b = first_after("DeviceFramework UDP OTA fixture image: 0.0.0-udp-ota-b", (update_completed or 0) + 1)
+
+if None in (a, update_started, update_completed, b):
+    raise SystemExit("Serial OTA evidence is missing its required A/update/B ordering.")
+if not any(lifecycle in line for line in lines[a + 1 : update_started + 1]):
+    raise SystemExit("Serial OTA evidence has no mDNS lifecycle record for image A.")
+if not any(lifecycle in line for line in lines[b + 1 :]):
+    raise SystemExit("Serial OTA evidence has no mDNS lifecycle record for image B.")
+PY
+}
+
+stop_serial_ota_capture() {
+    local marker lifecycle_marker
+    [[ -n "$serial_capture_pid" ]] || {
+        echo "Passive serial OTA capture was not running." >&2
+        return 1
+    }
+    if ! kill -0 "$serial_capture_pid" >/dev/null 2>&1; then
+        wait "$serial_capture_pid" || true
+        serial_capture_pid=""
+        echo "Passive serial OTA capture stopped before B verification: $serial_capture_log" >&2
+        return 1
     fi
-    "${args[@]}"
+    kill "$serial_capture_pid" >/dev/null 2>&1 || true
+    if ! wait "$serial_capture_pid"; then
+        serial_capture_pid=""
+        echo "Passive serial OTA capture failed: $serial_capture_log" >&2
+        return 1
+    fi
+    serial_capture_pid=""
+
+    for marker in \
+        'OTA Initialized with hostname:' \
+        'OTA Update Started:' \
+        'OTA Update Completed.' \
+        'DeviceFramework UDP OTA fixture image: 0.0.0-udp-ota-a' \
+        'DeviceFramework UDP OTA fixture image: 0.0.0-udp-ota-b'; do
+        grep -Fq "$marker" "$serial_capture_log" || {
+            echo "Serial OTA evidence is missing '$marker': $serial_capture_log" >&2
+            return 1
+        }
+    done
+    if [[ "$defer_mdns" == "yes" ]]; then
+        lifecycle_marker='mDNS responder deferred for low heap:'
+    else
+        lifecycle_marker='mDNS responder started with hostname:'
+    fi
+    if ! assert_serial_ota_lifecycle_segments "$lifecycle_marker"; then
+        echo "Serial OTA evidence did not observe the mDNS lifecycle in both A and B boot segments: $serial_capture_log" >&2
+        return 1
+    fi
 }
 
 case "$command" in

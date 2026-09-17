@@ -19,7 +19,7 @@ Usage:
       --client-interface IFACE [--take-over-client-adapter] \
       [--profile protected|open] [--output DIRECTORY] [--keep]
   ./tools/device-ui-hardware web --platform esp8266|esp32 [--port DEVICE] \
-      [--env-file test/.env] [--url URL] [--output DIRECTORY]
+      [--env-file test/.env] [--url URL] [--auth protected|open|both] [--output DIRECTORY]
   ./tools/device-ui-hardware full --platform esp8266|esp32 --port DEVICE \
       --client-interface IFACE [--take-over-client-adapter] [--env-file test/.env] \
       [--output DIRECTORY] [--keep] [--capture-readme-media]
@@ -53,10 +53,18 @@ web_url=""
 capture_readme_media="no"
 portal_profile="protected"
 portal_profile_requested="no"
+web_auth_mode="protected"
+web_auth_requested="no"
 ota_firmware=""
 ota_firmware_a=""
 ota_expected_portal_protected=""
 ota_browser_prebuilt="no"
+ota_serial_capture_pid=""
+ota_serial_capture_ready_file=""
+ota_serial_capture_log=""
+# This assignment happens in the runner shell (not in a helper's command
+# substitution), so the portal profile and later mDNS lookup share one token.
+fixture_run_token="$(printf '%08x' "$((RANDOM * RANDOM))")"
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -69,15 +77,38 @@ while [[ $# -gt 0 ]]; do
         --output) [[ $# -ge 2 ]] || usage; output_dir="$2"; shift 2 ;;
         --url) [[ $# -ge 2 ]] || usage; web_url="$2"; shift 2 ;;
         --profile) [[ $# -ge 2 ]] || usage; portal_profile="$2"; portal_profile_requested="yes"; shift 2 ;;
+        --auth) [[ $# -ge 2 ]] || usage; web_auth_mode="$2"; web_auth_requested="yes"; shift 2 ;;
         --capture-readme-media) capture_readme_media="yes"; shift ;;
         *) usage ;;
     esac
 done
 
 profile_file=""
+station_browser_env_file=""
+station_build_override_file=""
+station_build_dir=""
+web_expected_device_name=""
 DFUI_PORTAL_CONNECTION_UUID=""
 DFUI_PORTAL_CONNECTION_NAME=""
 DFUI_PORTAL_CONNECTION_OWNED="no"
+
+reject_stale_private_build_selectors() {
+    local selector
+    # extra_configs intentionally discovers ignored local selectors. A hard
+    # host termination can leave one of this harness's private build-dir
+    # selectors behind, which would silently redirect a later fixture build.
+    # Do not delete it automatically: make the developer confirm that no
+    # interrupted harness is still using the private directory.
+    for selector in \
+        "$project_dir"/test/compile-project/platformio.local.ini.zz-device-ui-hardware.* \
+        "$project_dir"/test/ota-harness/platformio.local.ini.ota-hardware.*; do
+        [[ -e "$selector" ]] || continue
+        printf 'A stale harness-owned PlatformIO selector was found: %s\n' "$selector" >&2
+        printf 'After confirming no DeviceFramework hardware runner is active, remove only it with: rm -f -- %q\n' \
+            "$selector" >&2
+        return 1
+    done
+}
 
 require_common() {
     dfui_require ip
@@ -89,16 +120,31 @@ require_common() {
     docker compose version >/dev/null
 }
 
+require_python_serial() {
+    python3 -c 'import serial' >/dev/null 2>&1 || {
+        echo "Python module 'serial' (pyserial) is required for passive OTA capture." >&2
+        return 1
+    }
+}
+
 prepare_output_dir() {
+    local output_root
     if [[ -z "$output_dir" ]]; then
         if [[ "$capture_readme_media" == "yes" ]]; then
-            output_dir="$project_dir/artifacts/readme-media/$(date -u +%Y%m%dT%H%M%SZ)-${platform:-unknown}"
+            output_root="$project_dir/artifacts/readme-media/$(date -u +%Y%m%dT%H%M%SZ)-${platform:-unknown}"
         else
-            output_dir="$project_dir/artifacts/device-ui/$(date -u +%Y%m%dT%H%M%SZ)-${platform:-unknown}"
+            output_root="$project_dir/artifacts/device-ui/$(date -u +%Y%m%dT%H%M%SZ)-${platform:-unknown}"
         fi
+    else
+        output_root="$output_dir"
     fi
-    install -d -m 700 "$output_dir"
-    output_dir="$(cd "$output_dir" && pwd)"
+    if [[ -e "$output_root" ]] && [[ -n "$(find "$output_root" -mindepth 1 -maxdepth 1 -print -quit)" ]]; then
+        echo "Output directory must be empty: $output_root" >&2
+        return 1
+    fi
+    install -d -m 700 "$output_root"
+    output_dir="$(mktemp -d "$output_root/device-ui-harness.XXXXXX")"
+    chmod 700 "$output_dir"
 }
 
 validate_platform() {
@@ -123,6 +169,24 @@ validate_portal_profile() {
 reject_portal_profile_option() {
     [[ "$portal_profile_requested" == "no" ]] || {
         echo "--profile is only supported by ota-portal" >&2
+        usage
+        return 1
+    }
+}
+
+validate_web_auth_mode() {
+    case "$web_auth_mode" in
+        protected|open|both) ;;
+        *)
+            echo "--auth must be protected, open, or both" >&2
+            usage
+            ;;
+    esac
+}
+
+reject_web_auth_option() {
+    [[ "$web_auth_requested" == "no" ]] || {
+        echo "--auth is only supported by the web command" >&2
         usage
         return 1
     }
@@ -173,9 +237,14 @@ json_escape() {
 }
 
 write_manifest() {
-    local surface="$1" directory="$2"
-    printf '{"schema":1,"surface":"%s","platform":"%s","created_at":"%s"}\n' \
-        "$surface" "$platform" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$directory/manifest.json"
+    local surface="$1" directory="$2" auth_mode="${3:-}"
+    if [[ -n "$auth_mode" ]]; then
+        printf '{"schema":1,"surface":"%s","platform":"%s","auth":"%s","created_at":"%s"}\n' \
+            "$surface" "$platform" "$auth_mode" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$directory/manifest.json"
+    else
+        printf '{"schema":1,"surface":"%s","platform":"%s","created_at":"%s"}\n' \
+            "$surface" "$platform" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$directory/manifest.json"
+    fi
     chmod 600 "$directory/manifest.json"
 }
 
@@ -198,7 +267,6 @@ erase_and_upload() {
     # Each visual fixture must start without a previous board's persisted
     # configuration. The explicitly supplied test board is immediately
     # reflashed after erase; no other serial device is selected.
-    refresh_local_first_party_dependencies "$environment"
     df_pio run -d test/compile-project -e "$environment" -t erase --upload-port "$port"
     wait_for_serial_port
     df_pio run -d test/compile-project -e "$environment" -t upload --upload-port "$port"
@@ -215,36 +283,6 @@ wait_for_serial_port() {
     done
     echo "Serial port did not return after erase: $port" >&2
     return 1
-}
-
-refresh_local_first_party_dependencies() {
-    local environment="$1" dependency
-    local -a local_overrides=(test/compile-project/platformio.local.ini.*)
-
-    # The ignored development override deliberately replaces the released
-    # first-party packages with sibling links. PlatformIO otherwise retains a
-    # previously resolved Git package in .pio/libdeps, which can silently make
-    # a physical integration run test an old tag instead of the local change.
-    # Refresh only this disposable consumer fixture before an explicit flash.
-    [[ -e "${local_overrides[0]}" ]] || return 0
-    for dependency in DeviceFramework WiFiManager DeviceFrameworkTemplateEngine home-assistant-integration; do
-        df_pio pkg uninstall -d test/compile-project -e "$environment" \
-            -l "$dependency" --no-save --skip-dependencies >/dev/null || true
-    done
-}
-
-refresh_ota_harness_dependencies() {
-    local environment="$1" dependency
-    local -a local_overrides=(test/ota-harness/platformio.local.ini.*)
-
-    # The ignored sibling-worktree override is opt-in. When present, remove
-    # only disposable harness dependencies before an explicit board flash so
-    # PlatformIO cannot reuse a released package from a previous run.
-    [[ -e "${local_overrides[0]}" ]] || return 0
-    for dependency in DeviceFramework WiFiManager DeviceFrameworkTemplateEngine home-assistant-integration; do
-        df_pio pkg uninstall -d test/ota-harness -e "$environment" \
-            -l "$dependency" --no-save --skip-dependencies >/dev/null || true
-    done
 }
 
 upload_portal_fixture() {
@@ -268,8 +306,6 @@ build_portal_ota_fixtures() {
     local a_environment b_environment a_source b_source
     a_environment="$(portal_ota_environment a)"
     b_environment="$(portal_ota_environment b)"
-    refresh_ota_harness_dependencies "$a_environment"
-    refresh_ota_harness_dependencies "$b_environment"
     df_pio run -d test/ota-harness -e "$a_environment"
     df_pio run -d test/ota-harness -e "$b_environment"
     a_source="$project_dir/test/ota-harness/.pio/build/${a_environment}/firmware.bin"
@@ -345,6 +381,82 @@ upload_portal_ota_a_fixture() {
     df_pio run -d test/ota-harness -e "$a_environment" -t upload --upload-port "$port"
 }
 
+start_portal_ota_serial_capture() {
+    local attempt capture_output
+    ota_serial_capture_log="$output_dir/serial-ota.log"
+    ota_serial_capture_ready_file="$output_dir/serial-ota-ready"
+    capture_output="$output_dir/serial-ota-capture.log"
+    rm -f -- "$ota_serial_capture_log" "$ota_serial_capture_ready_file" "$capture_output"
+
+    # A was just serial-flashed and has a fixture-only monitor-attachment
+    # window. Keep this one passive recorder through the browser's B upload;
+    # it never changes reset lines or takes ownership of the Wi-Fi adapter.
+    python3 "$project_dir/tools/capture-serial.py" \
+        --port "$port" --output "$ota_serial_capture_log" \
+        --ready-file "$ota_serial_capture_ready_file" >"$capture_output" 2>&1 &
+    ota_serial_capture_pid=$!
+    for attempt in $(seq 1 40); do
+        [[ -e "$ota_serial_capture_ready_file" ]] && return 0
+        if ! kill -0 "$ota_serial_capture_pid" >/dev/null 2>&1; then
+            wait "$ota_serial_capture_pid" || true
+            ota_serial_capture_pid=""
+            echo "Passive portal-OTA serial capture did not start: $capture_output" >&2
+            cat "$capture_output" >&2 || true
+            return 1
+        fi
+        sleep 0.25
+    done
+    echo "Passive portal-OTA serial capture did not become ready: $capture_output" >&2
+    return 1
+}
+
+assert_portal_ota_serial_sequence() {
+    python3 - "$ota_serial_capture_log" <<'PY'
+import sys
+
+path = sys.argv[1]
+with open(path, "r", encoding="utf-8", errors="replace") as source:
+    lines = source.readlines()
+
+def first_after(marker, start=0):
+    for index in range(start, len(lines)):
+        if marker in lines[index]:
+            return index
+    return None
+
+a = first_after("DeviceFramework portal OTA fixture image: 0.0.0-portal-ota-a")
+upload_started = first_after("DeviceFramework portal OTA upload started.", (a or 0) + 1)
+b = first_after("DeviceFramework portal OTA fixture image: 0.0.0-portal-ota-b", (upload_started or 0) + 1)
+
+if None in (a, upload_started, b):
+    raise SystemExit("Serial portal-OTA evidence is missing its required A/upload/B ordering.")
+PY
+}
+
+stop_portal_ota_serial_capture() {
+    [[ -n "$ota_serial_capture_pid" ]] || {
+        echo "Passive portal-OTA serial capture was not running." >&2
+        return 1
+    }
+    if ! kill -0 "$ota_serial_capture_pid" >/dev/null 2>&1; then
+        wait "$ota_serial_capture_pid" || true
+        ota_serial_capture_pid=""
+        echo "Passive portal-OTA serial capture stopped before B verification: $ota_serial_capture_log" >&2
+        return 1
+    fi
+    kill "$ota_serial_capture_pid" >/dev/null 2>&1 || true
+    if ! wait "$ota_serial_capture_pid"; then
+        ota_serial_capture_pid=""
+        echo "Passive portal-OTA serial capture failed: $ota_serial_capture_log" >&2
+        return 1
+    fi
+    ota_serial_capture_pid=""
+    if ! assert_portal_ota_serial_sequence; then
+        echo "Serial portal-OTA evidence did not observe ordered A/upload/B markers: $ota_serial_capture_log" >&2
+        return 1
+    fi
+}
+
 portal_ota_marker_field() {
     local marker="$1" field="$2"
     printf '%s' "$marker" | python3 -c '
@@ -403,16 +515,24 @@ verify_portal_ota_capacity() {
 }
 
 write_station_profile() {
-    local device_name
-    device_name="DF Web ${platform^^}"
+    local device_name device_password
+    device_name="$(web_fixture_device_name)"
+    case "$web_auth_mode" in
+        protected) device_password=default1 ;;
+        open) device_password="" ;;
+        *)
+            echo "A station fixture requires one web auth mode, not $web_auth_mode." >&2
+            return 1
+            ;;
+    esac
     profile_file="$(mktemp -p /tmp deviceframework-device-ui-profile.XXXXXX)"
     chmod 600 "$profile_file"
     {
         printf '%s\n' '{'
         printf '%s\n' '  "format": 2,'
         printf '%s\n' '  "application": "deviceframework",'
-        printf '  "profile": { "id": "device-ui-%s-station", "revision": 1, "policy": "bootstrap" },\n' "$platform"
-        printf '%s\n' '  "device_password": "default1",'
+        printf '  "profile": { "id": "device-ui-%s-%s", "revision": 1, "policy": "bootstrap" },\n' "$platform" "$web_auth_mode"
+        printf '  "device_password": "%s",\n' "$(json_escape "$device_password")"
         printf '%s\n' '  "wifi": { "profiles": ['
         printf '    { "ssid": "%s", "password": "%s" }\n' \
             "$(json_escape "$DEVICEFRAMEWORK_TEST_WIFI_SSID")" \
@@ -424,50 +544,184 @@ write_station_profile() {
     } > "$profile_file"
 }
 
+prepare_private_station_build() {
+    # `profile.py` compiles the local Wi-Fi credential into a generated header.
+    # Keep that header, objects, and firmware in a private temporary directory
+    # rather than a potentially group-readable project `.pio` tree. It is
+    # deleted immediately after serial upload; browser artifacts never need a
+    # firmware that embeds a developer's Wi-Fi password. The ignored selector
+    # sorts after ordinary developer-local selectors and exists only for this
+    # invocation.
+    station_build_dir="$(mktemp -d /tmp/deviceframework-device-ui-build.XXXXXX)"
+    chmod 700 "$station_build_dir"
+    station_build_override_file="$(mktemp "$project_dir/test/compile-project/platformio.local.ini.zz-device-ui-hardware.XXXXXX")"
+    chmod 600 "$station_build_override_file"
+    printf '[platformio]\nbuild_dir = %s\n' "$station_build_dir" > "$station_build_override_file"
+}
+
+remove_private_station_build_override() {
+    [[ -z "$station_build_override_file" ]] || rm -f -- "$station_build_override_file"
+    station_build_override_file=""
+}
+
+remove_private_station_build() {
+    [[ -z "$station_build_dir" ]] && return 0
+    case "$station_build_dir" in
+        /tmp/deviceframework-device-ui-build.*)
+            rm -rf -- "$station_build_dir"
+            ;;
+        *)
+            echo "Refusing to remove an unexpected private station build directory: $station_build_dir" >&2
+            return 1
+            ;;
+    esac
+    station_build_dir=""
+}
+
+prepare_station_browser_env() {
+    # Playwright needs only these two values to submit the portal form. Never
+    # mount a shared test/.env (which can also contain MQTT credentials) into
+    # a container or retain it alongside browser evidence.
+    [[ -n "${DEVICEFRAMEWORK_TEST_WIFI_SSID:-}" && -n "${DEVICEFRAMEWORK_TEST_WIFI_PASSWORD:-}" ]] || {
+        echo "Station Wi-Fi credentials were not loaded for the portal browser test." >&2
+        return 1
+    }
+    station_browser_env_file="$(mktemp -p /tmp deviceframework-device-ui-station.XXXXXX)"
+    chmod 600 "$station_browser_env_file"
+    {
+        printf 'DEVICEFRAMEWORK_TEST_WIFI_SSID=%s\n' "$DEVICEFRAMEWORK_TEST_WIFI_SSID"
+        printf 'DEVICEFRAMEWORK_TEST_WIFI_PASSWORD=%s\n' "$DEVICEFRAMEWORK_TEST_WIFI_PASSWORD"
+    } > "$station_browser_env_file"
+}
+
+remove_station_browser_env() {
+    [[ -z "$station_browser_env_file" ]] || rm -f -- "$station_browser_env_file"
+    station_browser_env_file=""
+}
+
 upload_station_fixture() {
     load_station_env
     write_station_profile
+    umask 077
+    prepare_private_station_build
     DEVICEFRAMEWORK_HARDWARE_PROFILE="$profile_file" \
         erase_and_upload "${platform}_profile_hardware"
+    rm -f -- "$profile_file"
+    profile_file=""
+    remove_private_station_build_override
+    remove_private_station_build
+}
+
+web_fixture_hostname() {
+    printf '%s.local\n' "$(web_fixture_device_name)"
+}
+
+fixture_platform_token() {
+    case "$platform" in
+        esp8266) printf '%s\n' 8266 ;;
+        esp32) printf '%s\n' 32 ;;
+        *) return 1 ;;
+    esac
+}
+
+ensure_fixture_run_token() {
+    # Kept as a named invariant for the identity helpers. The value is created
+    # above in this shell so command substitution cannot accidentally generate
+    # a different name for the profile and its later resolver check.
+    [[ -n "$fixture_run_token" ]]
+}
+
+web_fixture_device_name() {
+    local platform_token auth_token
+    ensure_fixture_run_token
+    platform_token="$(fixture_platform_token)"
+    case "$web_auth_mode" in
+        protected) auth_token=p ;;
+        open) auth_token=o ;;
+        *) return 1 ;;
+    esac
+    printf 'dfweb-%s-%s-%s\n' "$platform_token" "$auth_token" "$fixture_run_token"
+}
+
+portal_fixture_device_name() {
+    local platform_token
+    ensure_fixture_run_token
+    platform_token="$(fixture_platform_token)"
+    printf 'dfportal-%s-%s\n' "$platform_token" "$fixture_run_token"
+}
+
+web_status_document() {
+    local url="$1"
+    if [[ "$web_auth_mode" == protected ]]; then
+        curl --silent --show-error --connect-timeout 1 --max-time 2 \
+            -u 'admin:default1' "${url%/}/api/status" 2>/dev/null
+    else
+        curl --silent --show-error --connect-timeout 1 --max-time 2 \
+            "${url%/}/api/status" 2>/dev/null
+    fi
+}
+
+web_status_device_name() {
+    python3 -c 'import json,sys; print(json.load(sys.stdin)["runtime"]["device"]["name"])'
+}
+
+web_status_is_connected() {
+    python3 -c 'import json,sys; status=json.load(sys.stdin); sys.exit(0 if status["runtime"]["wifi"]["connected"] is True else 1)'
 }
 
 wait_for_web_url() {
-    local hostname="${1:-df-web-${platform}.local}" resolved_host="" attempt status
-    if command -v avahi-resolve >/dev/null 2>&1; then
-        for attempt in {1..45}; do
-            # mDNS is expected to be absent until the station fixture has
-            # joined. Do not let `pipefail` bypass this bounded retry loop.
-            resolved_host="$(avahi-resolve -4 -n "$hostname" 2>/dev/null | awk 'NR == 1 { print $2; exit }' || true)"
-            [[ -n "$resolved_host" ]] && break
-            sleep 1
-        done
-    fi
-    [[ -n "$resolved_host" ]] || {
-        echo "Could not resolve $hostname through mDNS; pass --url only to test an already-running endpoint explicitly." >&2
+    local hostname="${1:-df-web-${platform}.local}" expected_device_name="${2:-${hostname%.local}}" avahi_ip="" system_ip="" attempt document observed_device_name
+    dfui_require avahi-resolve
+    dfui_require getent
+    for attempt in {1..45}; do
+        # mDNS is expected to be absent until the station fixture has joined.
+        # Require Avahi and the system resolver to agree rather than using a
+        # station IP reported by the departing portal or a stale resolver path.
+        avahi_ip="$(avahi-resolve -4 -n "$hostname" 2>/dev/null | awk 'NR == 1 { print $2; exit }' || true)"
+        system_ip="$(getent ahostsv4 "$hostname" 2>/dev/null | awk 'NR == 1 { print $1; exit }' || true)"
+        [[ -n "$avahi_ip" && "$avahi_ip" == "$system_ip" ]] && break
+        sleep 1
+    done
+    [[ -n "$avahi_ip" && "$avahi_ip" == "$system_ip" ]] || {
+        echo "Could not resolve $hostname through both Avahi and the system resolver; pass --url only to test an already-running endpoint explicitly." >&2
         return 1
     }
+    # Playwright runs in a pinned container image which deliberately does not
+    # own the host's NSS mDNS configuration. Preserve the hostname in the
+    # browser URL and pass only this fresh, dual-resolver result as its
+    # ephemeral host mapping; neither a fixed address nor portal hand-off IP
+    # can make the normal station test harness pass.
+    export DEVICE_UI_HOSTNAME="$hostname"
+    export DEVICE_UI_HOST_IP="$avahi_ip"
     for attempt in {1..45}; do
-        status="$(curl --silent --connect-timeout 1 --max-time 2 --output /dev/null --write-out '%{http_code}' \
-            -u 'admin:default1' "http://${resolved_host}/api/status" 2>/dev/null || true)"
-        [[ "$status" == "200" ]] && {
-            printf 'http://%s\n' "$resolved_host"
+        document="$(web_status_document "http://${hostname}" 2>/dev/null || true)"
+        observed_device_name="$(printf '%s' "$document" | web_status_device_name 2>/dev/null || true)"
+        [[ "$observed_device_name" == "$expected_device_name" ]] && {
+            printf 'http://%s\n' "$hostname"
             return 0
         }
         sleep 1
     done
-    echo "DeviceFramework web UI did not become ready at $resolved_host" >&2
+    echo "DeviceFramework web UI did not become ready at $hostname" >&2
     return 1
 }
 
 wait_for_station_status() {
-    local url="$1" attempt status
+    local url="$1" expected_device_name="${2:-}" attempt status observed_device_name
     for attempt in {1..45}; do
-        status="$(curl --silent --connect-timeout 1 --max-time 2 \
-            -u 'admin:default1' "${url%/}/api/status" 2>/dev/null || true)"
+        if [[ "$web_auth_mode" == protected ]]; then
+            status="$(curl --silent --connect-timeout 1 --max-time 2 \
+                -u 'admin:default1' "${url%/}/api/status" 2>/dev/null || true)"
+        else
+            status="$(curl --silent --connect-timeout 1 --max-time 2 \
+                "${url%/}/api/status" 2>/dev/null || true)"
+        fi
         # The normal web fixture has already proved that this is the intended
         # board. Do not start page screenshots until its cached runtime status
         # has also observed the completed AP-to-STA transition.
-        if printf '%s\n' "$status" | grep -Eq '"wifi"[[:space:]]*:[[:space:]]*\{[^}]*"connected"[[:space:]]*:[[:space:]]*true'; then
+        observed_device_name="$(printf '%s' "$status" | web_status_device_name 2>/dev/null || true)"
+        if printf '%s' "$status" | web_status_is_connected >/dev/null 2>&1 && \
+           { [[ -z "$expected_device_name" ]] || [[ "$observed_device_name" == "$expected_device_name" ]]; }; then
             return 0
         fi
         sleep 1
@@ -490,7 +744,8 @@ prepare_portal_ota_browser() {
     export DEVICE_UI_ARTIFACT_DIR="$directory"
     export DEVICE_UI_USERNAME='admin'
     export DEVICE_UI_PASSWORD='default1'
-    export DEVICE_UI_TEST_DEVICE_NAME="df-portal-${platform}"
+    export DEVICE_UI_WEB_AUTH=protected
+    export DEVICE_UI_TEST_DEVICE_NAME="$(portal_fixture_device_name)"
     export DEVICE_UI_CAPTURE_README_MEDIA=0
     export DEVICE_UI_DOCKER_TARGET=device-ui
     export DEVICE_UI_OTA_FIRMWARE_HOST="$ota_firmware"
@@ -506,15 +761,27 @@ prepare_portal_ota_browser() {
 }
 
 run_browser() {
-    local mode="$1" url="$2" directory="$3" station_mount=""
+    local mode="$1" url="$2" directory="$3" station_mount="" manifest_auth=""
     install -d -m 700 "$directory"
-    write_manifest "$mode" "$directory"
+    if [[ "$mode" == web ]]; then
+        manifest_auth="$web_auth_mode"
+    fi
+    write_manifest "$mode" "$directory" "$manifest_auth"
     export DEVICE_UI_MODE="$mode"
     export DEVICE_UI_URL="$url"
     export DEVICE_UI_ARTIFACT_DIR="$directory"
-    export DEVICE_UI_USERNAME='admin'
-    export DEVICE_UI_PASSWORD='default1'
-    export DEVICE_UI_TEST_DEVICE_NAME="df-portal-${platform}"
+    export DEVICE_UI_WEB_AUTH="$web_auth_mode"
+    if [[ "$mode" == web && "$web_auth_mode" == open ]]; then
+        export DEVICE_UI_USERNAME=''
+        export DEVICE_UI_PASSWORD=''
+    else
+        export DEVICE_UI_USERNAME='admin'
+        export DEVICE_UI_PASSWORD='default1'
+    fi
+    case "$mode" in
+        web) export DEVICE_UI_TEST_DEVICE_NAME="$web_expected_device_name" ;;
+        *) export DEVICE_UI_TEST_DEVICE_NAME="$(portal_fixture_device_name)" ;;
+    esac
     export LOCAL_UID="$(id -u)"
     export LOCAL_GID="$(id -g)"
     if [[ "$capture_readme_media" == "yes" ]]; then
@@ -528,7 +795,9 @@ run_browser() {
     case "$mode" in
         portal)
             if [[ -r "$env_file" ]]; then
-                station_mount="$(cd "$(dirname "$env_file")" && pwd)/$(basename "$env_file")"
+                load_station_env
+                prepare_station_browser_env
+                station_mount="$station_browser_env_file"
                 export DEVICE_UI_STATION_ENV_HOST="$station_mount"
                 compose_files+=(-f "$project_dir/tests/device-ui/compose.station.yaml")
             fi
@@ -554,6 +823,7 @@ run_browser() {
         browser_status=$?
     fi
     sanitize_browser_artifacts "$directory" "$mode"
+    remove_station_browser_env
     return "$browser_status"
 }
 
@@ -562,6 +832,9 @@ render_readme_media() {
     export DEVICE_UI_MODE=media-render
     export DEVICE_UI_URL=http://127.0.0.1
     export DEVICE_UI_ARTIFACT_DIR="$directory"
+    export DEVICE_UI_WEB_AUTH=protected
+    export DEVICE_UI_USERNAME=admin
+    export DEVICE_UI_PASSWORD=default1
     export DEVICE_UI_CAPTURE_README_MEDIA=1
     export DEVICE_UI_DOCKER_TARGET=media
     docker compose -f "$project_dir/tests/device-ui/compose.yaml" build device-ui
@@ -586,10 +859,10 @@ sanitize_browser_artifacts() {
     # shellcheck disable=SC1090
     source "$env_file"
     set +a
-    for key in DEVICEFRAMEWORK_TEST_WIFI_PASSWORD DEVICEFRAMEWORK_TEST_MQTT_PASSWORD; do
+    for key in DEVICEFRAMEWORK_TEST_WIFI_SSID DEVICEFRAMEWORK_TEST_WIFI_PASSWORD DEVICEFRAMEWORK_TEST_MQTT_PASSWORD; do
         value="${!key:-}"
         [[ -n "$value" ]] || continue
-        mapfile -t matching_files < <(rg -l -a -F -- "$value" "$directory" 2>/dev/null || true)
+        mapfile -t matching_files < <(grep -r -l -a -F -- "$value" "$directory" 2>/dev/null || true)
         if (( ${#matching_files[@]} > 0 )); then
             printf 'Removing browser evidence containing a local test credential.\n' >&2
             rm -f -- "${matching_files[@]}"
@@ -601,9 +874,12 @@ start_portal_connection() {
     local ssid
     require_port
     [[ -n "$client_interface" ]] || usage
+    # Select the real NetworkManager authorization path before inspecting the
+    # secondary adapter. A headless shell must not mistake a denied inspection
+    # for an idle adapter and then overwrite a connection it does not own.
+    dfui_prepare_networkmanager_authorization
     dfui_require_client_adapter "$client_interface" "$takeover"
     dfui_require_no_active_session
-    dfui_prepare_networkmanager_authorization
     upload_portal_fixture
     ssid="$(dfui_portal_ssid "$platform")"
     dfui_create_portal_connection "$client_interface" "$ssid" 'default1' no "$platform"
@@ -614,10 +890,11 @@ start_portal_ota_connection() {
     local ssid password
     require_port
     [[ -n "$client_interface" ]] || usage
+    dfui_prepare_networkmanager_authorization
     dfui_require_client_adapter "$client_interface" "$takeover"
     dfui_require_no_active_session
-    dfui_prepare_networkmanager_authorization
     upload_portal_ota_a_fixture
+    start_portal_ota_serial_capture
     ssid="$(dfui_portal_ssid "$platform")"
     password="$(portal_ota_profile_password)"
     # The board must reboot itself after POST /u. Retain automatic reconnect
@@ -640,16 +917,46 @@ run_portal_ota() {
     prepare_portal_ota_browser "$directory"
     start_portal_ota_connection
     run_browser ota-portal 'http://192.168.4.1' "$directory"
+    stop_portal_ota_serial_capture
 }
 
 run_web() {
     local directory="$1" url="$web_url"
-    if [[ -z "$url" ]]; then
+    if [[ -n "$url" ]]; then
+        # An explicit endpoint check is not an owned mDNS run. Do not inherit a
+        # previous fixture's ephemeral hostname mapping into its browser
+        # container, which could make a caller's URL appear to use mDNS.
+        unset DEVICE_UI_HOSTNAME DEVICE_UI_HOST_IP
+        web_expected_device_name=""
+    else
         require_port
+        web_expected_device_name="$(web_fixture_device_name)"
         upload_station_fixture
-        url="$(wait_for_web_url)"
+        url="$(wait_for_web_url "$(web_fixture_hostname)" "$web_expected_device_name")"
     fi
     run_browser web "$url" "$directory"
+}
+
+write_web_auth_matrix() {
+    local directory="$1"
+    printf '{"schema":1,"surface":"web","platform":"%s","auth":"both","runs":["open","protected"],"created_at":"%s"}\n' \
+        "$platform" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$directory/web-auth-matrix.json"
+    chmod 600 "$directory/web-auth-matrix.json"
+}
+
+run_web_auth_matrix() {
+    local directory="$1"
+    if [[ "$web_auth_mode" != both ]]; then
+        run_web "$directory"
+        return
+    fi
+    # Leave the named board protected after a successful matrix. Each mode
+    # starts from serial erase, so no saved profile/auth state can cross over.
+    web_auth_mode=open
+    run_web "$directory/web-open"
+    web_auth_mode=protected
+    run_web "$directory/web-protected"
+    write_web_auth_matrix "$directory"
 }
 
 cleanup() {
@@ -658,27 +965,52 @@ cleanup() {
     # operation.  Remove only the temporary connection this process created;
     # this also covers either side of its pending-to-active state transition.
     trap - EXIT HUP INT TERM
-    [[ -z "$profile_file" ]] || rm -f "$profile_file"
+    [[ -z "$ota_serial_capture_pid" ]] || kill "$ota_serial_capture_pid" >/dev/null 2>&1 || true
+    [[ -z "$ota_serial_capture_pid" ]] || wait "$ota_serial_capture_pid" >/dev/null 2>&1 || true
+    ota_serial_capture_pid=""
+    [[ -z "$profile_file" ]] || rm -f -- "$profile_file"
+    remove_station_browser_env
+    remove_private_station_build_override
+    remove_private_station_build
     if [[ "${DFUI_PORTAL_CONNECTION_OWNED:-no}" == "yes" ]] && \
         { (( status != 0 )) || [[ "$keep" != "yes" ]]; }; then
-        dfui_remove_portal_connection || true
+        if ! dfui_remove_portal_connection; then
+            # Preserve the original failure when there was one, but do not
+            # report a successful browser/OTA run if its disposable portal
+            # connection could not be removed and recovered later with `down`.
+            (( status != 0 )) || status=1
+        fi
     fi
     exit "$status"
+}
+
+finish_portal_connection() {
+    # Success must not be announced until the runner has confirmed deletion of
+    # its generated connection. --keep intentionally leaves the recorded
+    # connection for the developer to remove with `down`.
+    if [[ "${DFUI_PORTAL_CONNECTION_OWNED:-no}" == "yes" && "$keep" != "yes" ]]; then
+        dfui_remove_portal_connection
+    fi
 }
 
 case "$command_name" in
     doctor)
         reject_portal_profile_option
+        reject_web_auth_option
         [[ "$capture_readme_media" == "no" ]] || usage
         [[ -n "$client_interface" ]] || usage
         require_common
         dfui_acquire_hardware_lock
+        # Doctor is read-only, but must choose the same authorization path as
+        # a real portal run before it declares a secondary adapter safe.
+        dfui_prepare_networkmanager_authorization
         dfui_require_client_adapter "$client_interface" "$takeover"
         dfui_report_networkmanager_authorization
         echo "DeviceFramework device-UI prerequisites are ready; primary route is untouched."
         ;;
     down)
         reject_portal_profile_option
+        reject_web_auth_option
         [[ -z "$platform$port$client_interface$output_dir$web_url" && "$capture_readme_media" == "no" ]] || usage
         dfui_acquire_hardware_lock
         dfui_load_state
@@ -688,51 +1020,71 @@ case "$command_name" in
         ;;
     portal)
         reject_portal_profile_option
+        reject_web_auth_option
         validate_platform
         validate_readme_media_capture
         require_common
         dfui_acquire_hardware_lock
+        reject_stale_private_build_selectors
         prepare_output_dir
         trap 'cleanup "$?"' EXIT
         trap 'cleanup 129' HUP
         trap 'cleanup 130' INT
         trap 'cleanup 143' TERM
         run_portal "$output_dir"
-        echo "DeviceFramework portal integration contract passed. Artifacts: $output_dir"
+        if ! finish_portal_connection; then
+            trap - EXIT HUP INT TERM
+            exit 1
+        fi
+        echo "DeviceFramework portal integration test harness passed. Artifacts: $output_dir"
         [[ "$keep" != "yes" ]] || echo "Portal client remains connected; run ./tools/device-ui-hardware down when finished."
         ;;
     ota-portal)
+        reject_web_auth_option
         validate_platform
         validate_portal_profile
         reject_station_env_option
         validate_readme_media_capture
         require_common
+        require_python_serial
         dfui_acquire_hardware_lock
+        reject_stale_private_build_selectors
         prepare_output_dir
         trap 'cleanup "$?"' EXIT
         trap 'cleanup 129' HUP
         trap 'cleanup 130' INT
         trap 'cleanup 143' TERM
         run_portal_ota "$output_dir"
-        echo "DeviceFramework portal OTA contract passed (${portal_profile}). Artifacts: $output_dir"
+        if ! finish_portal_connection; then
+            trap - EXIT HUP INT TERM
+            exit 1
+        fi
+        echo "DeviceFramework portal OTA test harness passed (${portal_profile}). Artifacts: $output_dir"
         [[ "$keep" != "yes" ]] || echo "Portal client remains connected; run ./tools/device-ui-hardware down when finished."
         ;;
     web)
         reject_portal_profile_option
+        validate_web_auth_mode
+        if [[ "$web_auth_mode" == both && -n "$web_url" ]]; then
+            echo "--auth both requires an owned --port fixture, not --url." >&2
+            usage
+        fi
         validate_platform
         validate_readme_media_capture
         require_common
         dfui_acquire_hardware_lock
+        [[ -n "$web_url" ]] || reject_stale_private_build_selectors
         prepare_output_dir
         trap 'cleanup "$?"' EXIT
         trap 'cleanup 129' HUP
         trap 'cleanup 130' INT
         trap 'cleanup 143' TERM
-        run_web "$output_dir"
-        echo "DeviceFramework web UI contract passed. Artifacts: $output_dir"
+        run_web_auth_matrix "$output_dir"
+        echo "DeviceFramework web UI test harness passed. Artifacts: $output_dir"
         ;;
     full)
         reject_portal_profile_option
+        reject_web_auth_option
         validate_platform
         validate_readme_media_capture
         require_common
@@ -740,6 +1092,7 @@ case "$command_name" in
         [[ -n "$client_interface" ]] || usage
         load_station_env
         dfui_acquire_hardware_lock
+        reject_stale_private_build_selectors
         prepare_output_dir
         trap 'cleanup "$?"' EXIT
         trap 'cleanup 129' HUP
@@ -748,28 +1101,30 @@ case "$command_name" in
         run_portal "$output_dir/portal"
         handoff_file="$output_dir/portal/portal-handoff.json"
         [[ -r "$handoff_file" ]] || {
-            echo "Portal browser contract did not record a station hand-off." >&2
+            echo "Portal browser test harness did not record a station hand-off." >&2
             exit 1
         }
-        handoff_ip="$(sed -nE 's/^[[:space:]]*"stationIp"[[:space:]]*:[[:space:]]*"([0-9.]+)"[,]?$/\1/p' "$handoff_file")"
-        if [[ -n "$handoff_ip" ]]; then
-            web_url="http://$handoff_ip"
-        else
-            # ESP32 can drop the portal client while moving AP+STA to the
-            # selected station channel. The portal test has already proved
-            # the accepted save; now require the just-provisioned named board
-            # to appear on the LAN through its unique mDNS identity. Do not
-            # reuse a cached portal gateway or an IP from a prior session.
-            web_url="$(wait_for_web_url "df-portal-${platform}.local")"
-        fi
-        wait_for_station_status "$web_url"
-        run_web "$output_dir/web"
+        # A portal response can contain its transient station IP, but using it
+        # would bypass the normal mDNS test harness. The accepted portal save
+        # is only the hand-off evidence; the next browser request must reach
+        # the newly provisioned board through its unique hostname.
+        web_expected_device_name="$(portal_fixture_device_name)"
+        web_url="$(wait_for_web_url "${web_expected_device_name}.local" "$web_expected_device_name")"
+        wait_for_station_status "$web_url" "$web_expected_device_name"
+        # wait_for_web_url already established the dual-resolver mDNS mapping.
+        # Calling run_web here would mistake this owned URL for --url and clear
+        # that mapping before Playwright starts.
+        run_browser web "$web_url" "$output_dir/web"
         write_manifest full "$output_dir"
         if [[ "$capture_readme_media" == "yes" ]]; then
             render_readme_media "$output_dir"
             write_readme_media_manifest
         fi
-        echo "DeviceFramework full portal-to-web contract passed. Artifacts: $output_dir"
+        if ! finish_portal_connection; then
+            trap - EXIT HUP INT TERM
+            exit 1
+        fi
+        echo "DeviceFramework full portal-to-web test harness passed. Artifacts: $output_dir"
         [[ "$keep" != "yes" ]] || echo "Portal client remains connected; run ./tools/device-ui-hardware down when finished."
         ;;
     *) usage ;;

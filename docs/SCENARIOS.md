@@ -13,7 +13,7 @@ or electrical certification requirements.
 | [Presence-aware lighting](scenarios/presence-aware-lighting.md) | Dual-channel LED/presence and dimmable-light controllers | HA/portal settings queue non-blocking peripheral work; native entities report live behaviour. |
 | [Product-family deployment](scenarios/product-family-deployment.md) | Several separately versioned device sketches sharing DeviceFramework and source-owned branding | Stable identity, tagged dependencies, and optional profiles scale without copying framework boilerplate. |
 
-Each scenario links the framework contract to a testable sequence. For an
+Each scenario links framework behaviour to a testable sequence. For an
 executable starting point, use [Portal First](../examples/01-portal-first/),
 [Home Assistant Telemetry](../examples/02-home-assistant-telemetry/), and the
 [Protected Output](../examples/05-protected-output/) example.

@@ -17,7 +17,7 @@ jobs:
       AHA_TESTKIT_PATH: ${{ github.workspace }}/.ha-testkit/test-support/ha-mqtt-test-harness
     steps:
       - uses: actions/checkout@v7
-      # Keep the generic ArduinoHA contract support in its owning repository.
+      # Keep the generic ArduinoHA test-harness support in its owning repository.
       - uses: actions/checkout@v7
         with:
           repository: alexhopeoconnor/arduino-home-assistant

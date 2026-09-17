@@ -1,0 +1,12 @@
+# The browser image needs only the checked-in harness files. In particular,
+# never let a local package install, failure evidence, or environment file be
+# included if a developer happens to keep one beside this harness.
+node_modules
+artifacts
+test-results
+.env
+.env.*
+*.env
+**/.env
+**/.env.*
+**/*.env

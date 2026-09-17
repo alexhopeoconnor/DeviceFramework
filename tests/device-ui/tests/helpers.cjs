@@ -9,6 +9,9 @@ function artifactPath(...parts) {
 }
 
 async function capture(page, name, options = {}) {
+  // Portal station runs place local Wi-Fi fields in the page. Suppress even
+  // deliberate screenshots in that mode, not just Playwright's failure media.
+  if (process.env.DEVICE_UI_STATION_ENV) return;
   await page.screenshot({
     path: artifactPath(name),
     fullPage: true,
@@ -87,15 +90,37 @@ function readStationCredentials() {
   return { ssid, password };
 }
 
+function webAuthMode() {
+  const mode = process.env.DEVICE_UI_WEB_AUTH || "protected";
+  if (mode !== "protected" && mode !== "open") {
+    throw new Error(`DEVICE_UI_WEB_AUTH must be protected or open, got: ${mode}`);
+  }
+  return mode;
+}
+
+function browserHttpCredentials() {
+  if (webAuthMode() !== "protected") return {};
+  return {
+    httpCredentials: {
+      username: process.env.DEVICE_UI_USERNAME,
+      password: process.env.DEVICE_UI_PASSWORD,
+    },
+  };
+}
+
+function requestAuthorizationHeaders() {
+  if (webAuthMode() !== "protected") return {};
+  return {
+    Authorization: `Basic ${Buffer.from(`${process.env.DEVICE_UI_USERNAME}:${process.env.DEVICE_UI_PASSWORD}`).toString("base64")}`,
+  };
+}
+
 async function waitForDeviceStatus(request) {
   let status;
   await require("@playwright/test").expect.poll(async () => {
     try {
-      const response = await request.get("/api/status", {
-        headers: {
-          Authorization: `Basic ${Buffer.from(`${process.env.DEVICE_UI_USERNAME}:${process.env.DEVICE_UI_PASSWORD}`).toString("base64")}`,
-        },
-      });
+      const headers = requestAuthorizationHeaders();
+      const response = await request.get("/api/status", Object.keys(headers).length ? { headers } : {});
       if (!response.ok()) return false;
       status = await response.json();
       return Boolean(status && status.hardware && status.runtime);
@@ -126,11 +151,14 @@ module.exports = {
   artifactPath,
   attachBrowserDiagnostics,
   attachBrowserNetworkDiagnostics,
+  browserHttpCredentials,
   capture,
   moveRecordedVideo,
   navigateDevicePage,
   readmeMediaPath,
   readStationCredentials,
+  requestAuthorizationHeaders,
   waitForDeviceStatus,
+  webAuthMode,
   writeArtifact,
 };

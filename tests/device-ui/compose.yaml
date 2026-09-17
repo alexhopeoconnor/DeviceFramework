@@ -1,10 +1,18 @@
 services:
   device-ui:
     build:
-      context: ../..
-      dockerfile: tests/device-ui/Dockerfile
+      # Keep the daemon context to this checked-in browser harness. The host
+      # runner may accept an arbitrary local --env-file, so the repository root
+      # must never be sent to Docker merely to build Playwright.
+      context: .
+      dockerfile: Dockerfile
       target: ${DEVICE_UI_DOCKER_TARGET:-device-ui}
     network_mode: host
+    # The host runner first proves this name through Avahi and the system
+    # resolver. The browser image intentionally does not alter or own host
+    # NSS/mDNS state, so it receives only that just-resolved mapping.
+    extra_hosts:
+      - "${DEVICE_UI_HOSTNAME:-localhost}:${DEVICE_UI_HOST_IP:-127.0.0.1}"
     ipc: host
     init: true
     user: "${LOCAL_UID:-1000}:${LOCAL_GID:-1000}"
@@ -12,8 +20,9 @@ services:
       HOME: /tmp
       DEVICE_UI_MODE: ${DEVICE_UI_MODE:?device UI mode is required}
       DEVICE_UI_URL: ${DEVICE_UI_URL:?device UI URL is required}
-      DEVICE_UI_USERNAME: ${DEVICE_UI_USERNAME:-admin}
-      DEVICE_UI_PASSWORD: ${DEVICE_UI_PASSWORD:-default1}
+      DEVICE_UI_WEB_AUTH: ${DEVICE_UI_WEB_AUTH:-protected}
+      DEVICE_UI_USERNAME: ${DEVICE_UI_USERNAME:-}
+      DEVICE_UI_PASSWORD: ${DEVICE_UI_PASSWORD:-}
       DEVICE_UI_TEST_DEVICE_NAME: ${DEVICE_UI_TEST_DEVICE_NAME:-}
       DEVICE_UI_CAPTURE_README_MEDIA: ${DEVICE_UI_CAPTURE_README_MEDIA:-0}
       ARTIFACT_DIR: /artifacts

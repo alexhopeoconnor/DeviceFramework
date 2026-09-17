@@ -1,11 +1,21 @@
-# The browser image copies only tests/device-ui. Keep the build context small
-# and ensure ignored local credentials, PlatformIO outputs, and failure
-# artifacts never reach the Docker daemon.
+# This repository does not normally use its root as a Docker build context;
+# tests/device-ui/compose.yaml deliberately narrows its context to the browser
+# harness directory. Keep this defensive fallback too: a future root-context
+# image must not send a developer's environment file, generated build output,
+# or browser evidence to the Docker daemon.
 .git
 .pio
 **/.pio
 artifacts
-test/.env
+**/artifacts
+node_modules
+**/node_modules
+.env
+.env.*
+*.env
+**/.env
+**/.env.*
+**/*.env
 test/**/test_config.generated.h
 platformio.local.ini
 platformio.local.ini.*

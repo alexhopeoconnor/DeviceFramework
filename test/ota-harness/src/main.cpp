@@ -3,11 +3,11 @@
 #include <Storage/DeviceFrameworkRTC.h>
 
 #if !defined(DF_PORTAL_OTA_TEST) && !defined(DF_UDP_OTA_TEST)
-#error "The OTA fixture must select either the portal or UDP transport contract."
+#error "The OTA fixture must select either the portal or UDP test-harness transport."
 #endif
 
 #if defined(DF_PORTAL_OTA_TEST) && defined(DF_UDP_OTA_TEST)
-#error "The OTA fixture cannot combine portal and UDP transport contracts."
+#error "The OTA fixture cannot combine portal and UDP test-harness transports."
 #endif
 
 #if defined(DF_PORTAL_OTA_TEST)
@@ -47,7 +47,7 @@ constexpr uint16_t kConfigurationSchema = 1;
 constexpr const char* kImageMarker = DF_OTA_FIXTURE_IMAGE;
 constexpr const char* kFirmwareVersion = DF_OTA_FIXTURE_VERSION;
 
-#ifdef DF_UDP_OTA_TEST
+#if defined(DF_UDP_OTA_TEST) || defined(DF_PORTAL_OTA_TEST)
 constexpr unsigned long kSerialMonitorAttachDelayMs = 5000UL;
 #endif
 
@@ -103,6 +103,14 @@ void registerPortalTestRoute() {
                 request->send(200, F("application/json"), body);
             });
     });
+
+    // This fixture-owned marker is stable evidence that the real portal
+    // updater accepted the browser submission. Completion is then proved by
+    // the HTTP success response and the B-image marker after the automatic
+    // reboot; do not depend on WiFiManager's optional debug logging.
+    DeviceFramework::getWiFiManager().setPreOtaUpdateCallback([]() {
+        Serial.println(F("DeviceFramework portal OTA upload started."));
+    });
 }
 
 void configureFixtureUi() {
@@ -143,15 +151,15 @@ void setup() {
     // The physical OTA runner captures boot evidence at 115200 baud. Make
     // that application choice explicit before DeviceFramework initializes its
     // serial logger; otherwise the library's intentionally conservative
-    // 9600-baud default is decoded as noise by the host-side contract.
+    // 9600-baud default is decoded as noise by the host-side test harness.
     setConfigSerialBaudRate(115200);
 
-#ifdef DF_UDP_OTA_TEST
+#if defined(DF_UDP_OTA_TEST) || defined(DF_PORTAL_OTA_TEST)
     // PlatformIO finishes the serial upload by resetting the application. The
-    // hardware runner attaches without pulsing reset lines, and this fixture
-    // leaves a test-only grace window so that attach happens before framework
-    // boot logging begins. This is the same monitor-attachment concern as the
-    // physical Unity fixture, not a product startup delay.
+    // physical OTA test harness attaches without pulsing reset lines, and this
+    // fixture leaves a test-only grace window so that it starts before
+    // framework boot logging begins. This is the same monitor-attachment
+    // concern as the physical Unity fixture, not a product startup delay.
     Serial.begin(115200);
     markSerialAsInitialized();
     delay(kSerialMonitorAttachDelayMs);
@@ -187,6 +195,14 @@ void setup() {
     // mDNS lifecycle logs. The host still proves the immutable image identity
     // through a fresh authenticated /api/status response after each boot.
     Serial.print(F("DeviceFramework UDP OTA fixture image: "));
+    Serial.println(kFirmwareVersion);
+#endif
+
+#ifdef DF_PORTAL_OTA_TEST
+    // The portal runner retains one passive serial record from A through B.
+    // Its browser marker checks remain authoritative; this line independently
+    // records which immutable fixture image completed each boot.
+    Serial.print(F("DeviceFramework portal OTA fixture image: "));
     Serial.println(kFirmwareVersion);
 #endif
 }

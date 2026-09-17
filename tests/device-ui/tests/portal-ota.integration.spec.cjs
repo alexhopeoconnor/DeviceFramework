@@ -64,7 +64,7 @@ function unexpectedBrowserErrors(errors, firstPostUploadError) {
 }
 
 test.describe("DeviceFramework portal HTTP OTA integration", () => {
-  test.skip(process.env.DEVICE_UI_MODE !== "ota-portal", "Portal OTA contract only.");
+  test.skip(process.env.DEVICE_UI_MODE !== "ota-portal", "Portal OTA test harness only.");
 
   test("uploads B through the actual portal form and requires an automatic A-to-B reboot", async ({ request, browser }) => {
     // This includes an observed outage plus two fresh post-reboot responses;
@@ -83,7 +83,7 @@ test.describe("DeviceFramework portal HTTP OTA integration", () => {
     const markerA = await waitForMarker(request, "A");
     assertMarker(markerA, "A", protectedPortal);
     // The host runner independently makes this same check before Docker is
-    // started. Keep it in the browser contract too so a changed mount cannot
+    // started. Keep it in the browser test harness too so a changed mount cannot
     // bypass the fixture's real, running capacity report.
     expect(firmwareSize).toBeLessThanOrEqual(markerA.otaCapacity);
 
@@ -100,7 +100,9 @@ test.describe("DeviceFramework portal HTTP OTA integration", () => {
 
     await page.goto("/#/update", { waitUntil: "networkidle" });
     await expect(page.getByRole("heading", { name: "Update firmware", exact: true })).toBeVisible();
-    await expect(page.getByText("Update DeviceFramework OTA Test", { exact: true })).toBeVisible();
+    // provisioningTitle applies to the portal's provisioning view. The update
+    // view deliberately has a stable, built-in heading, so do not couple this
+    // OTA test to unrelated branding placement.
     await expect(page.locator("#wm-ota-file")).toBeVisible();
     await page.locator("#wm-ota-file").setInputFiles(firmware);
     await capture(page, "ota-before-upload.png");

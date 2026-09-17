@@ -8,16 +8,15 @@ source "$project_dir/tools/lib/platformio.sh"
 usage() {
     cat <<'EOF'
 Usage:
-  ./scripts/test.sh compile  --platform esp8266|esp32 [--profile-fixture] [--release]
+  ./scripts/test.sh compile  --platform esp8266|esp32 [--profile-fixture]
   ./scripts/test.sh examples --platform esp8266|esp32
-  ./scripts/test.sh packages --platform esp8266|esp32
   ./scripts/test.sh hardware --platform esp8266|esp32 --port /dev/ttyUSB0 [--env-file test/.env] [--profile-fixture] [--ha-e2e] [--config-header PATH]
 EOF
     exit 2
 }
 
 mode="${1:-}"
-[[ "$mode" == "compile" || "$mode" == "examples" || "$mode" == "packages" || "$mode" == "hardware" ]] || usage
+[[ "$mode" == "compile" || "$mode" == "examples" || "$mode" == "hardware" ]] || usage
 shift
 platform=""
 profile_fixture=false
@@ -25,7 +24,6 @@ ha_e2e=false
 port=""
 env_file="test/.env"
 config_header=""
-release=false
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --platform) [[ $# -ge 2 ]] || usage; platform="${2:-}"; shift 2 ;;
@@ -34,7 +32,6 @@ while [[ $# -gt 0 ]]; do
         --port) [[ $# -ge 2 ]] || usage; port="${2:-}"; shift 2 ;;
         --env-file) [[ $# -ge 2 ]] || usage; env_file="${2:-}"; shift 2 ;;
         --config-header) [[ $# -ge 2 ]] || usage; config_header="${2:-}"; shift 2 ;;
-        --release) release=true; shift ;;
         *) usage ;;
     esac
 done
@@ -42,10 +39,22 @@ done
 [[ "$mode" != "hardware" || -n "$port" ]] || usage
 [[ "$mode" != "hardware" || "$profile_fixture" == "false" || -f "$env_file" ]] || usage
 [[ "$ha_e2e" == "false" || "$mode" == "hardware" ]] || { echo "--ha-e2e is only valid with hardware mode" >&2; exit 2; }
-[[ "$release" == "false" || "$mode" == "compile" ]] || { echo "--release is only valid with compile mode" >&2; exit 2; }
 [[ "$ha_e2e" == "false" || "$profile_fixture" == "false" ]] || { echo "--ha-e2e cannot be combined with --profile-fixture" >&2; exit 2; }
 [[ -z "$config_header" || "$ha_e2e" == "true" ]] || { echo "--config-header requires --ha-e2e" >&2; exit 2; }
 [[ -z "$config_header" || -f "$config_header" ]] || { echo "Missing private HA E2E configuration header: $config_header" >&2; exit 1; }
+
+# Reject the retired direct-host escape hatch before any generated config,
+# dependency resolution, erase, or flash can touch the named board. Normal
+# hardware coverage must use its expected hostname end-to-end.
+if [[ "$mode" == "hardware" && "$ha_e2e" == "false" && -n "${DEVICEFRAMEWORK_TEST_DEVICE_HOST:-}" ]]; then
+    if [[ "$profile_fixture" == "true" ]]; then
+        normal_hardware_host="hardware-reconciled.local"
+    else
+        normal_hardware_host="${platform}-controller.local"
+    fi
+    echo "DEVICEFRAMEWORK_TEST_DEVICE_HOST is no longer accepted by the normal hardware suite; it must prove ${normal_hardware_host} through mDNS." >&2
+    exit 1
+fi
 
 on_interrupt() {
     local signal="$1"
@@ -72,6 +81,8 @@ if ! flock -n "$hardware_lock_fd"; then
     flock "$hardware_lock_fd"
 fi
 
+environment="$platform"
+
 if [[ "$mode" == "examples" ]]; then
     mapfile -t examples < <(find examples -mindepth 1 -maxdepth 1 -type d -name '[0-9][0-9]-*' -print | sort)
     if (( ${#examples[@]} == 0 )); then
@@ -84,38 +95,6 @@ if [[ "$mode" == "examples" ]]; then
     echo "DeviceFramework examples compile check passed for $platform"
     exit 0
 fi
-
-if [[ "$mode" == "packages" ]]; then
-    # Print the graph selected by the consuming fixture, not stale metadata
-    # from an unrelated global PlatformIO package directory.
-    df_pio pkg list -d test/compile-project -e "$platform"
-    exit 0
-fi
-
-environment="$platform"
-consumer_config_args=()
-if [[ "$release" == "true" ]]; then
-    # PlatformIO resolves --project-conf before it applies -d, so this must
-    # be an absolute path rather than a name relative to the consumer project.
-    consumer_config_args=(-c "$project_dir/test/compile-project/platformio.release.ini")
-fi
-refresh_clean_consumer_dependency() {
-    local target_environment="$1"
-    local dependency cached_library
-    # The consumer fixture is used both for release-tag verification and
-    # ignored sibling-worktree development. Remove all direct first-party
-    # packages so PlatformIO resolves the config selected for this invocation;
-    # otherwise a cached WiFiManager/DFTE/ArduinoHA tag can mask a local change.
-    for dependency in DeviceFramework WiFiManager DeviceFrameworkTemplateEngine home-assistant-integration; do
-        cached_library="test/compile-project/.pio/libdeps/${target_environment}/${dependency}"
-        [[ -d "$cached_library" || -e "${cached_library}.pio-link" ]] || continue
-        # `pio pkg uninstall` has no --project-conf option.  It only removes
-        # the named cached package; the following `pio run` is what resolves
-        # the selected release or local project configuration afresh.
-        df_pio pkg uninstall -d test/compile-project -e "$target_environment" \
-            -l "$dependency" --no-save --skip-dependencies >/dev/null
-    done
-}
 
 [[ "$profile_fixture" == "true" ]] && environment="${platform}_profile"
 if [[ "$mode" == "hardware" && "$profile_fixture" == "true" ]]; then
@@ -133,14 +112,11 @@ if [[ "$mode" == "compile" ]]; then
     fi
 
     for consumer_environment in "${consumer_environments[@]}"; do
-        df_pio run -d test/compile-project "${consumer_config_args[@]}" -e "$consumer_environment" -t clean >/dev/null
-        refresh_clean_consumer_dependency "$consumer_environment"
-        df_pio run -d test/compile-project "${consumer_config_args[@]}" -e "$consumer_environment"
+        df_pio run -d test/compile-project -e "$consumer_environment"
     done
     if [[ "$profile_fixture" == "false" && "$platform" == "esp8266" ]]; then
         # Prove that callers can omit the optional local web interface.
-        refresh_clean_consumer_dependency esp8266_no_web
-        df_pio run -d test/compile-project "${consumer_config_args[@]}" -e esp8266_no_web
+        df_pio run -d test/compile-project -e esp8266_no_web
     fi
     exit 0
 fi
@@ -222,7 +198,7 @@ write_hardware_profile() {
     # The Unity image deliberately writes a usable storage record. The normal
     # consumer smoke image therefore needs a one-shot reconcile profile rather
     # than bootstrap, while retaining the stable hostname/password asserted by
-    # the normal hardware contract.
+    # the normal hardware test harness.
     write_profile "$hardware_default_profile" "hardware-${platform}-default" "reconcile" "default1" "${platform}-controller"
 }
 
@@ -294,12 +270,37 @@ assert_http_endpoint() {
     fi
     local marker
     for marker in "$@"; do
-        if ! rg -Fq -- "$marker" "$response_file"; then
+        if ! grep -Fq -- "$marker" "$response_file"; then
             rm -f "$response_file"
             echo "Direct LAN check for $description is missing expected content: $marker" >&2
             return 1
         fi
     done
+    if [[ "$endpoint" == "/api/status" && "$expected_status" == "200" ]]; then
+        if ! python3 - "$response_file" <<'PY'
+import json
+import sys
+
+with open(sys.argv[1], encoding="utf-8") as response_file:
+    document = json.load(response_file)
+
+hardware = document["hardware"]
+runtime = document["runtime"]
+device = runtime["device"]
+wifi = runtime["wifi"]
+if not isinstance(hardware["version"], str) or not hardware["version"]:
+    raise ValueError("hardware.version must be a non-empty string")
+if not isinstance(device["name"], str) or not device["name"]:
+    raise ValueError("runtime.device.name must be a non-empty string")
+if not isinstance(wifi["connected"], bool):
+    raise ValueError("runtime.wifi.connected must be a boolean")
+PY
+        then
+            rm -f "$response_file"
+            echo "Direct LAN check for $description returned an invalid status document" >&2
+            return 1
+        fi
+    fi
     rm -f "$response_file"
     echo "Direct LAN check passed: $description"
 }
@@ -319,7 +320,7 @@ assert_password_endpoint() {
         echo "Direct LAN check failed to update the device password" >&2
         return 1
     fi
-    if [[ "$status_code" != "200" ]] || ! rg -Fq '"status":"success"' "$response_file"; then
+    if [[ "$status_code" != "200" ]] || ! grep -Fq '"status":"success"' "$response_file"; then
         rm -f "$response_file"
         echo "Device password endpoint did not accept the profiled password (HTTP $status_code)" >&2
         return 1
@@ -375,7 +376,7 @@ verify_web_interface() {
     else
         default_host="${platform}-controller.local"
     fi
-    # Normal hardware coverage is specifically an mDNS contract.  A private
+    # Normal hardware coverage is specifically an mDNS test-harness check. A private
     # IP override used to turn an mDNS regression into a false green result;
     # keep direct-IP access in the explicit OTA diagnostic command instead.
     [[ -z "${DEVICEFRAMEWORK_TEST_DEVICE_HOST:-}" ]] || {
@@ -401,7 +402,7 @@ verify_web_interface() {
         system_ip="$(getent ahostsv4 "$mdns_name" 2>/dev/null | awk 'NR == 1 { print $1; exit }' || true)"
         if [[ -n "$avahi_ip" && "$avahi_ip" == "$system_ip" ]]; then
             # Keep the hostname in the actual HTTP URL. Resolution and
-            # transport are both part of this normal mDNS contract.
+            # transport are both part of this normal mDNS test harness.
             device_host="$mdns_name"
             echo "mDNS: $mdns_name -> $avahi_ip (Avahi and system resolver agree)"
             break

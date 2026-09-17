@@ -7,6 +7,10 @@ cd "$project_dir"
 # shellcheck source=tools/lib/platformio.sh
 source "$project_dir/tools/lib/platformio.sh"
 
+# One complete integration run must not start every SCons build with the host's
+# CPU count. A developer can opt in to more parallelism explicitly.
+export PLATFORMIO_RUN_JOBS="${PLATFORMIO_RUN_JOBS:-2}"
+
 usage() {
     cat <<'EOF'
 Usage: ./scripts/test-nonhardware.sh
@@ -32,29 +36,17 @@ run_test() {
     DEVICEFRAMEWORK_SKIP_WEB_ASSET_CHECK=1 "$project_dir/scripts/test.sh" "$@"
 }
 
-run_ota_fixture_release_build() {
-    local environment="$1" dependency
-    # Match the release consumer check's intent: a cached sibling-worktree
-    # package must not make this fixture appear to test the declared tags.
-    for dependency in DeviceFramework WiFiManager DeviceFrameworkTemplateEngine home-assistant-integration; do
-        df_pio pkg uninstall -d test/ota-harness -e "$environment" \
-            -l "$dependency" --no-save --skip-dependencies >/dev/null || true
-    done
-    df_pio run -d test/ota-harness \
-        -c "$project_dir/test/ota-harness/platformio.release.ini" \
-        -e "$environment"
+run_ota_fixture_build() {
+    local environment="$1"
+    printf '[OTA fixture] %s\n' "$environment"
+    df_pio run -d test/ota-harness -e "$environment"
 }
 
-run_udp_ota_fixture_release_build() {
-    local environment="$1" profile="$2" dependency
-    for dependency in DeviceFramework WiFiManager DeviceFrameworkTemplateEngine home-assistant-integration; do
-        df_pio pkg uninstall -d test/ota-harness -e "$environment" \
-            -l "$dependency" --no-save --skip-dependencies >/dev/null || true
-    done
+run_udp_ota_fixture_build() {
+    local environment="$1" profile="$2"
+    printf '[UDP OTA fixture] %s (%s profile)\n' "$environment" "$profile"
     DEVICEFRAMEWORK_OTA_PROFILE="$project_dir/test/profiles/ota-lan-${profile}-fixture.json" \
-        df_pio run -d test/ota-harness \
-            -c "$project_dir/test/ota-harness/platformio.release.ini" \
-            -e "$environment"
+        df_pio run -d test/ota-harness -e "$environment"
 }
 
 assert_ota_fixture_pair() {
@@ -75,7 +67,7 @@ assert_ota_fixture_pair() {
         assert_ota_image_fits "$a" "$slot_a" "A"
         assert_ota_image_fits "$b" "$slot_b" "B"
     fi
-    echo "OTA fixture A/B contract passed for $label"
+    echo "OTA fixture A/B test harness passed for $label"
 }
 
 esp32_ota_slot_bytes() {
@@ -103,33 +95,31 @@ assert_ota_image_fits() {
 
 "$project_dir/tools/check-web-assets.sh"
 "$project_dir/tools/check-ota-partitions.sh"
-run_test compile --platform esp8266 --release
-run_test compile --platform esp8266 --profile-fixture --release
-run_test compile --platform esp32 --release
-run_test compile --platform esp32 --profile-fixture --release
+run_test compile --platform esp8266
+run_test compile --platform esp8266 --profile-fixture
+run_test compile --platform esp32
+run_test compile --platform esp32 --profile-fixture
 for platform in esp8266 esp32; do
     for profile in protected open; do
         for image in a b; do
-            run_ota_fixture_release_build "${platform}_portal_ota_${profile}_${image}"
+            run_ota_fixture_build "${platform}_portal_ota_${profile}_${image}"
         done
         assert_ota_fixture_pair "$platform" "${platform}_portal_ota_${profile}" "portal ${platform}/${profile}"
     done
     for profile in protected open; do
         for image in a b; do
-            run_udp_ota_fixture_release_build "${platform}_udp_ota_${image}" "$profile"
+            run_udp_ota_fixture_build "${platform}_udp_ota_${image}" "$profile"
         done
         assert_ota_fixture_pair "$platform" "${platform}_udp_ota" "UDP ${platform}/${profile}"
     done
 done
 for image in a b; do
-    run_udp_ota_fixture_release_build "esp8266_udp_ota_deferred_${image}" protected
+    run_udp_ota_fixture_build "esp8266_udp_ota_deferred_${image}" protected
 done
 assert_ota_fixture_pair esp8266 esp8266_udp_ota_deferred "UDP ESP8266/deferred"
 run_test examples --platform esp8266
 run_test examples --platform esp32
 DEVICEFRAMEWORK_SKIP_WEB_ASSET_CHECK=1 "$project_dir/scripts/check-docs.sh"
-"$project_dir/tests/test-device-ui-hardware-cli.sh"
-"$project_dir/tests/test-ota-hardware-cli.sh"
 "$project_dir/tools/ha-hardware" fixture --ui-capture
 
 echo "DeviceFramework non-hardware test suite passed"

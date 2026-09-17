@@ -7,6 +7,10 @@ export default defineConfig({
   testDir: "./tests",
   outputDir: `${artifactRoot}/playwright`,
   reporter: [["list"], ["json", { outputFile: `${artifactRoot}/playwright/results.json` }]],
+  // Both specs exercise one disposable Home Assistant instance. Keep their
+  // stateful browser actions serial; bootstrap completes onboarding before
+  // Playwright starts, rather than leaving either spec to own that transition.
+  workers: 1,
   retries: 0,
   timeout: 90_000,
   expect: {

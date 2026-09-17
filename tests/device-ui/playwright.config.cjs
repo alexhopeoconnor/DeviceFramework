@@ -2,6 +2,7 @@ const path = require("path");
 const { defineConfig } = require("@playwright/test");
 
 const artifactDir = process.env.ARTIFACT_DIR || path.join(__dirname, "artifacts");
+const stationCredentialsMounted = Boolean(process.env.DEVICE_UI_STATION_ENV);
 
 module.exports = defineConfig({
   testDir: "./tests",
@@ -18,9 +19,15 @@ module.exports = defineConfig({
   ],
   use: {
     baseURL: process.env.DEVICE_UI_URL,
-    screenshot: "only-on-failure",
-    trace: "retain-on-failure",
-    video: "retain-on-failure",
+    // A station portal run has local Wi-Fi values in the DOM. The runner keeps
+    // only its minimal temporary env file, but suppress all browser media in
+    // that mode so a real SSID cannot be retained in a failure artifact.
+    screenshot: stationCredentialsMounted ? "off" : "only-on-failure",
+    // Portal form submissions include local Wi-Fi credentials. The host
+    // supplies a minimal temporary env file and removes it after the run, but
+    // a Playwright trace can record request bodies, so never retain one.
+    trace: "off",
+    video: stationCredentialsMounted ? "off" : "retain-on-failure",
     colorScheme: "light",
     locale: "en-AU",
     timezoneId: "UTC",

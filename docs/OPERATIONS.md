@@ -90,8 +90,9 @@ into an issue, CI log, profile example, or screenshot.
 ## Release and verification path
 
 Use a released DeviceFramework tag in consuming firmware. Before a library
-release, run documentation checks and compile both targets; before deploying a
-real device type, add the hardware and Home Assistant checks proportionate to
-its risk. The exact repository commands are documented in [Testing](TESTING.md).
+release, run the complete board-free test harness with
+`./scripts/test-nonhardware.sh`; before deploying a real device type, add the
+physical and Home Assistant checks proportionate to its risk. The exact
+repository commands are documented in [Testing](TESTING.md).
 
 Next: [Troubleshooting](TROUBLESHOOTING.md) · [Configuration and profiles](CONFIGURATION.md) · [Protected-output scenario](scenarios/protected-output-controller.md).

@@ -16,18 +16,16 @@ firmware, so no board or credentials are needed:
 
 ```bash
 ./scripts/test.sh compile --platform esp8266
-./scripts/test.sh packages --platform esp8266
 ./scripts/test.sh compile --platform esp8266 --profile-fixture
 ./scripts/test.sh compile --platform esp32
-./scripts/test.sh packages --platform esp32
 ./scripts/test.sh compile --platform esp32 --profile-fixture
 ```
 
 The `--profile-fixture` command compiles bootstrap, no-Wi-Fi, and reconcile-profile consumers. The physical profile run additionally proves the reconcile image changes its explicit device value while retaining the broker setting persisted by the preceding firmware; the fixture test also proves profile-ID and revision changes independently.
 
-The runner keeps its PlatformIO Core, packages, and download cache in a dedicated
-DeviceFramework location; each clean-consumer check refreshes its fixture dependency
-instead of trusting a stale `.pio` copy.
+The runner keeps its PlatformIO Core, packages, and download cache in a
+dedicated persistent DeviceFramework location. Normal checks reuse that cache;
+they never remove dependencies or force a fresh download.
 CI runs these normal and profile-fixture checks for every push and pull request, and the tag workflow repeats them before it creates a GitHub Release.
 
 The normal ESP8266 command also checks the web-interface-free configuration.
@@ -89,13 +87,14 @@ smoke image and requires its `0.0.0-hardware-smoke` status marker before
 considering mDNS or HTTP results. (`--ha-e2e` deliberately retains its Unity
 image because that test exports its live device identity.) It uses a one-time
 reconcile profile because Unity intentionally leaves a valid V4 record: normal
-mode restores the stable `<platform>-controller`/`default1` contract, while
+mode restores the stable `<platform>-controller`/`default1` baseline expected
+by the test harness, while
 `--profile-fixture` proves a distinct reconcile identity and password rotation.
-The runner waits for its unique mDNS name through both Avahi and the system
+The runner waits for its expected mDNS name through both Avahi and the system
 resolver before it verifies authenticated status, pages, CSS/JavaScript/logo assets, and password
 persistence through a reboot. Normal hardware coverage deliberately rejects
 `DEVICEFRAMEWORK_TEST_DEVICE_HOST`: an IP can diagnose reachability but cannot
-make an mDNS contract pass.
+make the mDNS test harness pass.
 
 For an end-to-end local Home Assistant run (board -> Wi-Fi -> Mosquitto -> HA and HA commands back to the board), use the [local HA hardware test harness](HA_HARDWARE_TESTING.md). It creates and removes Docker state automatically, can bind to the existing Wi-Fi network without sudo, and has an opt-in NetworkManager USB-adapter AP mode when a dedicated adapter is available. For several boards, retain one session, compile each target once, and run its Docker-contained USB workers in parallel.
 
@@ -103,34 +102,35 @@ To inspect the browser-facing DeviceFramework-to-WiFiManager integration on a
 board, use `./tools/device-ui-hardware`. It uses only an explicitly named
 secondary Wi-Fi adapter for the portal and will refuse the primary/default-route
 adapter. The [testing guide](TESTING.md#browser-evidence-on-a-real-board) has the
-complete command, host-authorization, and artifact contract. In a headless SSH
+complete test-harness command, host-authorization, and artifact details. In a headless SSH
 session it may validate sudo before flashing so only scoped NetworkManager
 actions on that adapter are elevated; do not put sudo data in `test/.env` or
 run the complete browser runner as root.
 
 ## Work against sibling checkouts
 
-The consumer compile fixture is intentionally a separate PlatformIO project. If
-you are working before the dependent library tags exist, copy its local template
-as well so it resolves the sibling checkouts rather than remote release tags:
+The consumer compile fixture is intentionally a separate PlatformIO project.
+When a coordinated change has not been released yet, copy its ignored local
+selector to build the direct first-party sources from sibling checkouts:
 
 ```bash
 cp test/compile-project/platformio.local.example.ini test/compile-project/platformio.local.ini.<machine>
 ```
 
-Released builds use public Git tags. For coordinated local library development, copy
-[`platformio.local.example.ini`](../platformio.local.example.ini) to a file such
-as `platformio.local.ini.alex`, update its explicit relative `symlink://` paths,
-and leave that file untracked. The first-party entries explicitly replace the
-direct package-manifest tags. When a manifest itself declares a tagged
-first-party dependency, expose that package's exact local storage through
-`lib_extra_dirs` too; the consumer-fixture template does this for
-WiFiManager's nested `lib/` root, which gives it priority over `.pio/libdeps`.
-Do not point `lib_dir` at a broad sibling-worktree parent: PlatformIO can
-otherwise discover nested test and build directories as project inputs. The
-remaining entries supply only third-party dependencies. `platformio.ini`
-loads matching `platformio.local.ini.*` files when present, so no tracked
-configuration or application dependency needs to change.
+Released builds use public Git tags. For coordinated local library development,
+copy [`platformio.local.example.ini`](../platformio.local.example.ini) to a file
+such as `platformio.local.ini.alex`, update its explicit relative `symlink://`
+paths, and leave that file untracked. The selector gives local sources their own
+persistent `.pio/sibling-worktree` build and dependency directories; switching
+between it and the released graph therefore never reuses a stale archive. It
+does not clear PlatformIO's shared cache. PlatformIO can still read a declared
+release manifest to obtain transitive requirements, so use the repository-owned
+checks for a changed dependency and use this selector only for deliberate
+cross-repository integration. Do not use `lib_extra_dirs` or point `lib_dir` at
+a broad sibling-worktree parent: either can combine current headers with a
+released archive or discover nested test/build directories as project inputs.
+`platformio.ini` loads matching `platformio.local.ini.*` files when present, so
+no tracked configuration or application dependency needs to change.
 
 ## Publish a release
 
@@ -144,15 +144,21 @@ configuration or application dependency needs to change.
 3. Replace the generated changelog TODO with the release summary. The version
    script updates the current compatibility row from `library.json`; update
    guides when behaviour changes.
-4. Run the four compile checks above; run the hardware suite when its covered
-   behavior changed.
+4. Run the complete board-free release gate, then the physical test harness
+   when its covered behavior changed:
+
+   ```bash
+   ./scripts/test-nonhardware.sh
+   ```
 5. Commit the release preparation, then validate and create the annotated tag:
 
    ```bash
    ./scripts/prepare-release.sh vMAJOR.MINOR.PATCH --tag
    ```
 
-6. Push the branch and tag. The tag workflow repeats the compile checks, validates release metadata and the PlatformIO package, and creates the GitHub Release from that tag.
+6. Push the branch and tag. Before publishing, the tag workflow repeats the
+   documentation, compile/profile, example, and OTA fixture checks; it then
+   validates release metadata and creates the GitHub Release from that tag.
 The `#vMAJOR.MINOR.PATCH` portion of a PlatformIO Git dependency is a Git ref:
 PlatformIO clones the repository and checks out that tag. It does not download
 a GitHub Release asset. Tags therefore provide reproducible dependency inputs;

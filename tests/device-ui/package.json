@@ -1,8 +1,8 @@
 {
   "private": true,
-  "name": "deviceframework-device-ui-contract",
+  "name": "deviceframework-device-ui-harness",
   "version": "1.0.0",
-  "description": "Docker-only real-board visual contract for DeviceFramework UI surfaces",
+  "description": "Docker-only real-board visual test harness for DeviceFramework UI surfaces",
   "devDependencies": {
     "@playwright/test": "1.63.0"
   }

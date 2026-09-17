@@ -30,8 +30,11 @@ available, run:
 The default sibling ArduinoHA location is `../arduino-home-assistant`. The
 runner uses it both for the generic HA/MQTT testkit and for firmware builds. A
 local source run intentionally requires the normal sibling stack containing
-ArduinoHA, WiFiManager, and DFTE, rather than silently mixing a local ArduinoHA
-with unrelated released dependencies.
+ArduinoHA, WiFiManager, and DFTE. It gives that stack a session-owned PlatformIO
+build and dependency directory and selects each first-party package with an
+explicit symlink, rather than mixing local headers with archives from the
+released graph. It never clears the normal shared package cache; PlatformIO may
+still consult declared release manifests while resolving third-party packages.
 
 Before a physical run, compile the selected E2E firmware without starting Docker
 or touching a board:
@@ -154,11 +157,11 @@ Home Assistant's entity and device registries, then exercises:
   board after the non-persistent test broker restarts.
 
 The board-free fixture under `tests/ha-hardware/fixtures/` is a smaller
-retained discovery contract for Docker/CI. It proves the current Home Assistant
+retained-discovery test harness for Docker/CI. It proves the current Home Assistant
 discovery shape and retained HA restart behavior without a board. It does not
 pretend to replace the physical service-command round trip.
 
-## Visual dashboard contract
+## Visual dashboard test harness
 
 The optional visual test harness uses the same disposable Home Assistant and
 Mosquitto stack, plus a pinned headless Playwright container. It has no host

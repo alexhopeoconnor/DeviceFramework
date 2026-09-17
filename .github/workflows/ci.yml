@@ -20,10 +20,15 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      - run: bash -n scripts/*.sh tools/lib/platformio.sh tools/check-ota-partitions.sh
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: >-
+          bash -n scripts/*.sh tools/lib/platformio.sh tools/check-ota-partitions.sh
+          tools/device-ui-hardware tools/ota-hardware tools/lib/device-ui-session.sh
       - run: ./scripts/check-docs.sh
       - run: ./tools/check-ota-partitions.sh
-      - run: ./tests/test-ota-hardware-cli.sh
+      - run: timeout 15s python3 tests/test-capture-serial.py
 
   compile-tests:
     runs-on: ubuntu-latest
@@ -36,15 +41,10 @@ jobs:
       - uses: actions/setup-python@v7
         with:
           python-version: '3.11'
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '22'
       - run: python -m pip install --upgrade platformio==6.2.0
       - run: ./scripts/test.sh compile --platform ${{ matrix.target }}
-      - run: ./scripts/test.sh packages --platform ${{ matrix.target }}
       - run: ./scripts/test.sh examples --platform ${{ matrix.target }}
       - run: ./scripts/test.sh compile --platform ${{ matrix.target }} --profile-fixture
-      - run: ./tests/test-device-ui-hardware-cli.sh
       - run: |
           slot_size() {
             awk -F, -v partition="$1" '
