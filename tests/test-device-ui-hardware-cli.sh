@@ -52,6 +52,7 @@ printf '%s\n' '#!/usr/bin/env bash' \
 'echo "192.168.4.1 dev wlan-client src 192.168.4.2"' >"$stub_bin/ip"
 printf '%s\n' '#!/usr/bin/env bash' \
 'printf "%s\\n" "$*" >>"$SIGNAL_LOG"' \
+'if [[ "${NMCLI_PERMISSION_MODE:-}" == "auth" && "$1" == "-t" && "$2" == "-f" && "$3" == "PERMISSION,VALUE" ]]; then printf "%s\\n" "org.freedesktop.NetworkManager.wifi.scan:auth" "org.freedesktop.NetworkManager.network-control:auth" "org.freedesktop.NetworkManager.settings.modify.system:auth"; exit 0; fi' \
 'if [[ "${NMCLI_REQUIRE_SUDO:-}" == "yes" && "${RUN_AS_SUDO:-}" != "yes" ]]; then echo "Error: Insufficient privileges" >&2; exit 7; fi' \
 'if [[ "${NMCLI_FAIL_SCAN:-}" == "yes" && "$1" == "device" && "$2" == "wifi" && "$3" == "rescan" ]]; then echo "fixture scan failure" >&2; exit 7; fi' \
 'if [[ "$1" == "-t" && "$2" == "-f" && "$3" == "SSID" ]]; then echo "DF-Portal-ESP8266"; exit 0; fi' \
@@ -162,6 +163,22 @@ if ROOT="$project_dir" PATH="$stub_bin:$PATH" SIGNAL_LOG="$signal_log" \
     echo "device-ui accepted a failed scoped sudo validation" >&2
     exit 1
 fi
+
+# SSH can expose a session D-Bus socket without an interactive Polkit agent.
+# That must still choose the scoped sudo path before board-facing work.
+: >"$signal_log"
+if ! ROOT="$project_dir" PATH="$stub_bin:$PATH" SIGNAL_LOG="$signal_log" \
+    DFUI_NMCLI_AUTH=auto NMCLI_PERMISSION_MODE=auth NMCLI_REQUIRE_SUDO=yes \
+    DBUS_SESSION_BUS_ADDRESS='unix:path=/run/user/1000/bus' DISPLAY='' WAYLAND_DISPLAY='' \
+    bash -c '
+        source "$ROOT/tools/lib/device-ui-session.sh"
+        dfui_prepare_networkmanager_authorization
+        [[ "$DFUI_NMCLI_MODE" == sudo ]]
+    '; then
+    echo "device-ui did not select scoped sudo for a headless session D-Bus path" >&2
+    exit 1
+fi
+grep -Fq 'sudo -v' "$signal_log"
 
 # The portal scan failure is explicit too: do not proceed to connection add
 # merely because the helper was called from a conditional context.
