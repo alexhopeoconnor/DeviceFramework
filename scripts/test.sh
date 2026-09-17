@@ -145,6 +145,12 @@ if [[ "$mode" == "compile" ]]; then
     exit 0
 fi
 [[ -f "$env_file" ]] || { echo "Missing $env_file; copy test/.env.example first." >&2; exit 1; }
+# Hardware builds compile local Wi-Fi/MQTT values into a short-lived test
+# header and, for the smoke image, a local provisioning header. Keep every new
+# file owner-only even when the developer's normal umask is permissive.
+if [[ "$mode" == "hardware" ]]; then
+    umask 077
+fi
 set -a
 # shellcheck disable=SC1090
 source "$env_file"
@@ -176,6 +182,7 @@ write_config() {
 
 hardware_profile=""
 hardware_smoke_profile=""
+hardware_default_profile=""
 ha_e2e_device_id=""
 ha_e2e_device_ip=""
 write_profile() {
@@ -208,9 +215,15 @@ write_profile() {
 write_hardware_profile() {
     hardware_profile="$(mktemp -p /tmp deviceframework-profile.XXXXXX)"
     hardware_smoke_profile="$(mktemp -p /tmp deviceframework-smoke-profile.XXXXXX)"
-    chmod 600 "$hardware_profile" "$hardware_smoke_profile"
+    hardware_default_profile="$(mktemp -p /tmp deviceframework-default-profile.XXXXXX)"
+    chmod 600 "$hardware_profile" "$hardware_smoke_profile" "$hardware_default_profile"
     write_profile "$hardware_profile" "hardware-${platform}-bootstrap" "bootstrap" "default1"
     write_profile "$hardware_smoke_profile" "hardware-${platform}-smoke" "reconcile" "profile-reconcile-password" "Hardware Reconciled"
+    # The Unity image deliberately writes a usable storage record. The normal
+    # consumer smoke image therefore needs a one-shot reconcile profile rather
+    # than bootstrap, while retaining the stable hostname/password asserted by
+    # the normal hardware contract.
+    write_profile "$hardware_default_profile" "hardware-${platform}-default" "reconcile" "default1" "${platform}-controller"
 }
 
 
@@ -418,12 +431,12 @@ verify_web_interface() {
 
     if [[ "$profile_fixture" == "true" ]]; then
         assert_http_endpoint "reconciled API status" "/api/status" 200 "$profile_password" \
-            runtime chip_id version "Hardware Reconciled" "$DEVICEFRAMEWORK_TEST_MQTT_SERVER"
+            runtime chip_id version "0.0.0-hardware-smoke" "Hardware Reconciled" "$DEVICEFRAMEWORK_TEST_MQTT_SERVER"
     else
-        assert_http_endpoint "API status" "/api/status" 200 "$profile_password" runtime chip_id version
+        assert_http_endpoint "API status" "/api/status" 200 "$profile_password" runtime chip_id version "0.0.0-hardware-smoke"
     fi
     for page_pass in 1 2; do
-        assert_http_endpoint "web interface status page (pass $page_pass)" "/" 200 "$profile_password" "<!DOCTYPE html>" "Device Status" "data-df-page=\"status\"" "deviceframework.css" "deviceframework.js" "DeviceFramework UI Test" "Test Lab" "df-web-theme" "--df-accent:#15803d" "</html>"
+        assert_http_endpoint "web interface status page (pass $page_pass)" "/" 200 "$profile_password" "<!DOCTYPE html>" "Device Status" "data-df-page=\"status\"" "deviceframework.css" "deviceframework.js" "DeviceFramework UI Test" "Test Lab" "df-web-theme" "--df-accent:#2477c9" "</html>"
         assert_http_endpoint "web interface serial page (pass $page_pass)" "/serial" 200 "$profile_password" "Serial Monitor" "data-df-page=\"serial\"" "serial-monitor" "</html>"
         assert_http_endpoint "web interface controls page (pass $page_pass)" "/controls" 200 "$profile_password" "System Controls" "data-df-page=\"controls\"" "device-password-form" "</html>"
         assert_http_endpoint "web interface about page (pass $page_pass)" "/about" 200 "$profile_password" "About" "data-df-page=\"about\"" "https://example.test" "</html>"
@@ -434,26 +447,35 @@ verify_web_interface() {
         fi
         assert_http_endpoint "custom 404 page (pass $page_pass)" "/notfound" 200 "$profile_password" 404 "Page Not Found" "Return to Home" "</html>"
     done
-    assert_http_endpoint "post-page API status" "/api/status" 200 "$profile_password" runtime chip_id version
+    assert_http_endpoint "post-page API status" "/api/status" 200 "$profile_password" runtime chip_id version "0.0.0-hardware-smoke"
     if [[ "$profile_fixture" == "true" ]]; then
         assert_password_endpoint "$profile_password"
         wait_for_password_restart "$profile_password"
-        assert_http_endpoint "post-restart API status" "/api/status" 200 "$profile_password" runtime chip_id version
+        assert_http_endpoint "post-restart API status" "/api/status" 200 "$profile_password" runtime chip_id version "0.0.0-hardware-smoke"
     fi
 }
 cleanup() {
     if [[ -z "$config_header" ]]; then rm -f "$config_file"; fi
     [[ -z "$hardware_profile" ]] || rm -f "$hardware_profile"
     [[ -z "$hardware_smoke_profile" ]] || rm -f "$hardware_smoke_profile"
+    [[ -z "$hardware_default_profile" ]] || rm -f "$hardware_default_profile"
 }
 trap cleanup EXIT
 write_config
-if [[ "$profile_fixture" == "true" ]]; then
+if [[ "$ha_e2e" == "true" ]]; then
+    # HA E2E owns the Unity image and extracts its live device identity from
+    # that test. Do not replace it with the web smoke image before the caller
+    # can use the published ID/IP.
+    run_unity_hardware_test
+elif [[ "$profile_fixture" == "true" ]]; then
     write_hardware_profile
     run_unity_hardware_test
     DEVICEFRAMEWORK_HARDWARE_PROFILE="$hardware_smoke_profile" df_pio run -d test/compile-project -e "$environment" -t upload --upload-port "$port"
 else
+    write_hardware_profile
     run_unity_hardware_test
+    DEVICEFRAMEWORK_HARDWARE_PROFILE="$hardware_default_profile" \
+        df_pio run -d test/compile-project -e "${platform}_default_hardware" -t upload --upload-port "$port"
 fi
 if [[ "$ha_e2e" == "false" ]]; then
     verify_web_interface

@@ -135,6 +135,12 @@ void configureFixtureUi() {
 }  // namespace
 
 void setup() {
+    // The physical OTA runner captures boot evidence at 115200 baud. Make
+    // that application choice explicit before DeviceFramework initializes its
+    // serial logger; otherwise the library's intentionally conservative
+    // 9600-baud default is decoded as noise by the host-side contract.
+    setConfigSerialBaudRate(115200);
+
     configureFixtureUi();
     DeviceFramework::configureApplication(
         kApplicationId, kFirmwareVersion, kConfigurationSchema);

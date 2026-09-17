@@ -54,15 +54,19 @@ With `--profile-fixture`, it runs Unity with a bootstrap profile, owns the seria
 port while it injects an RTS-only reset after the selected board’s esptool upload,
 and requires a non-empty zero-failure result. This keeps USB-UART adapters from
 producing a false green result when PlatformIO’s non-interactive monitor does not
-reset them.
+reset them. After Unity, normal and profiled modes each flash a separate minimal
+consumer smoke image before the LAN checks. (`--ha-e2e` retains its Unity image
+because its caller consumes the exported live device identity.) The smoke image
+must report its immutable `0.0.0-hardware-smoke` marker, so an oversized Unity
+image or a stale board cannot masquerade as a passing mDNS/web result.
 
-It then flashes a minimal, separate consuming application with a distinct
-one-time reconcile profile and a different device password. This proves a real
-application can accept provisioned WiFi and deliberately rotate the shared
-password after Unity has left a valid V4 record, rather than relying on an
-erased board. Compile-only profile checks also cover a valid profile with no
-`wifi` object, ensuring a profiled firmware can deliberately open interactive
-provisioning without a dummy SSID.
+The profiled mode uses a distinct one-time reconcile profile and a different
+device password; normal mode uses its own reconcile profile with the stable
+`<platform>-controller` hostname and `default1` password. This proves a real
+application can accept provisioned WiFi after Unity has left a valid V4 record,
+rather than relying on an erased board. Compile-only profile checks also cover a
+valid profile with no `wifi` object, ensuring a profiled firmware can deliberately
+open interactive provisioning without a dummy SSID.
 
 The runner waits up to 45 seconds for the unique mDNS name through both Avahi
 and the host system resolver, then uses that hostname for the HTTP checks:
@@ -202,9 +206,10 @@ only on an explicit request:
 ```
 
 A normal pass requires Avahi *and* the host system resolver to agree on
-`df-ota-<platform>.local`; the actual uploader receives that hostname, not its
-resolved IP. The runner selects the matching normal-route source address and
-checks that it can bind the callback TCP port, but never alters the firewall.
+`df-ota-<platform>.local` both before the upload and again after B has rebooted;
+the actual uploader receives that hostname, not its resolved IP. The runner
+selects the matching normal-route source address and checks that it can bind the
+callback TCP port, but never alters the firewall.
 If the UDP invitation gets no reply, investigate the listener, Wi-Fi/VLAN, or
 client isolation. If authentication succeeds but no TCP callback arrives,
 investigate the host firewall, reverse route, or client isolation.

@@ -614,6 +614,11 @@ run_one() {
     finish_reboot_monitor
     if [[ "$defer_mdns" == "yes" ]]; then
         assert_mdns_absent 10
+    elif [[ -z "$device_ip" ]]; then
+        # The monitor's B requests prove the automatic reboot. Resolve again
+        # only after that reboot so a stale A-era cache cannot stand in for
+        # the responder lifecycle that B must provide.
+        resolve_mdns
     fi
     response="$(wait_marker 0.0.0-udp-ota-b)"
     echo "Running B marker: $(status_version "$response")"

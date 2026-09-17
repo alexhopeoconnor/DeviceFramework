@@ -77,18 +77,22 @@ cp test/.env.example test/.env
 ```
 
 Use `--env-file path/to/file` when the credentials live outside the repository.
-The runner creates its generated test header only for the run and removes it on
-exit. It uploads the Unity image with a bootstrap profile, then owns the serial
-port while it sends the same RTS-only hard reset esptool normally uses after
-upload and captures the result. It requires a non-empty zero-failure Unity
-result before proceeding.
+The runner creates its generated test header only for the run, writes new
+hardware-run files owner-only, and removes the header on exit. Normal mode
+uploads Unity without a profile; `--profile-fixture` uses its bootstrap profile.
+It then owns the serial port while it sends the same RTS-only hard reset esptool
+normally uses after upload and captures the result. It requires a non-empty
+zero-failure Unity result before proceeding.
 
-For a profile fixture, it then flashes the minimal consuming sketch with a
-separate reconcile-profile identity and password. That makes the WiFi seed and
-the shared-password rotation apply after the Unity run has left a valid V4
-record, exercising the intended non-erased-device path. The runner waits for
-its unique mDNS name through both Avahi and the system resolver before it
-verifies authenticated status, pages, CSS/JavaScript/logo assets, and password
+After each normal or profiled Unity run, it flashes a separate minimal consuming
+smoke image and requires its `0.0.0-hardware-smoke` status marker before
+considering mDNS or HTTP results. (`--ha-e2e` deliberately retains its Unity
+image because that test exports its live device identity.) It uses a one-time
+reconcile profile because Unity intentionally leaves a valid V4 record: normal
+mode restores the stable `<platform>-controller`/`default1` contract, while
+`--profile-fixture` proves a distinct reconcile identity and password rotation.
+The runner waits for its unique mDNS name through both Avahi and the system
+resolver before it verifies authenticated status, pages, CSS/JavaScript/logo assets, and password
 persistence through a reboot. Normal hardware coverage deliberately rejects
 `DEVICEFRAMEWORK_TEST_DEVICE_HOST`: an IP can diagnose reachability but cannot
 make an mDNS contract pass.
