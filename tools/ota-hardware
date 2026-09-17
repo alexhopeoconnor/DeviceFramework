@@ -121,7 +121,7 @@ validate_args() {
 }
 
 lock_board() {
-    exec 9>"${DEVICEFRAMEWORK_HARDWARE_LOCK_FILE:-/tmp/deviceframework-hardware-test.lock}"
+    exec 9>"${DEVICEFRAMEWORK_HARDWARE_LOCK_FILE:-${TMPDIR:-/tmp}/deviceframework-hardware-test.lock}"
     if ! flock -n 9; then
         echo "Another DeviceFramework hardware task is active; waiting for its board/build lock." >&2
         flock 9

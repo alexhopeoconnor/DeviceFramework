@@ -49,7 +49,9 @@ reads required WiFi and MQTT values from an ignored `test/.env`; copy
 only for the duration of the run, then removes it. Every `scripts/test.sh` mode
 takes one exclusive local lock before touching PlatformIO's package/build state;
 hardware mode additionally uses it before generating that header. A second local
-test waits rather than racing the active one.
+test waits rather than racing the active one. The hardware lock is also shared
+with WiFiManager's portal runner on the same host, preventing concurrent
+serial flashes or portal-adapter changes across the two repositories.
 With `--profile-fixture`, it runs Unity with a bootstrap profile, owns the serial
 port while it injects an RTS-only reset after the selected board’s esptool upload,
 and requires a non-empty zero-failure result. This keeps USB-UART adapters from
@@ -153,10 +155,13 @@ case. These modes prove AP policy plus portal update behavior; WiFiManager's
 The temporary portal connection is still `never-default`, but OTA mode enables
 reconnect on that one disposable connection so the browser can observe the AP
 after the board restarts. The command removes it afterward and leaves the
-selected board running B in portal mode. Add `--keep` only when retaining that
-adapter connection for diagnosis, then run `./tools/device-ui-hardware down`.
-Never use a manual reset to turn a failed automatic-reboot observation into a
-passing result.
+selected board running B in portal mode. Before touching NetworkManager it
+atomically records its uniquely generated connection name, then replaces that
+pending record with the exact UUID after creation. Normal failures and
+interrupts remove only that connection immediately; `./tools/device-ui-hardware
+down` accepts either record after an uncatchable host termination or an
+intentional `--keep` session. Never use a manual reset to turn a failed
+automatic-reboot observation into a passing result.
 
 Run the full portal matrix on real hardware before calling this surface covered:
 ESP8266 protected, ESP8266 open, ESP32 protected, and ESP32 open. Keep only one

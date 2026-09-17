@@ -75,7 +75,9 @@ while [[ $# -gt 0 ]]; do
 done
 
 profile_file=""
-portal_connected="no"
+DFUI_PORTAL_CONNECTION_UUID=""
+DFUI_PORTAL_CONNECTION_NAME=""
+DFUI_PORTAL_CONNECTION_OWNED="no"
 
 require_common() {
     dfui_require ip
@@ -603,10 +605,8 @@ start_portal_connection() {
     dfui_require_no_active_session
     upload_portal_fixture
     ssid="$(dfui_portal_ssid "$platform")"
-    dfui_create_portal_connection "$client_interface" "$ssid" 'default1'
-    portal_connected="yes"
+    dfui_create_portal_connection "$client_interface" "$ssid" 'default1' no "$platform"
     dfui_verify_portal_route "$client_interface"
-    dfui_write_state "$client_interface" "$platform" "$DFUI_PORTAL_CONNECTION_UUID" "$DFUI_PORTAL_CONNECTION_NAME"
 }
 
 start_portal_ota_connection() {
@@ -621,10 +621,8 @@ start_portal_ota_connection() {
     # The board must reboot itself after POST /u. Retain automatic reconnect
     # on this one disposable, never-default adapter connection so the browser
     # can observe the returning portal; cleanup still removes it on exit.
-    dfui_create_portal_connection "$client_interface" "$ssid" "$password" yes
-    portal_connected="yes"
+    dfui_create_portal_connection "$client_interface" "$ssid" "$password" yes "$platform"
     dfui_verify_portal_route "$client_interface"
-    dfui_write_state "$client_interface" "$platform" "$DFUI_PORTAL_CONNECTION_UUID" "$DFUI_PORTAL_CONNECTION_NAME"
     verify_portal_ota_capacity
 }
 
@@ -653,9 +651,14 @@ run_web() {
 }
 
 cleanup() {
-    local status=$?
+    local status="${1:-$?}"
+    # Signal handlers must stop the run rather than return into a later board
+    # operation.  Remove only the temporary connection this process created;
+    # this also covers either side of its pending-to-active state transition.
+    trap - EXIT HUP INT TERM
     [[ -z "$profile_file" ]] || rm -f "$profile_file"
-    if [[ "$portal_connected" == "yes" && "$keep" != "yes" ]]; then
+    if [[ "${DFUI_PORTAL_CONNECTION_OWNED:-no}" == "yes" ]] && \
+        { (( status != 0 )) || [[ "$keep" != "yes" ]]; }; then
         dfui_remove_portal_connection || true
     fi
     exit "$status"
@@ -686,7 +689,10 @@ case "$command_name" in
         require_common
         dfui_acquire_hardware_lock
         prepare_output_dir
-        trap cleanup EXIT INT TERM
+        trap 'cleanup "$?"' EXIT
+        trap 'cleanup 129' HUP
+        trap 'cleanup 130' INT
+        trap 'cleanup 143' TERM
         run_portal "$output_dir"
         echo "DeviceFramework portal integration contract passed. Artifacts: $output_dir"
         [[ "$keep" != "yes" ]] || echo "Portal client remains connected; run ./tools/device-ui-hardware down when finished."
@@ -699,7 +705,10 @@ case "$command_name" in
         require_common
         dfui_acquire_hardware_lock
         prepare_output_dir
-        trap cleanup EXIT INT TERM
+        trap 'cleanup "$?"' EXIT
+        trap 'cleanup 129' HUP
+        trap 'cleanup 130' INT
+        trap 'cleanup 143' TERM
         run_portal_ota "$output_dir"
         echo "DeviceFramework portal OTA contract passed (${portal_profile}). Artifacts: $output_dir"
         [[ "$keep" != "yes" ]] || echo "Portal client remains connected; run ./tools/device-ui-hardware down when finished."
@@ -711,7 +720,10 @@ case "$command_name" in
         require_common
         dfui_acquire_hardware_lock
         prepare_output_dir
-        trap cleanup EXIT INT TERM
+        trap 'cleanup "$?"' EXIT
+        trap 'cleanup 129' HUP
+        trap 'cleanup 130' INT
+        trap 'cleanup 143' TERM
         run_web "$output_dir"
         echo "DeviceFramework web UI contract passed. Artifacts: $output_dir"
         ;;
@@ -725,7 +737,10 @@ case "$command_name" in
         load_station_env
         dfui_acquire_hardware_lock
         prepare_output_dir
-        trap cleanup EXIT INT TERM
+        trap 'cleanup "$?"' EXIT
+        trap 'cleanup 129' HUP
+        trap 'cleanup 130' INT
+        trap 'cleanup 143' TERM
         run_portal "$output_dir/portal"
         handoff_file="$output_dir/portal/portal-handoff.json"
         [[ -r "$handoff_file" ]] || {
