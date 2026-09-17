@@ -64,6 +64,9 @@ rg -Fq 'hardware_default_profile' "$project_dir/scripts/test.sh"
 rg -Fq '"${platform}_default_hardware"' "$project_dir/scripts/test.sh"
 rg -Fq 'if [[ "$ha_e2e" == "true" ]]; then' "$project_dir/scripts/test.sh"
 rg -Fq 'HA E2E owns the Unity image' "$project_dir/scripts/test.sh"
+rg -Fq 'expected transient lookup failure' "$project_dir/scripts/test.sh"
+rg -Fq '`set -e -o pipefail`' "$tool"
+rg -Fq "awk 'NR == 1 {print \$2; exit}' || true" "$tool"
 
 python3 - <<'PY'
 import json

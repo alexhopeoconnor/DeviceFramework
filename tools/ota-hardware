@@ -339,8 +339,10 @@ espota_path=""
 resolve_mdns() {
     local attempt avahi_ip getent_ip
     for attempt in $(seq 1 60); do
-        avahi_ip="$(avahi-resolve -4 -n "$device_hostname" 2>/dev/null | awk 'NR == 1 {print $2; exit}')"
-        getent_ip="$(getent ahostsv4 "$device_hostname" 2>/dev/null | awk 'NR == 1 {print $1; exit}')"
+        # A just-flashed board has no hostname until it joins Wi-Fi.  Preserve
+        # the intended polling window under `set -e -o pipefail`.
+        avahi_ip="$(avahi-resolve -4 -n "$device_hostname" 2>/dev/null | awk 'NR == 1 {print $2; exit}' || true)"
+        getent_ip="$(getent ahostsv4 "$device_hostname" 2>/dev/null | awk 'NR == 1 {print $1; exit}' || true)"
         if [[ -n "$avahi_ip" && "$avahi_ip" == "$getent_ip" ]]; then
             resolved_ip="$avahi_ip"
             transport_endpoint="$device_hostname"
@@ -358,8 +360,8 @@ assert_mdns_absent() {
     local seconds="$1" deadline avahi_ip getent_ip
     deadline=$((SECONDS + seconds))
     while (( SECONDS < deadline )); do
-        avahi_ip="$(avahi-resolve -4 -n "$device_hostname" 2>/dev/null | awk 'NR == 1 {print $2; exit}')"
-        getent_ip="$(getent ahostsv4 "$device_hostname" 2>/dev/null | awk 'NR == 1 {print $1; exit}')"
+        avahi_ip="$(avahi-resolve -4 -n "$device_hostname" 2>/dev/null | awk 'NR == 1 {print $2; exit}' || true)"
+        getent_ip="$(getent ahostsv4 "$device_hostname" 2>/dev/null | awk 'NR == 1 {print $1; exit}' || true)"
         if [[ -n "$avahi_ip" || -n "$getent_ip" ]]; then
             echo "Deferred hostname unexpectedly resolved: $device_hostname (Avahi=${avahi_ip:-none}, system=${getent_ip:-none})" >&2
             return 1

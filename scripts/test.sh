@@ -394,8 +394,11 @@ verify_web_interface() {
     local attempt avahi_ip system_ip
     device_host=""
     for attempt in {1..45}; do
-        avahi_ip="$(avahi-resolve -4 -n "$mdns_name" 2>/dev/null | awk 'NR == 1 { print $2; exit }')"
-        system_ip="$(getent ahostsv4 "$mdns_name" 2>/dev/null | awk 'NR == 1 { print $1; exit }')"
+        # A hostname is normally absent for the first few boots.  With
+        # `pipefail`, make that expected transient lookup failure explicit so
+        # the polling loop, rather than errexit, decides whether it timed out.
+        avahi_ip="$(avahi-resolve -4 -n "$mdns_name" 2>/dev/null | awk 'NR == 1 { print $2; exit }' || true)"
+        system_ip="$(getent ahostsv4 "$mdns_name" 2>/dev/null | awk 'NR == 1 { print $1; exit }' || true)"
         if [[ -n "$avahi_ip" && "$avahi_ip" == "$system_ip" ]]; then
             # Keep the hostname in the actual HTTP URL. Resolution and
             # transport are both part of this normal mDNS contract.

@@ -44,6 +44,8 @@ rg -Fq 'fps=5,scale=600:750' "$project_dir/tests/device-ui/render-readme-media.s
 rg -Fq 'README media GIF exceeds its 2 MiB documentation budget' \
     "$project_dir/tests/device-ui/render-readme-media.sh"
 rg -Fq 'wait_for_web_url "df-portal-${platform}.local"' "$tool"
+rg -Fq 'Do not let `pipefail` bypass this bounded retry loop.' "$tool"
+rg -Fq "awk 'NR == 1 { print \$2; exit }' || true" "$tool"
 if rg -Fq 'DEVICEFRAMEWORK_TEST_DEVICE_HOST' "$tool"; then
     echo "device-ui-hardware retained the retired normal-test IP override" >&2
     exit 1
