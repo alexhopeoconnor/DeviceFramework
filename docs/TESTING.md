@@ -165,7 +165,7 @@ so the named serial board remains the authoritative fixture identity.
 invitation to port 8266 (ESP8266) or 3232 (ESP32), followed by the board's
 reverse TCP firmware connection to the host. It uses the normal LAN route and
 does not touch the secondary portal adapter. Copy `test/.env.example` to the
-ignored `test/.env`, add only the local Wi-Fi values, then run:
+ignored `test/.env`, add the local Wi-Fi values, then run:
 
 ```bash
 ./tools/ota-hardware doctor --platform esp8266
@@ -175,6 +175,11 @@ ignored `test/.env`, add only the local Wi-Fi values, then run:
   --env-file test/.env \
   --auth both
 ```
+
+The runner consumes only `DEVICEFRAMEWORK_TEST_WIFI_SSID` and
+`DEVICEFRAMEWORK_TEST_WIFI_PASSWORD`; other values in the existing
+`DEVICEFRAMEWORK_TEST_*` namespace are ignored so the same local file remains
+usable by the normal hardware and fixture runners.
 
 The runner writes a mode-600 temporary profile containing the ignored Wi-Fi
 credentials and a safe fixed OTA password, builds immutable A/B artifacts,

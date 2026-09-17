@@ -39,6 +39,7 @@ rg -Fq 'no resolver response observed' "$tool"
 rg -Fq 'monitor_upload_started_file' "$tool"
 rg -Fq 'DeviceFramework UDP OTA fixture image:' "$tool"
 rg -Fq 'ota-lan-open-fixture.json' "$tool"
+rg -Fq 'DEVICEFRAMEWORK_TEST_*=*' "$tool"
 rg -Fq 'esp8266_udp_ota_deferred_b' "$project_dir/test/ota-harness/platformio.base.ini"
 rg -Fq 'board_build.ldscript = eagle.flash.4m1m.ld' "$project_dir/test/ota-harness/platformio.base.ini"
 

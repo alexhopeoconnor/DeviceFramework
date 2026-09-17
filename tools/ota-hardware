@@ -177,8 +177,12 @@ load_station_env() {
         case "$line" in
             DEVICEFRAMEWORK_TEST_WIFI_SSID=*) value="${line#*=}"; wifi_ssid="$(strip_quotes "$value")" ;;
             DEVICEFRAMEWORK_TEST_WIFI_PASSWORD=*) value="${line#*=}"; wifi_password="$(strip_quotes "$value")" ;;
-            DEVICEFRAMEWORK_TEST_MQTT_SERVER=*|DEVICEFRAMEWORK_TEST_MQTT_USER=*|DEVICEFRAMEWORK_TEST_MQTT_PASSWORD=*) ;;
-            *) echo "Unexpected key in $env_file; OTA accepts only DeviceFramework test-env keys." >&2; return 1 ;;
+            # A shared test/.env can contain optional values used by the normal
+            # hardware or fixture runners (for example, a local fetcher port).
+            # ArduinoOTA consumes only station credentials, so retain a strict
+            # namespace boundary without making that shared file unusable.
+            DEVICEFRAMEWORK_TEST_*=*) ;;
+            *) echo "Unexpected key in $env_file; use the DEVICEFRAMEWORK_TEST_ namespace." >&2; return 1 ;;
         esac
     done < "$env_file"
     [[ -n "$wifi_ssid" && -n "$wifi_password" ]] || {
