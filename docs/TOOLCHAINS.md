@@ -125,6 +125,11 @@ DEVICEFRAMEWORK_PLATFORMIO_CORE_DIR="$df_pio_core" \
 rm -rf -- "$df_pio_core"
 ```
 
+The runners first use `pio` from `PATH`, then fall back to PlatformIO's normal
+`${HOME}/.platformio/penv/bin/pio` installation path for non-interactive shells
+such as SSH. Set `DEVICEFRAMEWORK_PIO_EXECUTABLE` only for a nonstandard local
+installation.
+
 The runner never removes a persistent cache automatically. The explicit
 temporary-directory command above is the only appropriate cleanup pattern for
 a diagnostic cache.

@@ -131,7 +131,7 @@ cleanup() {
 }
 
 need_common() {
-    need pio
+    df_pio_available
     need python3
     need_python_serial
     need curl
@@ -666,7 +666,7 @@ run_cleanup() {
         echo "Serial port not found: $serial_port" >&2
         return 1
     }
-    need pio
+    df_pio_available
     lock_board
     environment_a="$(environment_for a)"
     DEVICEFRAMEWORK_OTA_PROFILE="$project_dir/test/profiles/ota-lan-open-fixture.json" \

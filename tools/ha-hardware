@@ -192,7 +192,7 @@ host_ipv4_on() {
 
 doctor() {
     require_common
-    command -v pio >/dev/null || echo "warning: PlatformIO is unavailable; run will not be able to flash a board" >&2
+    df_pio_available || echo "warning: PlatformIO is unavailable; run will not be able to flash a board" >&2
     echo "Docker Compose: $(docker compose version --short)"
     echo "HA testkit: $testkit_path"
     if [[ -n "$arduinoha_path" ]]; then
@@ -615,7 +615,7 @@ write_compile_config() {
 
 compile_hardware_fixture() {
     [[ "$platform" == "esp8266" || "$platform" == "esp32" ]] || usage
-    command -v pio >/dev/null || { echo "PlatformIO is required for compile" >&2; return 1; }
+    df_pio_available || { echo "PlatformIO is required for compile" >&2; return 1; }
     configure_local_dependency_stack
     write_compile_config
     df_pio test -e "${platform}_ha_e2e" --filter test_ha_e2e --without-uploading --without-testing
@@ -624,7 +624,7 @@ compile_hardware_fixture() {
 run_hardware() {
     [[ "$platform" == "esp8266" || "$platform" == "esp32" ]] || usage
     [[ -n "$port" ]] || usage
-    command -v pio >/dev/null || { echo "PlatformIO is required for run" >&2; return 1; }
+    df_pio_available || { echo "PlatformIO is required for run" >&2; return 1; }
     configure_session_platformio
     local serial_log="$artifact_dir/serial.log"
     set +e
@@ -707,7 +707,7 @@ copy_esp32_boot_app0() {
 
 compile_session_hardware() {
     [[ "$platform" == "esp8266" || "$platform" == "esp32" ]] || usage
-    command -v pio >/dev/null || { echo "PlatformIO is required for compile" >&2; return 1; }
+    df_pio_available || { echo "PlatformIO is required for compile" >&2; return 1; }
     df_pio test -e "${platform}_ha_e2e" --filter test_ha_e2e --without-uploading --without-testing
     if [[ "$platform" == "esp32" ]]; then
         copy_esp32_boot_app0

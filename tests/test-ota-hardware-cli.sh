@@ -11,7 +11,19 @@ python3 -m py_compile "$project_dir/tools/capture-serial-boot.py"
 "$project_dir/tools/check-ota-partitions.sh"
 
 fixture_port="$(mktemp)"
-trap 'rm -f -- "$fixture_port"' EXIT
+helper_tmp="$(mktemp -d)"
+trap 'rm -f -- "$fixture_port"; rm -rf -- "$helper_tmp"' EXIT
+
+mkdir -p "$helper_tmp/home/.platformio/penv/bin"
+printf '%s\n' '#!/usr/bin/env bash' 'exit 0' > "$helper_tmp/home/.platformio/penv/bin/pio"
+chmod 755 "$helper_tmp/home/.platformio/penv/bin/pio"
+(
+    export HOME="$helper_tmp/home"
+    export PATH=/usr/bin:/bin
+    # shellcheck source=tools/lib/platformio.sh
+    source "$project_dir/tools/lib/platformio.sh"
+    [[ "$(df_pio_executable)" == "$HOME/.platformio/penv/bin/pio" ]]
+)
 
 if "$tool" >/dev/null 2>&1; then
     echo "ota-hardware accepted an empty command" >&2
@@ -40,6 +52,7 @@ rg -Fq 'monitor_upload_started_file' "$tool"
 rg -Fq 'DeviceFramework UDP OTA fixture image:' "$tool"
 rg -Fq 'ota-lan-open-fixture.json' "$tool"
 rg -Fq 'DEVICEFRAMEWORK_TEST_*=*' "$tool"
+rg -Fq 'DEVICEFRAMEWORK_PIO_EXECUTABLE' "$project_dir/tools/lib/platformio.sh"
 rg -Fq 'esp8266_udp_ota_deferred_b' "$project_dir/test/ota-harness/platformio.base.ini"
 rg -Fq 'board_build.ldscript = eagle.flash.4m1m.ld' "$project_dir/test/ota-harness/platformio.base.ini"
 

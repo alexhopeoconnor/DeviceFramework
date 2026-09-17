@@ -80,7 +80,7 @@ portal_connected="no"
 require_common() {
     dfui_require ip
     dfui_require nmcli
-    dfui_require pio
+    df_pio_available
     dfui_require python3
     dfui_require docker
     dfui_require curl
