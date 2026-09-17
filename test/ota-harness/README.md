@@ -78,6 +78,13 @@ For a physical test, use `tools/ota-hardware` instead. It validates mDNS in
 normal mode and invokes the selected framework's `espota.py` directly, so it
 does not depend on PlatformIO's automatic upload-protocol selection.
 
+The disposable fixture clears only its own reset-tracker record before each
+boot because serial erase does not clear ESP8266 RTC RAM. The runner then
+attaches to serial with inactive reset-control lines instead of manufacturing a
+second physical reset. This keeps an interrupted prior fixture from changing
+the A/B bootstrap result; it does not change the library's production
+rapid-reset recovery behavior.
+
 ```bash
 ./tools/ota-hardware arduino \
   --platform esp8266 --port /dev/serial/by-id/usb-... \

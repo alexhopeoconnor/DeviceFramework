@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Optionally reset one board and capture required boot markers from serial."""
+"""Safely attach to serial and optionally reset one board for boot evidence."""
 
 import argparse
 import sys
@@ -18,12 +18,36 @@ def reset(serial_port):
     serial_port.rts = False
 
 
+def open_capture_port(port):
+    """Open a monitor without PySerial's default DTR/RTS assertion.
+
+    ESP USB-UART auto-reset circuits commonly react to modem-control changes.
+    Constructing ``Serial(port, ...)`` opens immediately with both lines
+    asserted, which can manufacture a second physical reset after a serial
+    uploader has already booted the application. Set inactive states while
+    closed, then open the requested port. ``--reset`` remains available for
+    explicit diagnostics; ordinary OTA capture deliberately does not use it.
+    """
+    serial_port = serial.Serial(
+        port=None,
+        baudrate=115200,
+        timeout=0.25,
+        rtscts=False,
+        dsrdtr=False,
+    )
+    serial_port.dtr = False
+    serial_port.rts = False
+    serial_port.port = port
+    serial_port.open()
+    return serial_port
+
+
 def capture(port, output, timeout_seconds, required, should_reset):
     remaining = set(required)
     deadline = time.monotonic() + timeout_seconds
 
     with (
-        serial.Serial(port, 115200, timeout=0.25) as serial_port,
+        open_capture_port(port) as serial_port,
         open(output, "ab", buffering=0) as output_file,
     ):
         if should_reset:

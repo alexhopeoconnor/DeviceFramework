@@ -687,10 +687,13 @@ capture_a_boot() {
         --port "$serial_port"
         --output "$run_dir/serial-a.log"
         --timeout 60
-        --reset
         --require "OTA Initialized with hostname:"
         --require "DeviceFramework UDP OTA fixture image:"
     )
+    # Serial upload already finished with the one application boot that must
+    # establish A. Attach with inactive modem-control lines; a second reset
+    # here is a real DeviceFramework rapid-reset gesture and would clear the
+    # bootstrap profile rather than prove the station OTA contract.
     if [[ "$defer_mdns" == "yes" ]]; then
         args+=(--require "mDNS responder deferred for low heap:")
     else

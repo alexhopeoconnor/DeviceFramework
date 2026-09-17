@@ -195,6 +195,14 @@ mode 600). Treat the printed artifact directory as private; use a private
 `--output` location if relocating it. The source profile and temporary
 PlatformIO override are deleted on exit, while the private run directory is
 retained for failure diagnosis.
+
+The disposable OTA fixture clears only its own reset-tracker record before a
+test boot because serial erase does not clear ESP8266 RTC RAM. The runner then
+attaches to serial with DTR and RTS inactive rather than issuing another reset
+after PlatformIO has booted A. This makes an interrupted fixture unable to
+change the next fixture's bootstrap result; it does not alter DeviceFramework's
+production rapid-reset recovery behavior.
+
 For protected mode it proves anonymous HTTP is rejected, a deliberately wrong
 ArduinoOTA password is rejected, and the correct password completes. Open mode
 proves the corresponding unauthenticated HTTP and no-OTA-password path. It

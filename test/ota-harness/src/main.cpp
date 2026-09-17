@@ -1,5 +1,6 @@
 #include <Arduino.h>
 #include <DeviceFramework.h>
+#include <Storage/DeviceFrameworkRTC.h>
 
 #if !defined(DF_PORTAL_OTA_TEST) && !defined(DF_UDP_OTA_TEST)
 #error "The OTA fixture must select either the portal or UDP transport contract."
@@ -45,6 +46,10 @@ constexpr const char* kApplicationId = "deviceframework";
 constexpr uint16_t kConfigurationSchema = 1;
 constexpr const char* kImageMarker = DF_OTA_FIXTURE_IMAGE;
 constexpr const char* kFirmwareVersion = DF_OTA_FIXTURE_VERSION;
+
+#ifdef DF_UDP_OTA_TEST
+constexpr unsigned long kSerialMonitorAttachDelayMs = 5000UL;
+#endif
 
 #ifdef DF_PORTAL_OTA_TEST
 constexpr bool kExpectedPortalProtected = DF_PORTAL_OTA_EXPECT_PROTECTED != 0;
@@ -140,6 +145,24 @@ void setup() {
     // serial logger; otherwise the library's intentionally conservative
     // 9600-baud default is decoded as noise by the host-side contract.
     setConfigSerialBaudRate(115200);
+
+#ifdef DF_UDP_OTA_TEST
+    // PlatformIO finishes the serial upload by resetting the application. The
+    // hardware runner attaches without pulsing reset lines, and this fixture
+    // leaves a test-only grace window so that attach happens before framework
+    // boot logging begins. This is the same monitor-attachment concern as the
+    // physical Unity fixture, not a product startup delay.
+    Serial.begin(115200);
+    markSerialAsInitialized();
+    delay(kSerialMonitorAttachDelayMs);
+#endif
+
+    // A serial erase intentionally clears flash but cannot clear ESP8266 RTC
+    // RAM (and an interrupted prior fixture can leave the ESP32 tracker too).
+    // Reset-recovery itself is covered independently; this disposable A/B
+    // fixture starts each boot with only its test reset-tracker record clean so
+    // a previous hardware run cannot alter provisioning or OTA coverage.
+    DeviceFrameworkRTC::clear();
 
     configureFixtureUi();
     DeviceFramework::configureApplication(

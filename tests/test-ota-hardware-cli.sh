@@ -8,6 +8,7 @@ cd "$project_dir"
 bash -n "$tool" "$project_dir/tools/check-ota-partitions.sh" \
     "$project_dir/tools/lib/platformio.sh"
 python3 -m py_compile "$project_dir/tools/capture-serial-boot.py"
+python3 "$project_dir/tests/test-capture-serial-boot.py"
 "$project_dir/tools/check-ota-partitions.sh"
 
 fixture_port="$(mktemp)"
@@ -57,6 +58,8 @@ rg -Fq 'DEVICEFRAMEWORK_PIO_EXECUTABLE' "$project_dir/tools/lib/platformio.sh"
 rg -Fq 'esp8266_udp_ota_deferred_b' "$project_dir/test/ota-harness/platformio.base.ini"
 rg -Fq 'board_build.ldscript = eagle.flash.4m1m.ld' "$project_dir/test/ota-harness/platformio.base.ini"
 rg -Fq 'setConfigSerialBaudRate(115200)' "$project_dir/test/ota-harness/src/main.cpp"
+rg -Fq 'DeviceFrameworkRTC::clear();' "$project_dir/test/ota-harness/src/main.cpp"
+rg -Fq 'kSerialMonitorAttachDelayMs' "$project_dir/test/ota-harness/src/main.cpp"
 rg -Fq -- '--df-accent:#2477c9' "$project_dir/scripts/test.sh"
 rg -Fq 'esp8266_default_hardware' "$project_dir/test/compile-project/platformio.base.ini"
 rg -Fq 'esp32_default_hardware' "$project_dir/test/compile-project/platformio.base.ini"
@@ -67,6 +70,10 @@ rg -Fq 'HA E2E owns the Unity image' "$project_dir/scripts/test.sh"
 rg -Fq 'expected transient lookup failure' "$project_dir/scripts/test.sh"
 rg -Fq '`set -e -o pipefail`' "$tool"
 rg -Fq "awk 'NR == 1 {print \$2; exit}' || true" "$tool"
+if sed -n '/^capture_a_boot()/,/^}/p' "$tool" | rg -Fq -- '--reset'; then
+    echo "Normal ArduinoOTA boot capture must not manufacture a second reset" >&2
+    exit 1
+fi
 
 python3 - <<'PY'
 import json
