@@ -42,29 +42,31 @@ needs the same shape of configuration and a complete build against that stack.
 
 ## Cache guidance
 
-The maintained DeviceFramework runners use one persistent Core, package, and
-download cache by default:
+The maintained framework repositories share one persistent Core, package, and
+download cache by default. WiFiManager, DeviceFramework, DFTE, and ArduinoHA
+all pin this exact stack, so a shared cache avoids downloading the same
+multi-gigabyte inputs once per repository:
 
 ```text
-${XDG_CACHE_HOME:-$HOME/.cache}/deviceframework-platformio/current
+${XDG_CACHE_HOME:-$HOME/.cache}/arduino-framework-platformio/core-3.3.11
 ```
 
 `scripts/test.sh`, `scripts/test-nonhardware.sh`, and the physical test
 harnesses reuse this cache. They never clear it, uninstall packages, or force
 PlatformIO to redownload dependencies for each fixture build.
 
-This isolation avoids stale metadata in an unrelated global PlatformIO install,
-including old flat `tool-esptoolpy` metadata that can shadow pioarduino's
-package-form uploader. It is not a reason to add a standalone compiler override
-or copy packages between framework versions.
+This maintained-cache isolation avoids stale metadata in an unrelated global
+PlatformIO install, including old flat `tool-esptoolpy` metadata that can shadow
+pioarduino's package-form uploader. It is not a reason to add a standalone
+compiler override or copy packages between framework versions.
 
 If a specific package is suspected to be damaged, reproduce the problem first
 with a disposable Core/cache. Only after confirming the exact package is bad
 should it be repaired in that dedicated cache. Never clear the global cache as
 a test step.
 
-Set `DEVICEFRAMEWORK_PLATFORMIO_CORE_DIR` to move the persistent graph; package
-and download directories then default beneath it. Advanced callers may set
+Set `DEVICEFRAMEWORK_PLATFORMIO_CORE_DIR` to use a different persistent graph;
+package and download directories then default beneath it. Advanced callers may set
 `DEVICEFRAMEWORK_PLATFORMIO_PACKAGES_DIR` and
 `DEVICEFRAMEWORK_PLATFORMIO_CACHE_DIR` explicitly. The runners use `pio` from
 `PATH`, then `${HOME}/.platformio/penv/bin/pio` for non-interactive shells such

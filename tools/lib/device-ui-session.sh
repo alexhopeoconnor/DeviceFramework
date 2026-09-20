@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# shellcheck source=tools/lib/harness-locks.sh
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/harness-locks.sh"
 # Shared host-side helpers for DeviceFramework's real-board visual test harness.
 # Only the explicit secondary adapter may be reconfigured for portal testing.
 
@@ -120,14 +122,9 @@ dfui_default_route_interface() {
 }
 
 dfui_acquire_hardware_lock() {
-    # Share the lock used by the WiFiManager hardware runner: both tools can
-    # address the same serial board and secondary Wi-Fi adapter on one host.
-    local lock_file="${DEVICEFRAMEWORK_HARDWARE_LOCK_FILE:-${TMPDIR:-/tmp}/deviceframework-hardware-test.lock}"
-    exec 9>"$lock_file"
-    if ! flock -n 9; then
-        echo "Another DeviceFramework hardware task is active; waiting for its board/build lock." >&2
-        flock 9
-    fi
+    # All ordinary ESP portals use this gateway/subnet. Keep portal commands
+    # mutually exclusive even when they name different boards or adapters.
+    df_harness_lock_portal_network
 }
 
 dfui_require_client_adapter() {
@@ -149,6 +146,7 @@ dfui_require_client_adapter() {
         echo "Client adapter is not Wi-Fi: $interface (${device_type:-unknown})." >&2
         return 1
     }
+    df_harness_lock_wifi_adapter "$interface"
     if ! active_connection="$(dfui_nmcli -g GENERAL.CONNECTION device show "$interface" 2>/dev/null)"; then
         echo "NetworkManager could not inspect the selected portal adapter: $interface" >&2
         return 1

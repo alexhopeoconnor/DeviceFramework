@@ -2,14 +2,16 @@
 # Shared PlatformIO invocation for DeviceFramework's maintained test targets.
 #
 # DeviceFramework has one maintained package graph: ESP8266 uses the pinned
-# framework snapshot and ESP32 uses pioarduino 55.03.311.  Keep that graph in
-# a dedicated Core, package, and cache root so an unrelated legacy project
-# cannot inject stale package metadata or a flat esptool module into these
-# test runs.  Callers may redirect all three locations for a disposable
-# diagnosis or a CI workspace; this helper never removes a caller's cache.
+# framework snapshot and ESP32 uses pioarduino 55.03.311. Keep that graph in
+# the shared maintained-framework Core, package, and cache root: WiFiManager,
+# DFTE, ArduinoHA, and DeviceFramework deliberately use the same pins, so
+# separate repository caches would redownload identical multi-gigabyte inputs.
+# It remains separate from an unrelated legacy/global PlatformIO installation.
+# Callers may redirect all three locations for a disposable diagnosis or CI
+# workspace; this helper never removes a caller's cache.
 
 df_pio_core_dir() {
-    printf '%s\n' "${DEVICEFRAMEWORK_PLATFORMIO_CORE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/deviceframework-platformio/current}"
+    printf '%s\n' "${DEVICEFRAMEWORK_PLATFORMIO_CORE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/arduino-framework-platformio/core-3.3.11}"
 }
 
 df_pio_packages_dir() {

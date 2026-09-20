@@ -5,6 +5,13 @@ project_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$project_dir"
 # shellcheck source=tools/lib/platformio.sh
 source "$project_dir/tools/lib/platformio.sh"
+# shellcheck source=tools/lib/harness-locks.sh
+source "$project_dir/tools/lib/harness-locks.sh"
+
+# A direct check should be as civil to a workstation as the aggregate runner.
+# Developers can opt into a larger compile budget for a deliberate diagnosis.
+export PLATFORMIO_RUN_JOBS="${PLATFORMIO_RUN_JOBS:-2}"
+
 usage() {
     cat <<'EOF'
 Usage:
@@ -74,7 +81,7 @@ fi
 # Test modes share PlatformIO's package manager and build output; hardware also
 # shares a generated credential header. Serialize them in this checkout so
 # package updates and temporary configuration cannot race an active test.
-hardware_lock_file="${TMPDIR:-/tmp}/deviceframework-hardware-test.lock"
+hardware_lock_file="${TMPDIR:-/tmp}/deviceframework-test-script.lock"
 exec {hardware_lock_fd}>"$hardware_lock_file"
 if ! flock -n "$hardware_lock_fd"; then
     echo "Another DeviceFramework test is active; waiting for its PlatformIO build state. Press Ctrl-C to cancel safely." >&2
@@ -126,6 +133,7 @@ fi
 # file owner-only even when the developer's normal umask is permissive.
 if [[ "$mode" == "hardware" ]]; then
     umask 077
+    df_harness_lock_serial_port "$port"
 fi
 set -a
 # shellcheck disable=SC1090
@@ -391,15 +399,20 @@ verify_web_interface() {
         echo "getent is required because the normal hardware suite verifies the system mDNS resolver." >&2
         return 1
     }
+    command -v timeout >/dev/null || {
+        echo "timeout is required so mDNS lookups cannot outlive the hardware test-harness deadline." >&2
+        return 1
+    }
     local mdns_name="$default_host"
-    local attempt avahi_ip system_ip
+    local deadline avahi_ip system_ip
     device_host=""
-    for attempt in {1..45}; do
+    deadline=$((SECONDS + 45))
+    while (( SECONDS < deadline )); do
         # A hostname is normally absent for the first few boots.  With
         # `pipefail`, make that expected transient lookup failure explicit so
         # the polling loop, rather than errexit, decides whether it timed out.
-        avahi_ip="$(avahi-resolve -4 -n "$mdns_name" 2>/dev/null | awk 'NR == 1 { print $2; exit }' || true)"
-        system_ip="$(getent ahostsv4 "$mdns_name" 2>/dev/null | awk 'NR == 1 { print $1; exit }' || true)"
+        avahi_ip="$(timeout 2 avahi-resolve -4 -n "$mdns_name" 2>/dev/null | awk 'NR == 1 { print $2; exit }' || true)"
+        system_ip="$(timeout 2 getent ahostsv4 "$mdns_name" 2>/dev/null | awk 'NR == 1 { print $1; exit }' || true)"
         if [[ -n "$avahi_ip" && "$avahi_ip" == "$system_ip" ]]; then
             # Keep the hostname in the actual HTTP URL. Resolution and
             # transport are both part of this normal mDNS test harness.

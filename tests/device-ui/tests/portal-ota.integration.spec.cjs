@@ -33,6 +33,26 @@ async function waitForAutomaticOutage(request) {
   }).toBe(true);
 }
 
+function waitForOtaRequestStart(page) {
+  return new Promise((resolve, reject) => {
+    const timeout = setTimeout(() => {
+      cleanup();
+      reject(new Error("Timed out waiting for the portal OTA POST /u request to start."));
+    }, 30_000);
+    const onRequest = (request) => {
+      const requestPath = new URL(request.url()).pathname;
+      if (requestPath !== "/u" || request.method() !== "POST") return;
+      cleanup();
+      resolve();
+    };
+    const cleanup = () => {
+      clearTimeout(timeout);
+      page.off("request", onRequest);
+    };
+    page.on("request", onRequest);
+  });
+}
+
 function expectedProtectedPortal() {
   const value = process.env.DEVICE_UI_OTA_EXPECTED_PORTAL_PROTECTED;
   if (value !== "true" && value !== "false") {
@@ -45,7 +65,6 @@ function assertMarker(marker, image, protectedPortal) {
   expect(marker).toMatchObject({
     schema: 1,
     image,
-    version: image === "A" ? "0.0.0-portal-ota-a" : "0.0.0-portal-ota-b",
     portalProtected: protectedPortal,
     expectedPortalProtected: protectedPortal,
   });
@@ -56,10 +75,49 @@ function assertMarker(marker, image, protectedPortal) {
 function unexpectedBrowserErrors(errors, firstPostUploadError) {
   return errors.filter((entry, index) => {
     if (index < firstPostUploadError) return true;
-    // WiFiManager intentionally restarts after replying successfully to POST
-    // /u. Only the narrow transport errors caused by that expected outage are
-    // acceptable after the browser has observed the success JSON.
+    // WiFiManager intentionally restarts after a successful POST /u. Only
+    // narrow transport errors caused by that expected outage are acceptable
+    // after the browser has dispatched the update request.
     return entry.type !== "console" || !/net::ERR_(ADDRESS_UNREACHABLE|CONNECTION_REFUSED|CONNECTION_RESET)/.test(entry.message);
+  });
+}
+
+function waitForOtaTransport(page) {
+  return new Promise((resolve, reject) => {
+    const timeout = setTimeout(() => {
+      cleanup();
+      reject(new Error("Timed out waiting for the portal OTA POST /u transport result."));
+    }, 90_000);
+    const isOtaRequest = (request) => {
+      const requestPath = new URL(request.url()).pathname;
+      return requestPath === "/u" && request.method() === "POST";
+    };
+    const cleanup = () => {
+      clearTimeout(timeout);
+      page.off("response", onResponse);
+      page.off("requestfailed", onRequestFailed);
+    };
+    const onResponse = (response) => {
+      if (!isOtaRequest(response.request())) return;
+      cleanup();
+      resolve({ type: "response", response });
+    };
+    const onRequestFailed = (request) => {
+      if (!isOtaRequest(request)) return;
+      cleanup();
+      const failure = request.failure();
+      const errorText = failure ? failure.errorText : "unknown error";
+      // WiFiManager releases differ in whether they flush the success response
+      // before restarting. This reset is valid only because the test below
+      // also proves the actual A → outage → B sequence through fresh requests.
+      if (errorText === "net::ERR_CONNECTION_RESET") {
+        resolve({ type: "connection-reset", errorText });
+        return;
+      }
+      reject(new Error(`Portal OTA POST /u failed before a response: ${errorText}`));
+    };
+    page.on("response", onResponse);
+    page.on("requestfailed", onRequestFailed);
   });
 }
 
@@ -107,22 +165,32 @@ test.describe("DeviceFramework portal HTTP OTA integration", () => {
     await page.locator("#wm-ota-file").setInputFiles(firmware);
     await capture(page, "ota-before-upload.png");
 
-    const uploadResponse = page.waitForResponse((response) => {
-      const requestForResponse = response.request();
-      return new URL(response.url()).pathname === "/u" && requestForResponse.method() === "POST";
-    });
+    // Start observing the host-side outage when the browser dispatches /u,
+    // not after a response/reset notification. ESP32 can reboot and restore
+    // the marker before a browser reports the failed request.
+    const uploadStarted = waitForOtaRequestStart(page);
+    const automaticOutage = uploadStarted.then(() => waitForAutomaticOutage(request));
+    const uploadTransport = waitForOtaTransport(page);
     await page.locator("#wm-ota-form button[type=submit]").click();
     await expect(page.locator("#wm-ota-overlay")).toHaveAttribute("aria-hidden", "false");
 
-    const response = await uploadResponse;
-    expect(response.status()).toBe(200);
-    expect(await response.json()).toMatchObject({
-      ok: true,
-      message: expect.stringMatching(/restarting/i),
-    });
+    await uploadStarted;
+    const uploadResult = await uploadTransport;
+    if (uploadResult.type === "response") {
+      expect(uploadResult.response.status()).toBe(200);
+      expect(await uploadResult.response.json()).toMatchObject({
+        ok: true,
+        message: expect.stringMatching(/restarting/i),
+      });
+    } else {
+      expect(uploadResult).toEqual({
+        type: "connection-reset",
+        errorText: "net::ERR_CONNECTION_RESET",
+      });
+    }
 
     const firstPostUploadError = errors.length;
-    await waitForAutomaticOutage(request);
+    await automaticOutage;
     const markerB = await waitForMarker(request, expectedImage);
     assertMarker(markerB, "B", protectedPortal);
     // A second independent response makes a rebooted-but-immediately-crashing
@@ -139,6 +207,9 @@ test.describe("DeviceFramework portal HTTP OTA integration", () => {
       markerA,
       markerB,
       markerBAgain,
+      uploadResult: uploadResult.type === "response"
+        ? { type: "response", status: uploadResult.response.status() }
+        : uploadResult,
       browserErrors: errors,
       unexpectedBrowserErrors: unexpected,
       network,

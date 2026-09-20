@@ -23,9 +23,10 @@ firmware, so no board or credentials are needed:
 
 The `--profile-fixture` command compiles bootstrap, no-Wi-Fi, and reconcile-profile consumers. The physical profile run additionally proves the reconcile image changes its explicit device value while retaining the broker setting persisted by the preceding firmware; the fixture test also proves profile-ID and revision changes independently.
 
-The runner keeps its PlatformIO Core, packages, and download cache in a
-dedicated persistent DeviceFramework location. Normal checks reuse that cache;
-they never remove dependencies or force a fresh download.
+The runner reuses the persistent cache shared by the maintained framework
+repositories. Normal checks never remove dependencies or force a fresh
+download; the shared cache is safe because every maintained ESP32 lane pins the
+same pioarduino 55.03.311 / Arduino-ESP32 3.3.11 graph.
 CI runs these normal and profile-fixture checks for every push and pull request, and the tag workflow repeats them before it creates a GitHub Release.
 
 The normal ESP8266 command also checks the web-interface-free configuration.
@@ -107,30 +108,27 @@ session it may validate sudo before flashing so only scoped NetworkManager
 actions on that adapter are elevated; do not put sudo data in `test/.env` or
 run the complete browser runner as root.
 
-## Work against sibling checkouts
+## Test local DeviceFramework changes
 
 The consumer compile fixture is intentionally a separate PlatformIO project.
-When a coordinated change has not been released yet, copy its ignored local
-selector to build the direct first-party sources from sibling checkouts:
+Copy its ignored local selector when testing the checked-out DeviceFramework
+source with the public dependency versions declared by `library.json`:
 
 ```bash
 cp test/compile-project/platformio.local.example.ini test/compile-project/platformio.local.ini.<machine>
 ```
 
-Released builds use public Git tags. For coordinated local library development,
-copy [`platformio.local.example.ini`](../platformio.local.example.ini) to a file
-such as `platformio.local.ini.alex`, update its explicit relative `symlink://`
-paths, and leave that file untracked. The selector gives local sources their own
-persistent `.pio/sibling-worktree` build and dependency directories; switching
-between it and the released graph therefore never reuses a stale archive. It
-does not clear PlatformIO's shared cache. PlatformIO can still read a declared
-release manifest to obtain transitive requirements, so use the repository-owned
-checks for a changed dependency and use this selector only for deliberate
-cross-repository integration. Do not use `lib_extra_dirs` or point `lib_dir` at
-a broad sibling-worktree parent: either can combine current headers with a
-released archive or discover nested test/build directories as project inputs.
-`platformio.ini` loads matching `platformio.local.ini.*` files when present, so
-no tracked configuration or application dependency needs to change.
+The selector gives that source its own persistent `.pio/local-source` build
+directory and does not clear PlatformIO's shared cache. It deliberately leaves
+WiFiManager, DFTE, and ArduinoHA at the exact released versions declared by
+DeviceFramework. Validate an unpublished dependency in its owning repository's
+harness; after that dependency is released and adopted here, rerun this
+consumer fixture. Do not use `lib_extra_dirs`, a broad sibling-worktree
+directory, or local overrides for tagged transitive dependencies: those can
+combine current headers with a released archive or discover nested test/build
+directories as project inputs. `platformio.ini` loads matching
+`platformio.local.ini.*` files when present, so no tracked configuration or
+application dependency needs to change.
 
 ## Publish a release
 

@@ -6,6 +6,11 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 # shellcheck source=tools/lib/platformio.sh
 source "$PROJECT_DIR/tools/lib/platformio.sh"
+
+# Docker/network work and a board are already scarce resources. Do not let the
+# compile portion consume every host core unless the developer opts in.
+export PLATFORMIO_RUN_JOBS="${PLATFORMIO_RUN_JOBS:-2}"
+
 HARNESS_DIR="$PROJECT_DIR/tests/ha-hardware"
 NETWORK_HELPER="$SCRIPT_DIR/ha-hardware-network"
 DEFAULT_AHA_DIR="$PROJECT_DIR/../arduino-home-assistant"
@@ -242,10 +247,13 @@ acquire_compile_lock() {
         echo "flock is required to safely serialize hardware test configuration" >&2
         exit 1
     }
-    local lock_file="${TMPDIR:-/tmp}/deviceframework-hardware-test.lock"
+    # HA compile still writes one generated configuration header in this
+    # checkout, so it needs its own narrow compile lock. It does not claim a
+    # board, portal adapter, or ArduinoOTA callback resource.
+    local lock_file="${TMPDIR:-/tmp}/deviceframework-ha-compile.lock"
     exec {compile_lock_fd}>"$lock_file"
     if ! flock -n "$compile_lock_fd"; then
-        echo "Another DeviceFramework hardware test or HA compile is active; waiting for it to finish. Press Ctrl-C to cancel safely." >&2
+        echo "Another DeviceFramework HA compile is active; waiting for it to finish. Press Ctrl-C to cancel safely." >&2
         flock "$compile_lock_fd"
     fi
 }

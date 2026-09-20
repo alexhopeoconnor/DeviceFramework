@@ -1,5 +1,17 @@
 # Changelog
 
+## 2.8.4
+
+- Pin WiFiManager 3.2.5, which completes portal HTTP firmware responses before
+  restarting and makes ESP8266 portal writes safe in ESPAsyncWebServer's SYS
+  callback.
+- Keep DeviceFramework's mDNS responder explicitly deferred while heap
+  headroom is insufficient, with one useful diagnostic instead of repeated
+  noise. ESP8266 UDP OTA remains available by IP while hostname resolution is
+  intentionally deferred.
+- Document the maintained ESP8266/ESP32 PlatformIO baseline, OTA partition
+  layout, and reproducible board-free and real-hardware test-harness commands.
+
 ## 2.8.3
 
 - Pin WiFiManager 3.2.4 so profile-backed provisioning through the framework

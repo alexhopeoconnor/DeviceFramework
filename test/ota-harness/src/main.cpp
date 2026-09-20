@@ -1,6 +1,7 @@
 #include <Arduino.h>
 #include <DeviceFramework.h>
 #include <Storage/DeviceFrameworkRTC.h>
+#include <ota_fixture_identity.h>
 
 #if !defined(DF_PORTAL_OTA_TEST) && !defined(DF_UDP_OTA_TEST)
 #error "The OTA fixture must select either the portal or UDP test-harness transport."
@@ -11,33 +12,13 @@
 #endif
 
 #if defined(DF_PORTAL_OTA_TEST)
-    #ifndef DF_PORTAL_OTA_IMAGE
-        #error "The OTA portal fixture needs an immutable A or B image marker."
-    #endif
-
-    #ifndef DF_PORTAL_OTA_VERSION
-        #error "The OTA portal fixture needs an immutable firmware version marker."
-    #endif
-
-    #ifndef DF_PORTAL_OTA_EXPECT_PROTECTED
+    #ifndef DF_OTA_FIXTURE_PORTAL_EXPECT_PROTECTED
         #error "The OTA portal fixture needs an explicit protected/open expectation."
     #endif
-
-    #define DF_OTA_FIXTURE_IMAGE DF_PORTAL_OTA_IMAGE
-    #define DF_OTA_FIXTURE_VERSION DF_PORTAL_OTA_VERSION
 #endif
 
-#if defined(DF_UDP_OTA_TEST)
-    #ifndef DF_OTA_TEST_IMAGE
-        #error "The UDP OTA fixture needs an immutable A or B image marker."
-    #endif
-
-    #ifndef DF_OTA_TEST_VERSION
-        #error "The UDP OTA fixture needs an immutable firmware version marker."
-    #endif
-
-    #define DF_OTA_FIXTURE_IMAGE DF_OTA_TEST_IMAGE
-    #define DF_OTA_FIXTURE_VERSION DF_OTA_TEST_VERSION
+#if !defined(DF_OTA_FIXTURE_IMAGE) || !defined(DF_OTA_FIXTURE_VERSION)
+    #error "The OTA fixture needs a generated immutable A or B identity."
 #endif
 
 namespace {
@@ -52,7 +33,7 @@ constexpr unsigned long kSerialMonitorAttachDelayMs = 5000UL;
 #endif
 
 #ifdef DF_PORTAL_OTA_TEST
-constexpr bool kExpectedPortalProtected = DF_PORTAL_OTA_EXPECT_PROTECTED != 0;
+constexpr bool kExpectedPortalProtected = DF_OTA_FIXTURE_PORTAL_EXPECT_PROTECTED != 0;
 
 DeviceFrameworkText text(const char* value) {
     return DeviceFrameworkText::ram(value);
@@ -104,13 +85,6 @@ void registerPortalTestRoute() {
             });
     });
 
-    // This fixture-owned marker is stable evidence that the real portal
-    // updater accepted the browser submission. Completion is then proved by
-    // the HTTP success response and the B-image marker after the automatic
-    // reboot; do not depend on WiFiManager's optional debug logging.
-    DeviceFramework::getWiFiManager().setPreOtaUpdateCallback([]() {
-        Serial.println(F("DeviceFramework portal OTA upload started."));
-    });
 }
 
 void configureFixtureUi() {
@@ -165,11 +139,10 @@ void setup() {
     delay(kSerialMonitorAttachDelayMs);
 #endif
 
-    // A serial erase intentionally clears flash but cannot clear ESP8266 RTC
-    // RAM (and an interrupted prior fixture can leave the ESP32 tracker too).
-    // Reset-recovery itself is covered independently; this disposable A/B
-    // fixture starts each boot with only its test reset-tracker record clean so
-    // a previous hardware run cannot alter provisioning or OTA coverage.
+    // A serial erase cannot clear ESP8266 RTC RAM (and an interrupted prior
+    // fixture can leave the ESP32 tracker too). Reset recovery itself is
+    // covered independently, so this disposable fixture keeps that test state
+    // from changing provisioning or OTA coverage.
     DeviceFrameworkRTC::clear();
 
     configureFixtureUi();
@@ -188,6 +161,10 @@ void setup() {
 #endif
 
     DeviceFramework::beforeSetup();
+    // The physical runners explicitly erase the named board before flashing A.
+    // Do not rewrite transactional storage here: `beforeSetup()` has already
+    // initialised it, and a late fixture reset can disrupt the ESP8266 portal
+    // DHCP path. RTC is the only test state that serial erase cannot remove.
     DeviceFramework::setup();
 
 #ifdef DF_UDP_OTA_TEST

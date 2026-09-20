@@ -7,6 +7,14 @@ project_dir="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$project_dir"
 # shellcheck source=tools/lib/platformio.sh
 source "$project_dir/tools/lib/platformio.sh"
+# shellcheck source=tools/lib/ota-fixture-identity.sh
+source "$project_dir/tools/lib/ota-fixture-identity.sh"
+# shellcheck source=tools/lib/harness-locks.sh
+source "$project_dir/tools/lib/harness-locks.sh"
+
+# Keep the physical runner responsive while its serial/adapter ownership is
+# exclusive. Developers may opt in to more parallel build jobs explicitly.
+export PLATFORMIO_RUN_JOBS="${PLATFORMIO_RUN_JOBS:-2}"
 
 usage() {
     cat <<'EOF' >&2
@@ -133,16 +141,12 @@ validate_cleanup_args() {
 }
 
 lock_board() {
-    exec 9>"${DEVICEFRAMEWORK_HARDWARE_LOCK_FILE:-${TMPDIR:-/tmp}/deviceframework-hardware-test.lock}"
-    if ! flock -n 9; then
-        echo "Another DeviceFramework hardware task is active; waiting for its board/build lock." >&2
-        flock 9
-    fi
+    df_harness_lock_serial_port "$serial_port"
 }
 
 profile_file=""
-profile_build_override_file=""
 profile_build_dir=""
+profile_private_dir=""
 run_dir=""
 monitor_pid=""
 serial_capture_pid=""
@@ -154,27 +158,11 @@ device_password=""
 device_name=""
 device_hostname=""
 run_token=""
-environment_a=""
-environment_b=""
+environment=""
 firmware_a=""
 firmware_b=""
 firmware_a_artifact=""
 firmware_b_artifact=""
-
-reject_stale_private_profile_build_selector() {
-    local selector
-    # This selector is discovered through extra_configs. A hard termination
-    # can leave it behind and redirect a later OTA fixture build to a stale or
-    # no-longer-private directory. Require a deliberate, exact cleanup rather
-    # than deleting a file that might still belong to an active shell.
-    for selector in "$project_dir"/test/ota-harness/platformio.local.ini.ota-hardware.*; do
-        [[ -e "$selector" ]] || continue
-        printf 'A stale harness-owned PlatformIO selector was found: %s\n' "$selector" >&2
-        printf 'After confirming no DeviceFramework hardware runner is active, remove only it with: rm -f -- %q\n' \
-            "$selector" >&2
-        return 1
-    done
-}
 
 cleanup() {
     local status="${1:-0}"
@@ -183,8 +171,8 @@ cleanup() {
     [[ -z "$monitor_pid" ]] || wait "$monitor_pid" >/dev/null 2>&1 || true
     [[ -z "$serial_capture_pid" ]] || kill "$serial_capture_pid" >/dev/null 2>&1 || true
     [[ -z "$serial_capture_pid" ]] || wait "$serial_capture_pid" >/dev/null 2>&1 || true
-    [[ -z "$profile_file" ]] || rm -f -- "$profile_file"
-    [[ -z "$profile_build_override_file" ]] || rm -f -- "$profile_build_override_file"
+    df_remove_ota_fixture_identity
+    [[ -z "$profile_file" ]] || rm -f -- "$profile_file" "${profile_file}.tmp"
     exit "$status"
 }
 
@@ -279,13 +267,19 @@ set_identity() {
 }
 
 write_profile() {
-    local ssid_json wifi_json name_json device_json
+    local ssid_json wifi_json name_json device_json profile_temporary
     ssid_json="$(printf '%s' "$wifi_ssid" | json_escape)"
     wifi_json="$(printf '%s' "$wifi_password" | json_escape)"
     name_json="$(printf '%s' "$device_name" | json_escape)"
     device_json="$(printf '%s' "$device_password" | json_escape)"
-    profile_file="$(mktemp -p /tmp deviceframework-ota-profile.XXXXXX)"
-    chmod 600 "$profile_file"
+    # PlatformIO includes `custom_device_profile` in its environment
+    # fingerprint.  A per-run mktemp path therefore invalidates every object,
+    # even though only DeviceFrameworkProvisioning.cpp includes this header.
+    # PlatformIO clears its configured build root before it executes the
+    # profile hook, so keep the stable pathname in a sibling private
+    # directory. The content remains per-run and cleanup removes it on exit.
+    profile_file="$profile_private_dir/deviceframework-ota-profile.json"
+    profile_temporary="${profile_file}.tmp"
     {
         printf '%s\n' '{'
         printf '%s\n' '  "format": 2,'
@@ -297,35 +291,46 @@ write_profile() {
         printf '%s\n' '  ] },'
         printf '  "parameters": { "device": %s }\n' "$name_json"
         printf '%s\n' '}'
-    } > "$profile_file"
+    } > "$profile_temporary"
+    chmod 600 "$profile_temporary"
+    mv -f -- "$profile_temporary" "$profile_file"
 }
 
 prepare_private_profile_build() {
-    # profile.py deliberately compiles the station credentials into a generated
-    # header. Keep that header, object files, and the original firmware images
-    # below this mode-0700 run directory instead of an ordinary project .pio
-    # tree that may have been created with a permissive user umask.
-    profile_build_dir="$run_dir/platformio-build"
+    local build_key
+    build_key="$platform"
+
+    # profile.py deliberately compiles station credentials into a generated
+    # header. Keep that header and its object cache in one ignored, mode-0700
+    # directory for this checkout and test mode. A new run still gets its own
+    # mode-0700 evidence directory, but need not rebuild every unchanged
+    # framework object or download packages again.
+    profile_build_dir="$project_dir/.pio/ota-hardware/$build_key"
+    profile_private_dir="$project_dir/.pio/ota-hardware-profiles/$build_key"
     install -d -m 700 "$profile_build_dir"
-    profile_build_override_file="$(mktemp "$project_dir/test/ota-harness/platformio.local.ini.ota-hardware.XXXXXX")"
-    chmod 600 "$profile_build_override_file"
-    printf '[platformio]\nbuild_dir = %s\n' "$profile_build_dir" > "$profile_build_override_file"
+    install -d -m 700 "$profile_private_dir"
 }
 
-remove_private_profile_build_override() {
-    [[ -z "$profile_build_override_file" ]] || rm -f -- "$profile_build_override_file"
-    profile_build_override_file=""
-}
-
-pio_with_profile() {
-    DEVICEFRAMEWORK_OTA_PROFILE="$profile_file" df_pio "$@"
+pio_with_fixture() {
+    local image="$1" transport="$2" fixture_image fixture_version
+    shift 2
+    case "$image" in
+        a) fixture_image=A; fixture_version="0.0.0-${transport}-ota-a" ;;
+        b) fixture_image=B; fixture_version="0.0.0-${transport}-ota-b" ;;
+        *) echo "Unknown ArduinoOTA fixture identity: $image" >&2; return 2 ;;
+    esac
+    df_write_ota_fixture_identity "$fixture_image" "$fixture_version"
+    # PlatformIO's native override takes precedence over a developer's
+    # optional local-source selector without creating another project config.
+    DEVICEFRAMEWORK_OTA_PROFILE="$profile_file" \
+        PLATFORMIO_BUILD_DIR="$profile_build_dir" df_pio "$@"
 }
 
 environment_for() {
     if [[ "$defer_mdns" == "yes" ]]; then
-        printf '%s_udp_ota_deferred_%s\n' "$platform" "$1"
+        printf '%s_udp_ota_deferred\n' "$platform"
     else
-        printf '%s_udp_ota_%s\n' "$platform" "$1"
+        printf '%s_udp_ota\n' "$platform"
     fi
 }
 
@@ -339,25 +344,30 @@ wait_for_serial() {
     return 1
 }
 
-build_images() {
-    environment_a="$(environment_for a)"
-    environment_b="$(environment_for b)"
-    pio_with_profile run -d test/ota-harness -e "$environment_a"
-    pio_with_profile run -d test/ota-harness -e "$environment_b"
-    firmware_a="$profile_build_dir/$environment_a/firmware.bin"
-    firmware_b="$profile_build_dir/$environment_b/firmware.bin"
-    [[ -s "$firmware_a" && -s "$firmware_b" ]] || {
-        echo "OTA fixture build did not produce A and B." >&2
+build_image() {
+    local image="$1" source artifact
+    environment="$(environment_for)"
+    df_lock_ota_fixture_environment "$environment"
+    pio_with_fixture "$image" udp run -d test/ota-harness -e "$environment"
+    source="$profile_build_dir/$environment/firmware.bin"
+    [[ -s "$source" ]] || {
+        echo "OTA fixture build did not produce image ${image^^}." >&2
         return 1
     }
-    cmp -s "$firmware_a" "$firmware_b" && {
-        echo "OTA fixture A and B are identical." >&2
-        return 1
-    }
-    firmware_a_artifact="$run_dir/$platform-udp-ota-a.bin"
-    firmware_b_artifact="$run_dir/$platform-udp-ota-b.bin"
-    install -m 600 "$firmware_a" "$firmware_a_artifact"
-    install -m 600 "$firmware_b" "$firmware_b_artifact"
+    case "$image" in
+        a)
+            artifact="$run_dir/$platform-udp-ota-a.bin"
+            firmware_a="$source"
+            firmware_a_artifact="$artifact"
+            ;;
+        b)
+            artifact="$run_dir/$platform-udp-ota-b.bin"
+            firmware_b="$source"
+            firmware_b_artifact="$artifact"
+            ;;
+        *) return 2 ;;
+    esac
+    install -m 600 "$source" "$artifact"
 }
 
 esp32_slot_size() {
@@ -389,17 +399,16 @@ assert_fits() {
 }
 
 flash_a() {
-    cmp -s "$firmware_a" "$firmware_a_artifact" || {
-        echo "The PlatformIO A build changed after its immutable artifact was captured." >&2
-        return 1
-    }
-    pio_with_profile run -d test/ota-harness -e "$environment_a" -t erase --upload-port "$serial_port"
+    pio_with_fixture a udp run -d test/ota-harness -e "$environment" -t erase --upload-port "$serial_port"
     wait_for_serial
+    pio_with_fixture a udp run -d test/ota-harness -e "$environment" -t upload --upload-port "$serial_port"
+    # A is rebuilt immediately before serial upload because PlatformIO uploads
+    # its environment output, while B is already preserved as a separate
+    # immutable artifact. Verify that this rebuild still matches A exactly.
     cmp -s "$firmware_a" "$firmware_a_artifact" || {
-        echo "The PlatformIO A build changed while the board was being erased." >&2
+        echo "The PlatformIO A rebuild differs from its immutable artifact." >&2
         return 1
     }
-    pio_with_profile run -d test/ota-harness -e "$environment_a" -t upload --upload-port "$serial_port"
 }
 
 resolved_ip=""
@@ -409,13 +418,26 @@ route_source_ip=""
 ota_port=""
 espota_path=""
 
+mdns_avahi_ipv4() {
+    # avahi-resolve can block when the host daemon or multicast path is
+    # unhealthy. Bound each lookup so the test-harness deadline stays real.
+    timeout 2 avahi-resolve -4 -n "$1" 2>/dev/null |
+        awk 'NR == 1 {print $2; exit}' || true
+}
+
+mdns_system_ipv4() {
+    timeout 2 getent ahostsv4 "$1" 2>/dev/null |
+        awk 'NR == 1 {print $1; exit}' || true
+}
+
 resolve_mdns() {
-    local attempt avahi_ip getent_ip
-    for attempt in $(seq 1 60); do
+    local deadline avahi_ip getent_ip
+    deadline=$((SECONDS + 60))
+    while (( SECONDS < deadline )); do
         # A just-flashed board has no hostname until it joins Wi-Fi.  Preserve
         # the intended polling window under `set -e -o pipefail`.
-        avahi_ip="$(avahi-resolve -4 -n "$device_hostname" 2>/dev/null | awk 'NR == 1 {print $2; exit}' || true)"
-        getent_ip="$(getent ahostsv4 "$device_hostname" 2>/dev/null | awk 'NR == 1 {print $1; exit}' || true)"
+        avahi_ip="$(mdns_avahi_ipv4 "$device_hostname")"
+        getent_ip="$(mdns_system_ipv4 "$device_hostname")"
         if [[ -n "$avahi_ip" && "$avahi_ip" == "$getent_ip" ]] && validate_ipv4 "$avahi_ip"; then
             resolved_ip="$avahi_ip"
             transport_endpoint="$device_hostname"
@@ -433,8 +455,8 @@ assert_mdns_absent() {
     local seconds="$1" deadline avahi_ip getent_ip
     deadline=$((SECONDS + seconds))
     while (( SECONDS < deadline )); do
-        avahi_ip="$(avahi-resolve -4 -n "$device_hostname" 2>/dev/null | awk 'NR == 1 {print $2; exit}' || true)"
-        getent_ip="$(getent ahostsv4 "$device_hostname" 2>/dev/null | awk 'NR == 1 {print $1; exit}' || true)"
+        avahi_ip="$(mdns_avahi_ipv4 "$device_hostname")"
+        getent_ip="$(mdns_system_ipv4 "$device_hostname")"
         if [[ -n "$avahi_ip" || -n "$getent_ip" ]]; then
             echo "Deferred hostname unexpectedly resolved: $device_hostname (Avahi=${avahi_ip:-none}, system=${getent_ip:-none})" >&2
             return 1
@@ -642,21 +664,35 @@ finish_reboot_monitor() {
 }
 
 assert_http_auth_harness() {
-    local code
-    code="$(curl --disable --noproxy '*' --silent --output /dev/null --write-out '%{http_code}' \
-        --connect-timeout 2 --max-time 5 "http://$status_endpoint/api/status" 2>/dev/null || true)"
+    local expected code deadline
     if [[ "$auth_mode" == protected ]]; then
-        [[ "$code" == 401 ]] || {
-            echo "Protected fixture allowed anonymous HTTP status access (HTTP $code)." >&2
-            return 1
-        }
+        expected=401
     else
-        [[ "$code" == 200 ]] || {
-            echo "Open fixture did not allow anonymous HTTP status access (HTTP $code)." >&2
-            return 1
-        }
+        expected=200
     fi
-    echo "HTTP auth test-harness check verified for $auth_mode mode."
+
+    # ESP32 can announce its hostname before its web server accepts a first
+    # connection. mDNS success is intentionally checked separately above;
+    # wait for the named fixture's HTTP service instead of treating that small
+    # startup window as an authentication result. A genuine wrong status is
+    # still reported after a bounded deadline.
+    deadline=$((SECONDS + 90))
+    while (( SECONDS < deadline )); do
+        code="$(curl --disable --noproxy '*' --silent --output /dev/null --write-out '%{http_code}' \
+            --connect-timeout 2 --max-time 5 "http://$status_endpoint/api/status" 2>/dev/null || true)"
+        if [[ "$code" == "$expected" ]]; then
+            echo "HTTP auth test-harness check verified for $auth_mode mode."
+            return 0
+        fi
+        sleep 1
+    done
+
+    if [[ "$auth_mode" == protected ]]; then
+        echo "Protected fixture did not reject anonymous HTTP status access within 90 seconds (last HTTP $code)." >&2
+    else
+        echo "Open fixture did not allow anonymous HTTP status access within 90 seconds (last HTTP $code)." >&2
+    fi
+    return 1
 }
 
 run_one() {
@@ -664,19 +700,34 @@ run_one() {
     set_identity
     run_dir="$output_root/$auth_mode"
     install -d -m 700 "$run_dir"
+    # The A/B header is deliberately run-owned. The profile build cache may be
+    # stable for this platform, but no other run can replace this input.
+    export DEVICEFRAMEWORK_OTA_IDENTITY_DIR="$run_dir/ota-fixture-input"
+    install -d -m 700 "$DEVICEFRAMEWORK_OTA_IDENTITY_DIR"
     prepare_private_profile_build
     write_profile
-    build_images
+    build_image a
     find_espota
     if [[ "$platform" == esp32 ]]; then
         "$project_dir/tools/check-ota-partitions.sh"
         assert_fits "$firmware_a_artifact" "$(esp32_slot_size app0 ota_0)" A
+    fi
+    build_image b
+    if cmp -s "$firmware_a_artifact" "$firmware_b_artifact"; then
+        echo "OTA fixture A and B are unexpectedly identical." >&2
+        return 1
+    fi
+    if [[ "$platform" == esp32 ]]; then
         assert_fits "$firmware_b_artifact" "$(esp32_slot_size app1 ota_1)" B
     fi
+    # Build both immutable images before touching the board. That lets the
+    # serial recorder attach as soon as A finishes flashing, while the
+    # fixture's attachment grace window is still active.
     flash_a
     start_serial_ota_capture
     set_target
     route_source
+    df_harness_lock_ota_callback "$route_source_ip" "$host_port"
     assert_http_auth_harness
     verify_a
     if [[ "$auth_mode" == protected ]]; then
@@ -723,14 +774,12 @@ run_one() {
 
 run_arduino() {
     validate_args
-    reject_stale_private_profile_build_selector
     need_common
     need_python_serial
     load_station_env
     lock_board
-    # The private profile header and original firmware images contain the
-    # local Wi-Fi password. Ensure every file PlatformIO creates beneath the
-    # per-run private build directory is owner-only.
+    # The generated profile header and object cache contain the local Wi-Fi
+    # password. Create the ignored per-checkout cache owner-only.
     umask 077
     prepare_output
     # This compact random token keeps the per-run hostname below the managed
@@ -744,9 +793,9 @@ run_arduino() {
     if [[ "$auth_mode" == both ]]; then
         auth_mode=protected
         run_one
+        df_remove_ota_fixture_identity
         rm -f -- "$profile_file"
         profile_file=""
-        remove_private_profile_build_override
         auth_mode=open
         run_one
     else
@@ -768,6 +817,7 @@ run_doctor() {
 }
 
 run_cleanup() {
+    local cleanup_identity_dir
     validate_cleanup_args
     [[ -n "$serial_port" && -e "$serial_port" ]] || {
         echo "Serial port not found: $serial_port" >&2
@@ -775,9 +825,24 @@ run_cleanup() {
     }
     df_pio_available
     lock_board
-    environment_a="$(environment_for a)"
-    DEVICEFRAMEWORK_OTA_PROFILE="$project_dir/test/profiles/ota-lan-open-fixture.json" \
-        df_pio run -d test/ota-harness -e "$environment_a" -t erase --upload-port "$serial_port"
+    environment="$(environment_for)"
+    install -d -m 700 "$project_dir/.pio/ota-hardware-inputs"
+    cleanup_identity_dir="$(mktemp -d "$project_dir/.pio/ota-hardware-inputs/cleanup.XXXXXX")"
+    chmod 700 "$cleanup_identity_dir"
+    export DEVICEFRAMEWORK_OTA_IDENTITY_DIR="$cleanup_identity_dir"
+    df_write_ota_fixture_identity A 0.0.0-udp-ota-a
+    df_lock_ota_fixture_environment "$environment"
+    if ! DEVICEFRAMEWORK_OTA_PROFILE="$project_dir/test/profiles/ota-lan-open-fixture.json" \
+        df_pio run -d test/ota-harness -e "$environment" -t erase --upload-port "$serial_port"; then
+        # `cleanup` deliberately has no EXIT trap because this command only
+        # erases a board. Do not leave the generated header behind on a flash
+        # failure where the next fixture could accidentally inherit it.
+        df_remove_ota_fixture_identity
+        rmdir -- "$cleanup_identity_dir" 2>/dev/null || true
+        return 1
+    fi
+    df_remove_ota_fixture_identity
+    rmdir -- "$cleanup_identity_dir" 2>/dev/null || true
     echo "The explicitly named board was erased."
 }
 
@@ -793,7 +858,8 @@ start_serial_ota_capture() {
     # continuous record through the real B reboot; never manufacture a reset.
     python3 "$project_dir/tools/capture-serial.py" \
         --port "$serial_port" --output "$serial_capture_log" \
-        --ready-file "$serial_capture_ready_file" >"$capture_output" 2>&1 &
+        --ready-file "$serial_capture_ready_file" --deadline-seconds 600 \
+        >"$capture_output" 2>&1 &
     serial_capture_pid=$!
     for attempt in $(seq 1 40); do
         [[ -e "$serial_capture_ready_file" ]] && return 0
@@ -810,37 +876,7 @@ start_serial_ota_capture() {
     return 1
 }
 
-assert_serial_ota_lifecycle_segments() {
-    local lifecycle_marker="$1"
-    python3 - "$serial_capture_log" "$lifecycle_marker" <<'PY'
-import sys
-
-path, lifecycle = sys.argv[1:]
-with open(path, "r", encoding="utf-8", errors="replace") as source:
-    lines = source.readlines()
-
-def first_after(needle, start=0):
-    for index in range(start, len(lines)):
-        if needle in lines[index]:
-            return index
-    return None
-
-a = first_after("DeviceFramework UDP OTA fixture image: 0.0.0-udp-ota-a")
-update_started = first_after("OTA Update Started:", (a or 0) + 1)
-update_completed = first_after("OTA Update Completed.", (update_started or 0) + 1)
-b = first_after("DeviceFramework UDP OTA fixture image: 0.0.0-udp-ota-b", (update_completed or 0) + 1)
-
-if None in (a, update_started, update_completed, b):
-    raise SystemExit("Serial OTA evidence is missing its required A/update/B ordering.")
-if not any(lifecycle in line for line in lines[a + 1 : update_started + 1]):
-    raise SystemExit("Serial OTA evidence has no mDNS lifecycle record for image A.")
-if not any(lifecycle in line for line in lines[b + 1 :]):
-    raise SystemExit("Serial OTA evidence has no mDNS lifecycle record for image B.")
-PY
-}
-
 stop_serial_ota_capture() {
-    local marker lifecycle_marker
     [[ -n "$serial_capture_pid" ]] || {
         echo "Passive serial OTA capture was not running." >&2
         return 1
@@ -858,27 +894,6 @@ stop_serial_ota_capture() {
         return 1
     fi
     serial_capture_pid=""
-
-    for marker in \
-        'OTA Initialized with hostname:' \
-        'OTA Update Started:' \
-        'OTA Update Completed.' \
-        'DeviceFramework UDP OTA fixture image: 0.0.0-udp-ota-a' \
-        'DeviceFramework UDP OTA fixture image: 0.0.0-udp-ota-b'; do
-        grep -Fq "$marker" "$serial_capture_log" || {
-            echo "Serial OTA evidence is missing '$marker': $serial_capture_log" >&2
-            return 1
-        }
-    done
-    if [[ "$defer_mdns" == "yes" ]]; then
-        lifecycle_marker='mDNS responder deferred for low heap:'
-    else
-        lifecycle_marker='mDNS responder started with hostname:'
-    fi
-    if ! assert_serial_ota_lifecycle_segments "$lifecycle_marker"; then
-        echo "Serial OTA evidence did not observe the mDNS lifecycle in both A and B boot segments: $serial_capture_log" >&2
-        return 1
-    fi
 }
 
 case "$command" in

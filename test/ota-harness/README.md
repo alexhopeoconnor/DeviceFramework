@@ -20,11 +20,19 @@ a different flash size; do not reuse this OTA test-harness configuration unchang
 The portal environments use safe tracked profiles with no station credentials:
 
 ```text
-esp8266_portal_ota_protected_a / _b
-esp8266_portal_ota_open_a / _b
-esp32_portal_ota_protected_a / _b
-esp32_portal_ota_open_a / _b
+esp8266_portal_ota
+esp32_portal_ota
 ```
+
+Each environment receives either the safe tracked `protected` or `open`
+profile through `DEVICEFRAMEWORK_OTA_PROFILE`; it is built twice for that
+profile by the named test-harness scripts: first with a generated A identity,
+then—after A is copied aside—with B. The identity header is placed in an
+ignored, owner-only directory unique to that run and included only by the
+fixture's `main.cpp`. The two genuinely different images therefore reuse the
+environment's dependency objects without a second dependency directory, while
+one run can never replace another run's A/B build input. The scripts remove the
+safe generated header on exit.
 
 `protected` uses the non-secret fixture password `ota-portal-password`; `open`
 sets the DeviceFramework password empty. That changes the provisioning AP
@@ -40,13 +48,14 @@ Run it only through the named secondary Wi-Fi adapter:
   --client-interface wlx0123456789ab --profile protected
 ```
 
-The runner builds and preserves A/B before it touches the board, serial-flashes
-A, uses a browser to submit B to the real multipart `/u` form, and requires an
-automatic outage plus two fresh B marker observations. A passive PySerial
-recorder stays attached from A through B with DTR/RTS inactive and requires both
-fixture boot markers; it never manufactures a reset. It leaves the board in the
-clean no-station portal state; its temporary adapter connection is removed
-unless `--keep` is requested.
+The runner builds and preserves A, serial-flashes it, then builds and preserves
+B in the same environment before a browser submits B to the real multipart
+`/u` form. It requires an automatic outage plus two fresh B marker
+observations. A passive PySerial
+recorder stays attached from A through B with DTR/RTS inactive for diagnostic
+evidence; it never manufactures a reset and its product-log wording is not a
+pass/fail condition. It leaves the board in the clean no-station portal state;
+its temporary adapter connection is removed unless `--keep` is requested.
 
 The dedicated adapter is a host-side NetworkManager resource, not an OTA
 profile secret. A graphical Polkit session may authorize it directly. A
@@ -62,47 +71,57 @@ The station-mode environments intentionally take their profile path from
 `DEVICEFRAMEWORK_OTA_PROFILE`:
 
 ```text
-esp8266_udp_ota_a / _b
-esp32_udp_ota_a / _b
-esp8266_udp_ota_deferred_a / _b
+esp8266_udp_ota
+esp32_udp_ota
+esp8266_udp_ota_deferred
 ```
 
 The first two pairs cover normal mDNS-resolved ArduinoOTA. The final
 ESP8266-only pair forces DeviceFramework's existing mDNS heap guard to defer
 the framework responder, then verifies direct-IP ArduinoOTA without giving
-ArduinoOTA a second mDNS owner. The command runner creates the real profile in
-a mode-600 temporary file from ignored `test/.env`; it is removed on exit.
-For a physical run, its generated profile header and original firmware images
-remain only in the runner's mode-700 private artifact directory, because the
-firmware necessarily embeds the test Wi-Fi credential.
+ArduinoOTA a second mDNS owner. The command runner writes the real profile from
+ignored `test/.env` to a stable, `0600` private path below the ignored
+per-platform, `0700` `.pio/ota-hardware-profiles/<platform>/` directory,
+then removes it on exit. Its parent directory may be `0755` because it
+contains no credentials. This must be separate from PlatformIO's build root,
+which it clears
+before profile generation. The stable path prevents a fresh temporary filename
+from invalidating every PlatformIO object; only profile-dependent sources
+rebuild. The separate private build cache and generated profile header embed
+the test Wi-Fi credential. The per-run artifact directory still keeps its own
+copied A/B images and logs.
 
-For compile-only work, use a safe tracked fixture from this directory's parent:
+For all safe board-free A/B pairs on one target, use the maintained command:
 
 ```bash
-source tools/lib/platformio.sh
-DEVICEFRAMEWORK_OTA_PROFILE=../profiles/ota-lan-protected-fixture.json \
-  df_pio run -d test/ota-harness -e esp8266_udp_ota_a
+./scripts/test-ota-fixtures.sh --platform esp8266
 ```
 
-For a physical test, use `tools/ota-hardware` instead. It assigns a compact
-run-unique mDNS name, validates it through Avahi and the host resolver in normal
-mode, and invokes the selected framework's `espota.py` directly, so it does not
-depend on PlatformIO's automatic upload-protocol selection. Its passive serial
-record must show ordered A/upload/B evidence and an mDNS lifecycle entry for
-each boot; the post-B resolver recheck is useful reachability evidence but is
-not presented as cache-proof multicast proof.
+For a physical test, use `tools/ota-hardware` instead. It builds and preserves
+both immutable images before it erases the explicitly named board, then rebuilds
+and serial-flashes A and attaches its passive recorder immediately. It assigns a
+compact run-unique mDNS name, validates it through Avahi and the host resolver
+in normal mode, and invokes the selected framework's `espota.py` directly, so
+it does not depend on PlatformIO's automatic upload-protocol selection. The
+serial record is retained for diagnosis while the required evidence is the real
+espota transfer, automatic outage, B marker responses, and the appropriate
+resolver behaviour. The post-B resolver recheck is useful reachability evidence
+but is not presented as cache-proof multicast proof.
 
 ArduinoOTA's TCP firmware stream is a reverse connection from the board to the
 host callback port, rather than inbound host traffic to board listener port
 8266/3232. The runner never changes host firewall policy; a blocked callback
 is an environment diagnosis, not a substitute for the real upload test-harness run.
 
-The disposable fixture clears only its own reset-tracker record before each
-boot because serial erase does not clear ESP8266 RTC RAM. The runner then
-attaches to serial with inactive reset-control lines instead of manufacturing a
-second physical reset. This keeps an interrupted prior fixture from changing
-the A/B bootstrap result; it does not change the library's production
-rapid-reset recovery behavior.
+The physical runner explicitly erases the named board before it flashes A. The
+disposable fixture clears only its own RTC tracker because serial erase does
+not clear ESP8266 RTC RAM. It deliberately does not reset transactional storage
+after framework initialisation: the erased board already provides the required
+fresh storage state, while a late fixture-only write can disrupt the ESP8266
+portal DHCP path. The runner then attaches to serial with inactive reset-control
+lines instead of manufacturing a second physical reset. This keeps fixture
+bootstrap deterministic without changing the library's production rapid-reset
+recovery behavior.
 
 ```bash
 ./tools/ota-hardware arduino \
@@ -113,9 +132,13 @@ rapid-reset recovery behavior.
 ## Local development overrides
 
 Copy `platformio.local.example.ini` to an ignored
-`platformio.local.ini.<machine>` only when testing unpublished sibling
-worktrees. It gives the local source stack its own persistent build and
-dependency directories, so it cannot reuse an archive produced for the release
-graph. It never clears the shared package cache. The checked-in configuration
-deliberately resolves release dependencies; CI compiles the fixture but never
-claims that a real OTA transfer occurred.
+`platformio.local.ini.<machine>` only when testing the checked-out
+DeviceFramework source. It gives that source its own persistent build directory
+while it uses the exact released dependencies declared by `library.json`; this
+keeps consumer dependency ownership unambiguous and avoids resolving a pinned
+release alongside a sibling substitute. It never clears the shared package
+cache. Test an unpublished WiFiManager change through WiFiManager's own portal
+harness, then run this fixture after DeviceFramework adopts the released
+WiFiManager version. The hardware runner reads the effective PlatformIO build
+directory, so the selector works for physical A/B tests too. CI compiles the
+fixture but never claims that a real OTA transfer occurred.

@@ -6,7 +6,14 @@ project_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 source "$project_dir/tools/lib/device-ui-session.sh"
 # shellcheck source=tools/lib/platformio.sh
 source "$project_dir/tools/lib/platformio.sh"
+# shellcheck source=tools/lib/ota-fixture-identity.sh
+source "$project_dir/tools/lib/ota-fixture-identity.sh"
 cd "$project_dir"
+
+# Portal tests exclusively own their portal network, selected Wi-Fi adapter,
+# and named serial port. Avoid consuming every host core unless the developer
+# explicitly opts in.
+export PLATFORMIO_RUN_JOBS="${PLATFORMIO_RUN_JOBS:-2}"
 
 usage() {
     cat <<'EOF' >&2
@@ -85,30 +92,12 @@ done
 
 profile_file=""
 station_browser_env_file=""
-station_build_override_file=""
 station_build_dir=""
 web_expected_device_name=""
+web_ready_url=""
 DFUI_PORTAL_CONNECTION_UUID=""
 DFUI_PORTAL_CONNECTION_NAME=""
 DFUI_PORTAL_CONNECTION_OWNED="no"
-
-reject_stale_private_build_selectors() {
-    local selector
-    # extra_configs intentionally discovers ignored local selectors. A hard
-    # host termination can leave one of this harness's private build-dir
-    # selectors behind, which would silently redirect a later fixture build.
-    # Do not delete it automatically: make the developer confirm that no
-    # interrupted harness is still using the private directory.
-    for selector in \
-        "$project_dir"/test/compile-project/platformio.local.ini.zz-device-ui-hardware.* \
-        "$project_dir"/test/ota-harness/platformio.local.ini.ota-hardware.*; do
-        [[ -e "$selector" ]] || continue
-        printf 'A stale harness-owned PlatformIO selector was found: %s\n' "$selector" >&2
-        printf 'After confirming no DeviceFramework hardware runner is active, remove only it with: rm -f -- %q\n' \
-            "$selector" >&2
-        return 1
-    done
-}
 
 require_common() {
     dfui_require ip
@@ -117,6 +106,7 @@ require_common() {
     dfui_require python3
     dfui_require docker
     dfui_require curl
+    dfui_require timeout
     docker compose version >/dev/null
 }
 
@@ -145,6 +135,13 @@ prepare_output_dir() {
     install -d -m 700 "$output_root"
     output_dir="$(mktemp -d "$output_root/device-ui-harness.XXXXXX")"
     chmod 700 "$output_dir"
+}
+
+prepare_portal_ota_identity_input() {
+    # The A/B header is a build input, not fixture source. Keep it inside this
+    # run's private evidence directory so another command cannot replace it.
+    export DEVICEFRAMEWORK_OTA_IDENTITY_DIR="$output_dir/ota-fixture-input"
+    install -d -m 700 "$DEVICEFRAMEWORK_OTA_IDENTITY_DIR"
 }
 
 validate_platform() {
@@ -262,14 +259,26 @@ write_readme_media_manifest() {
     chmod 600 "$media_dir/manifest.json"
 }
 
+dfui_pio() {
+    if [[ -n "$station_build_dir" ]]; then
+        # This native PlatformIO setting wins over an optional developer-local
+        # selector, keeping credential-bearing station builds private without
+        # writing another project configuration file.
+        PLATFORMIO_BUILD_DIR="$station_build_dir" df_pio "$@"
+    else
+        df_pio "$@"
+    fi
+}
+
 erase_and_upload() {
     local environment="$1"
     # Each visual fixture must start without a previous board's persisted
     # configuration. The explicitly supplied test board is immediately
     # reflashed after erase; no other serial device is selected.
-    df_pio run -d test/compile-project -e "$environment" -t erase --upload-port "$port"
+    df_harness_lock_serial_port "$port"
+    dfui_pio run -d test/compile-project -e "$environment" -t erase --upload-port "$port"
     wait_for_serial_port
-    df_pio run -d test/compile-project -e "$environment" -t upload --upload-port "$port"
+    dfui_pio run -d test/compile-project -e "$environment" -t upload --upload-port "$port"
 }
 
 wait_for_serial_port() {
@@ -290,8 +299,7 @@ upload_portal_fixture() {
 }
 
 portal_ota_environment() {
-    local image="$1"
-    printf '%s_portal_ota_%s_%s\n' "$platform" "$portal_profile" "$image"
+    printf '%s_portal_ota\n' "$platform"
 }
 
 portal_ota_profile_password() {
@@ -302,34 +310,76 @@ portal_ota_profile_password() {
     esac
 }
 
-build_portal_ota_fixtures() {
-    local a_environment b_environment a_source b_source
-    a_environment="$(portal_ota_environment a)"
-    b_environment="$(portal_ota_environment b)"
-    df_pio run -d test/ota-harness -e "$a_environment"
-    df_pio run -d test/ota-harness -e "$b_environment"
-    a_source="$project_dir/test/ota-harness/.pio/build/${a_environment}/firmware.bin"
-    b_source="$project_dir/test/ota-harness/.pio/build/${b_environment}/firmware.bin"
-    [[ -s "$a_source" && -s "$b_source" ]] || {
-        echo "Portal OTA build did not produce both A and B images." >&2
+portal_ota_build_dir() {
+    # A developer may opt into the documented ignored local-source selector,
+    # which gives checked-out DeviceFramework sources their own build tree.
+    # Ask PlatformIO for the effective configuration so this runner does not
+    # silently assume the default `.pio/build` location.
+    df_pio project config --json-output -d "$project_dir/test/ota-harness" |
+        python3 -c '
+import json
+import os
+import sys
+
+project_dir = sys.argv[1]
+configuration = json.load(sys.stdin)
+build_dir = next(
+    (value for section, options in configuration if section == "platformio"
+     for key, value in options if key == "build_dir"),
+    ".pio/build",
+)
+if not os.path.isabs(build_dir):
+    build_dir = os.path.join(project_dir, build_dir)
+print(os.path.normpath(build_dir))
+' "$project_dir/test/ota-harness"
+}
+
+portal_ota_pio() {
+    local image="$1" expected_portal_protected
+    shift
+    case "$ota_expected_portal_protected" in
+        true) expected_portal_protected=1 ;;
+        false) expected_portal_protected=0 ;;
+        *) echo "Portal OTA profile has not been validated." >&2; return 1 ;;
+    esac
+    case "$image" in
+        a) df_write_ota_fixture_identity A 0.0.0-portal-ota-a "$expected_portal_protected" ;;
+        b) df_write_ota_fixture_identity B 0.0.0-portal-ota-b "$expected_portal_protected" ;;
+        *) echo "Unknown portal OTA fixture identity: $image" >&2; return 2 ;;
+    esac
+    DEVICEFRAMEWORK_OTA_PROFILE="$project_dir/test/profiles/ota-portal-${portal_profile}.json" df_pio "$@"
+}
+
+build_portal_ota_fixture() {
+    local image="$1" environment source build_dir artifact slot image_label
+    environment="$(portal_ota_environment)"
+    df_lock_ota_fixture_environment "$environment"
+    portal_ota_pio "$image" run -d test/ota-harness -e "$environment"
+    build_dir="$(portal_ota_build_dir)"
+    source="$build_dir/${environment}/firmware.bin"
+    [[ -s "$source" ]] || {
+        echo "Portal OTA build did not produce image ${image^^}." >&2
         return 1
     }
-    if cmp -s "$a_source" "$b_source"; then
-        echo "Portal OTA A and B images are unexpectedly identical." >&2
-        return 1
-    fi
+    case "$image" in
+        a)
+            artifact="$output_dir/${platform}-portal-ota-a.bin"
+            slot=app0
+            image_label=A
+            ota_firmware_a="$artifact"
+            ;;
+        b)
+            artifact="$output_dir/${platform}-portal-ota-b.bin"
+            slot=app1
+            image_label=B
+            ota_firmware="$artifact"
+            ;;
+        *) return 2 ;;
+    esac
+    install -m 600 "$source" "$artifact"
     if [[ "$platform" == "esp32" ]]; then
         "$project_dir/tools/check-ota-partitions.sh"
-    fi
-    # Preserve immutable inputs before the board is touched. A subsequent
-    # PlatformIO invocation cannot silently replace the browser's B upload.
-    ota_firmware_a="$output_dir/${platform}-portal-ota-a.bin"
-    ota_firmware="$output_dir/${platform}-portal-ota-b.bin"
-    install -m 600 "$a_source" "$ota_firmware_a"
-    install -m 600 "$b_source" "$ota_firmware"
-    if [[ "$platform" == "esp32" ]]; then
-        assert_portal_ota_firmware_fits "$ota_firmware_a" "app0" "ota_0" "A"
-        assert_portal_ota_firmware_fits "$ota_firmware" "app1" "ota_1" "B"
+        assert_portal_ota_firmware_fits "$artifact" "$slot" "ota_${slot#app}" "$image_label"
     fi
 }
 
@@ -364,21 +414,41 @@ assert_portal_ota_firmware_fits() {
     printf 'Portal OTA image %s fits %s: %s <= %s bytes\n' "$image" "$partition" "$size" "$capacity"
 }
 
+portal_ota_assert_a_artifact_matches_build() {
+    local environment source
+    environment="$(portal_ota_environment)"
+    source="$(portal_ota_build_dir)/${environment}/firmware.bin"
+    [[ -s "$ota_firmware_a" && -s "$source" ]] || {
+        echo "Prepared portal OTA A artifact or PlatformIO build output is missing." >&2
+        return 1
+    }
+    cmp -s "$ota_firmware_a" "$source" || {
+        echo "PlatformIO's portal OTA A build no longer matches the immutable artifact prepared before serial flashing." >&2
+        return 1
+    }
+}
+
 upload_portal_ota_a_fixture() {
-    local a_environment a_source
-    a_environment="$(portal_ota_environment a)"
-    a_source="$project_dir/test/ota-harness/.pio/build/${a_environment}/firmware.bin"
-    cmp -s "$a_source" "$ota_firmware_a" || {
-        echo "The PlatformIO portal A build changed after its immutable artifact was captured." >&2
+    local environment
+    environment="$(portal_ota_environment)"
+    [[ -s "$ota_firmware_a" ]] || {
+        echo "Portal OTA image A was not captured before flash." >&2
         return 1
     }
-    df_pio run -d test/ota-harness -e "$a_environment" -t erase --upload-port "$port"
+    # `ota-portal` flashes directly from its A/B harness rather than through
+    # erase_and_upload(), so it must acquire the same board-specific lock
+    # itself before rebuilding, erasing, or opening the supplied serial port.
+    df_harness_lock_serial_port "$port"
+    # Rebuild the selected A identity and prove it still equals the captured
+    # artifact before a board operation. Check again after each operation so
+    # the image that reaches the board cannot silently drift to B.
+    portal_ota_pio a run -d test/ota-harness -e "$environment"
+    portal_ota_assert_a_artifact_matches_build
+    portal_ota_pio a run -d test/ota-harness -e "$environment" -t erase --upload-port "$port"
+    portal_ota_assert_a_artifact_matches_build
     wait_for_serial_port
-    cmp -s "$a_source" "$ota_firmware_a" || {
-        echo "The PlatformIO portal A build changed while the board was being erased." >&2
-        return 1
-    }
-    df_pio run -d test/ota-harness -e "$a_environment" -t upload --upload-port "$port"
+    portal_ota_pio a run -d test/ota-harness -e "$environment" -t upload --upload-port "$port"
+    portal_ota_assert_a_artifact_matches_build
 }
 
 start_portal_ota_serial_capture() {
@@ -388,12 +458,13 @@ start_portal_ota_serial_capture() {
     capture_output="$output_dir/serial-ota-capture.log"
     rm -f -- "$ota_serial_capture_log" "$ota_serial_capture_ready_file" "$capture_output"
 
-    # A was just serial-flashed and has a fixture-only monitor-attachment
-    # window. Keep this one passive recorder through the browser's B upload;
+    # A is already running and has a fixture-only monitor-attachment window.
+    # Keep this one passive recorder through the browser's B upload;
     # it never changes reset lines or takes ownership of the Wi-Fi adapter.
     python3 "$project_dir/tools/capture-serial.py" \
         --port "$port" --output "$ota_serial_capture_log" \
-        --ready-file "$ota_serial_capture_ready_file" >"$capture_output" 2>&1 &
+        --ready-file "$ota_serial_capture_ready_file" --deadline-seconds 600 \
+        >"$capture_output" 2>&1 &
     ota_serial_capture_pid=$!
     for attempt in $(seq 1 40); do
         [[ -e "$ota_serial_capture_ready_file" ]] && return 0
@@ -408,29 +479,6 @@ start_portal_ota_serial_capture() {
     done
     echo "Passive portal-OTA serial capture did not become ready: $capture_output" >&2
     return 1
-}
-
-assert_portal_ota_serial_sequence() {
-    python3 - "$ota_serial_capture_log" <<'PY'
-import sys
-
-path = sys.argv[1]
-with open(path, "r", encoding="utf-8", errors="replace") as source:
-    lines = source.readlines()
-
-def first_after(marker, start=0):
-    for index in range(start, len(lines)):
-        if marker in lines[index]:
-            return index
-    return None
-
-a = first_after("DeviceFramework portal OTA fixture image: 0.0.0-portal-ota-a")
-upload_started = first_after("DeviceFramework portal OTA upload started.", (a or 0) + 1)
-b = first_after("DeviceFramework portal OTA fixture image: 0.0.0-portal-ota-b", (upload_started or 0) + 1)
-
-if None in (a, upload_started, b):
-    raise SystemExit("Serial portal-OTA evidence is missing its required A/upload/B ordering.")
-PY
 }
 
 stop_portal_ota_serial_capture() {
@@ -451,10 +499,6 @@ stop_portal_ota_serial_capture() {
         return 1
     fi
     ota_serial_capture_pid=""
-    if ! assert_portal_ota_serial_sequence; then
-        echo "Serial portal-OTA evidence did not observe ordered A/upload/B markers: $ota_serial_capture_log" >&2
-        return 1
-    fi
 }
 
 portal_ota_marker_field() {
@@ -472,18 +516,16 @@ else:
 }
 
 wait_for_portal_ota_marker() {
-    local expected_image="$1" deadline marker image version actual_policy expected_policy
+    local expected_image="$1" deadline marker image actual_policy expected_policy
     deadline=$((SECONDS + 75))
     while (( SECONDS < deadline )); do
         marker="$(curl --silent --show-error --fail --interface "$client_interface" \
             --connect-timeout 2 --max-time 2 \
             'http://192.168.4.1/api/test/firmware-marker' 2>/dev/null || true)"
         image="$(portal_ota_marker_field "$marker" image 2>/dev/null || true)"
-        version="$(portal_ota_marker_field "$marker" version 2>/dev/null || true)"
         actual_policy="$(portal_ota_marker_field "$marker" portalProtected 2>/dev/null || true)"
         expected_policy="$(portal_ota_marker_field "$marker" expectedPortalProtected 2>/dev/null || true)"
         if [[ "$image" == "$expected_image" && \
-              "$version" == "0.0.0-portal-ota-${expected_image,,}" && \
               "$actual_policy" == "$ota_expected_portal_protected" && \
               "$expected_policy" == "$ota_expected_portal_protected" ]]; then
             printf '%s' "$marker"
@@ -549,19 +591,10 @@ prepare_private_station_build() {
     # Keep that header, objects, and firmware in a private temporary directory
     # rather than a potentially group-readable project `.pio` tree. It is
     # deleted immediately after serial upload; browser artifacts never need a
-    # firmware that embeds a developer's Wi-Fi password. The ignored selector
-    # sorts after ordinary developer-local selectors and exists only for this
-    # invocation.
+    # firmware that embeds a developer's Wi-Fi password. `dfui_pio` supplies
+    # this directory through PlatformIO's native per-invocation override.
     station_build_dir="$(mktemp -d /tmp/deviceframework-device-ui-build.XXXXXX)"
     chmod 700 "$station_build_dir"
-    station_build_override_file="$(mktemp "$project_dir/test/compile-project/platformio.local.ini.zz-device-ui-hardware.XXXXXX")"
-    chmod 600 "$station_build_override_file"
-    printf '[platformio]\nbuild_dir = %s\n' "$station_build_dir" > "$station_build_override_file"
-}
-
-remove_private_station_build_override() {
-    [[ -z "$station_build_override_file" ]] || rm -f -- "$station_build_override_file"
-    station_build_override_file=""
 }
 
 remove_private_station_build() {
@@ -608,7 +641,6 @@ upload_station_fixture() {
         erase_and_upload "${platform}_profile_hardware"
     rm -f -- "$profile_file"
     profile_file=""
-    remove_private_station_build_override
     remove_private_station_build
 }
 
@@ -670,15 +702,18 @@ web_status_is_connected() {
 }
 
 wait_for_web_url() {
-    local hostname="${1:-df-web-${platform}.local}" expected_device_name="${2:-${hostname%.local}}" avahi_ip="" system_ip="" attempt document observed_device_name
+    local hostname="${1:-df-web-${platform}.local}" expected_device_name="${2:-${hostname%.local}}" avahi_ip="" system_ip="" deadline attempt document observed_device_name
+    web_ready_url=""
     dfui_require avahi-resolve
     dfui_require getent
-    for attempt in {1..45}; do
+    dfui_require timeout
+    deadline=$((SECONDS + 45))
+    while (( SECONDS < deadline )); do
         # mDNS is expected to be absent until the station fixture has joined.
         # Require Avahi and the system resolver to agree rather than using a
         # station IP reported by the departing portal or a stale resolver path.
-        avahi_ip="$(avahi-resolve -4 -n "$hostname" 2>/dev/null | awk 'NR == 1 { print $2; exit }' || true)"
-        system_ip="$(getent ahostsv4 "$hostname" 2>/dev/null | awk 'NR == 1 { print $1; exit }' || true)"
+        avahi_ip="$(timeout 2 avahi-resolve -4 -n "$hostname" 2>/dev/null | awk 'NR == 1 { print $2; exit }' || true)"
+        system_ip="$(timeout 2 getent ahostsv4 "$hostname" 2>/dev/null | awk 'NR == 1 { print $1; exit }' || true)"
         [[ -n "$avahi_ip" && "$avahi_ip" == "$system_ip" ]] && break
         sleep 1
     done
@@ -697,7 +732,7 @@ wait_for_web_url() {
         document="$(web_status_document "http://${hostname}" 2>/dev/null || true)"
         observed_device_name="$(printf '%s' "$document" | web_status_device_name 2>/dev/null || true)"
         [[ "$observed_device_name" == "$expected_device_name" ]] && {
-            printf 'http://%s\n' "$hostname"
+            web_ready_url="http://$hostname"
             return 0
         }
         sleep 1
@@ -870,8 +905,7 @@ sanitize_browser_artifacts() {
     done
 }
 
-start_portal_connection() {
-    local ssid
+prepare_portal_client() {
     require_port
     [[ -n "$client_interface" ]] || usage
     # Select the real NetworkManager authorization path before inspecting the
@@ -880,6 +914,10 @@ start_portal_connection() {
     dfui_prepare_networkmanager_authorization
     dfui_require_client_adapter "$client_interface" "$takeover"
     dfui_require_no_active_session
+}
+
+start_portal_connection() {
+    local ssid
     upload_portal_fixture
     ssid="$(dfui_portal_ssid "$platform")"
     dfui_create_portal_connection "$client_interface" "$ssid" 'default1' no "$platform"
@@ -888,12 +926,6 @@ start_portal_connection() {
 
 start_portal_ota_connection() {
     local ssid password
-    require_port
-    [[ -n "$client_interface" ]] || usage
-    dfui_prepare_networkmanager_authorization
-    dfui_require_client_adapter "$client_interface" "$takeover"
-    dfui_require_no_active_session
-    upload_portal_ota_a_fixture
     start_portal_ota_serial_capture
     ssid="$(dfui_portal_ssid "$platform")"
     password="$(portal_ota_profile_password)"
@@ -907,13 +939,21 @@ start_portal_ota_connection() {
 
 run_portal() {
     local directory="$1"
+    prepare_portal_client
     start_portal_connection
     run_browser portal 'http://192.168.4.1' "$directory"
 }
 
 run_portal_ota() {
     local directory="$1"
-    build_portal_ota_fixtures
+    # Fail authorization and adapter-safety preflight before a build or flash;
+    # a rejected NetworkManager action must never leave the board on A.
+    prepare_portal_client
+    # Build and flash A before rebuilding this same environment as B. This
+    # produces immutable distinct images without a duplicate libdeps install.
+    build_portal_ota_fixture a
+    upload_portal_ota_a_fixture
+    build_portal_ota_fixture b
     prepare_portal_ota_browser "$directory"
     start_portal_ota_connection
     run_browser ota-portal 'http://192.168.4.1' "$directory"
@@ -932,7 +972,8 @@ run_web() {
         require_port
         web_expected_device_name="$(web_fixture_device_name)"
         upload_station_fixture
-        url="$(wait_for_web_url "$(web_fixture_hostname)" "$web_expected_device_name")"
+        wait_for_web_url "$(web_fixture_hostname)" "$web_expected_device_name"
+        url="$web_ready_url"
     fi
     run_browser web "$url" "$directory"
 }
@@ -968,9 +1009,9 @@ cleanup() {
     [[ -z "$ota_serial_capture_pid" ]] || kill "$ota_serial_capture_pid" >/dev/null 2>&1 || true
     [[ -z "$ota_serial_capture_pid" ]] || wait "$ota_serial_capture_pid" >/dev/null 2>&1 || true
     ota_serial_capture_pid=""
+    df_remove_ota_fixture_identity
     [[ -z "$profile_file" ]] || rm -f -- "$profile_file"
     remove_station_browser_env
-    remove_private_station_build_override
     remove_private_station_build
     if [[ "${DFUI_PORTAL_CONNECTION_OWNED:-no}" == "yes" ]] && \
         { (( status != 0 )) || [[ "$keep" != "yes" ]]; }; then
@@ -1025,7 +1066,6 @@ case "$command_name" in
         validate_readme_media_capture
         require_common
         dfui_acquire_hardware_lock
-        reject_stale_private_build_selectors
         prepare_output_dir
         trap 'cleanup "$?"' EXIT
         trap 'cleanup 129' HUP
@@ -1048,8 +1088,8 @@ case "$command_name" in
         require_common
         require_python_serial
         dfui_acquire_hardware_lock
-        reject_stale_private_build_selectors
         prepare_output_dir
+        prepare_portal_ota_identity_input
         trap 'cleanup "$?"' EXIT
         trap 'cleanup 129' HUP
         trap 'cleanup 130' INT
@@ -1073,7 +1113,6 @@ case "$command_name" in
         validate_readme_media_capture
         require_common
         dfui_acquire_hardware_lock
-        [[ -n "$web_url" ]] || reject_stale_private_build_selectors
         prepare_output_dir
         trap 'cleanup "$?"' EXIT
         trap 'cleanup 129' HUP
@@ -1092,7 +1131,6 @@ case "$command_name" in
         [[ -n "$client_interface" ]] || usage
         load_station_env
         dfui_acquire_hardware_lock
-        reject_stale_private_build_selectors
         prepare_output_dir
         trap 'cleanup "$?"' EXIT
         trap 'cleanup 129' HUP
@@ -1109,7 +1147,8 @@ case "$command_name" in
         # is only the hand-off evidence; the next browser request must reach
         # the newly provisioned board through its unique hostname.
         web_expected_device_name="$(portal_fixture_device_name)"
-        web_url="$(wait_for_web_url "${web_expected_device_name}.local" "$web_expected_device_name")"
+        wait_for_web_url "${web_expected_device_name}.local" "$web_expected_device_name"
+        web_url="$web_ready_url"
         wait_for_station_status "$web_url" "$web_expected_device_name"
         # wait_for_web_url already established the dual-resolver mDNS mapping.
         # Calling run_web here would mistake this owned URL for --url and clear

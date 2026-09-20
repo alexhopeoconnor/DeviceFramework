@@ -12,6 +12,10 @@ checks, and the Docker-backed Home Assistant visual fixture. `Ctrl-C` stops
 this single sequence without starting a later check. The individual commands
 below remain useful while iterating.
 
+Every direct PlatformIO test-harness entry point defaults to two compiler jobs
+to keep a laptop responsive. Use `PLATFORMIO_RUN_JOBS=3` only as an explicit
+local override when the host is otherwise idle.
+
 The physical test harnesses deliberately use different network paths. The secondary
 USB adapter exists only for captive-portal work; normal DeviceFramework and
 ArduinoOTA coverage stay on the host's ordinary LAN route.
@@ -38,8 +42,10 @@ credentials.
 | Item | Kept in Git | Local or generated | Purpose |
 | --- | --- | --- | --- |
 | `test/.env.example`, `test/profiles/*.json`, `test/ota-harness/`, partition CSV | Yes | — | Safe templates, fixture profiles, and target layouts |
-| `test/.env`, `platformio.local.ini.<machine>` | — | Ignored | A developer's Wi-Fi/MQTT values and optional isolated sibling-worktree selector |
-| Station/OTA profiles, generated headers, private PlatformIO builds | — | Mode 600/700 temporary files | Carry the local Wi-Fi value only while a named board is built or flashed |
+| `test/.env`, `platformio.local.ini.<machine>` | — | Ignored | A developer's Wi-Fi/MQTT values and optional isolated local-source build selector |
+| Station/OTA profiles | — | Mode-600 temporary files | Carry the local Wi-Fi value only while a named board is built or flashed |
+| OTA A/B identity input | — | Ignored per-run `0700` directory | A non-secret compiled marker; isolated so simultaneous harness runs cannot replace it |
+| ArduinoOTA generated header and object cache | — | Ignored per-platform `0700` directory below `.pio/ota-hardware/` | Reuses one checkout's credential-bearing build objects; never commit or share it |
 | Browser reports, screenshots, serial logs, A/B images | — | Ignored private artifacts | Failure evidence; review locally and do not publish them blindly |
 | Board flash/RTC/configuration and the temporary portal connection | — | Physical/session state | Deliberately changed by the named harness and never committed |
 
@@ -64,12 +70,12 @@ With `--profile-fixture`, the consumer build checks three deliberately different
 The `hardware` mode runs the Unity/integration suite against a connected device. It
 reads required WiFi and MQTT values from an ignored `test/.env`; copy
 `test/.env.example` and fill it locally. The runner generates an ignored C++ header
-only for the duration of the run, then removes it. Every `scripts/test.sh` mode
-takes one exclusive local lock before touching PlatformIO's package/build state;
-hardware mode additionally uses it before generating that header. A second local
-test waits rather than racing the active one. The hardware lock is also shared
-with WiFiManager's portal runner on the same host, preventing concurrent
-serial flashes or portal-adapter changes across the two repositories.
+only for the duration of the run, then removes it. `scripts/test.sh` serializes
+its own mutable PlatformIO work. Physical runners additionally take explicit,
+non-secret locks for the named serial device, portal adapter, shared
+`192.168.4.0/24` portal network, OTA callback address/port, and selected OTA
+build environment. A collision fails before a board or adapter is changed;
+unrelated station and portal work may proceed on distinct resources.
 With `--profile-fixture`, it runs Unity with a bootstrap profile, owns the serial
 port while it injects an RTS-only reset after the selected board’s esptool upload,
 and requires a non-empty zero-failure result. This keeps USB-UART adapters from
@@ -230,9 +236,9 @@ real update form. A pass requires all of the following:
 - The portal becomes unavailable without a host-triggered reset.
 - The portal returns automatically and twice reports immutable image B,
   `0.0.0-portal-ota-b`.
-- One passive serial record, opened with DTR/RTS inactive, proves ordered A →
-  WiFiManager accepted and completed B's multipart upload → B boot markers.
-  The harness never turns a manual reset into reboot evidence.
+- One passive serial record remains attached with DTR/RTS inactive for failure
+  diagnosis. The browser response and fresh A/B marker checks are the required
+  evidence; the harness never turns a manual reset into reboot evidence.
 
 `protected` uses the tracked, non-secret `ota-portal-password` test password for the
 provisioning AP. `open` uses a separate tracked profile with an intentionally
@@ -282,31 +288,39 @@ usable by the normal hardware and fixture runners.
 The runner writes a mode-600 temporary profile containing the ignored Wi-Fi
 credentials and a safe fixed OTA password, builds immutable A/B artifacts,
 serial-erases and flashes A, and then requires a real A-to-B automatic reboot.
-Because the compiled profile and firmware necessarily embed the local Wi-Fi
-credential, the runner places its generated header, original build outputs,
-logs, and retained A/B artifacts below a mode-700 run directory (with files
-mode 600). Treat the printed artifact directory as private; use a private
-`--output` location if relocating it. The source profile and temporary
-PlatformIO override are deleted on exit, while the private run directory is
-retained for failure diagnosis.
+The profile has a stable path inside the ignored per-platform, `0700`
+`.pio/ota-hardware-profiles/<platform>/` directory in that checkout. Its
+parent directory may be `0755` because it contains no credentials. It is
+separate from PlatformIO's build root, which PlatformIO clears before its
+profile hook runs. The stable path means a fresh temporary filename is not a
+whole-project configuration change. Only the profile-dependent object is
+rebuilt when its content changes, and the source profile is removed on exit.
+The separate ignored per-platform, `0700`
+`.pio/ota-hardware/<platform>/` directory holds generated profile headers and
+object files embedding the local Wi-Fi credential; its parent directory may
+also be `0755`. The printed
+`0700` artifact directory retains the copied A/B images, logs, and browser
+evidence for this run; use a private `--output` location if relocating it. The
+runner uses PlatformIO's native
+`PLATFORMIO_BUILD_DIR` override, so an optional developer local-source selector
+cannot redirect credential-bearing output and no temporary project
+configuration is written.
 
-An uncatchable host termination can leave the harness's own
-`platformio.local.ini.ota-hardware.*` or
-`platformio.local.ini.zz-device-ui-hardware.*` selector behind. Before a later
-fixture build, the runner stops and prints the exact self-owned file. Confirm
-that no hardware runner remains active, then remove only that listed selector;
-the harness never deletes it automatically.
+The runner explicitly erases the named board before it flashes A. The
+disposable OTA fixture clears only its own RTC tracker because serial erase
+does not clear ESP8266 RTC RAM. It deliberately does not reset transactional
+storage after framework initialisation: the erased board already provides the
+required fresh storage state, while a late fixture-only write can disrupt the
+ESP8266 portal DHCP path. The runner then attaches to serial with DTR and RTS
+inactive rather than issuing another reset after PlatformIO has booted A. This
+gives the fixture deterministic bootstrap state without altering
+DeviceFramework's production recovery behaviour.
 
-The disposable OTA fixture clears only its own reset-tracker record before a
-test boot because serial erase does not clear ESP8266 RTC RAM. The runner then
-attaches to serial with DTR and RTS inactive rather than issuing another reset
-after PlatformIO has booted A. This makes an interrupted fixture unable to
-change the next fixture's bootstrap result; it does not alter DeviceFramework's
-production rapid-reset recovery behavior.
-
-It retains that same passive serial recorder through B and requires ordered A,
-upload, and B markers plus an mDNS lifecycle record in each boot segment. This
-is why PySerial is a prerequisite for `arduino` but not for the read-only
+It retains the same passive serial recorder through B for diagnosis and
+requires the recorder to remain healthy. OTA pass/fail is established by the
+real espota transfer, automatic outage, fresh B status responses, and the
+selected normal/deferred mDNS behaviour—not by matching product log wording.
+This is why PySerial is a prerequisite for `arduino` but not for the read-only
 `doctor` command.
 
 For protected mode it proves anonymous HTTP is rejected, a deliberately wrong
@@ -324,9 +338,11 @@ A normal pass assigns a compact run-unique hostname such as
 requires Avahi *and* the host system resolver to agree before uploading to that
 hostname. The runner performs a post-B resolver recheck too, but resolver
 caches can retain A's address, so that recheck is reachability evidence rather
-than a claim of a fresh multicast answer; the continuous A/B serial lifecycle
-record supplies the independent boot evidence. The runner selects the matching
-normal-route source address and checks that it can bind the callback TCP port.
+than a claim of a fresh multicast answer. The continuous serial record is
+retained only for diagnosis; the authenticated B transfer, automatic outage,
+and two fresh B status responses establish the update result. The runner selects
+the matching normal-route source address and checks that it can bind the
+callback TCP port.
 The board then connects **back** to that host address and port. TCP 8266/3232
 are board-side ArduinoOTA listener ports; allowing those ports inbound on the
 host does not allow this reverse connection. The default callback port is
