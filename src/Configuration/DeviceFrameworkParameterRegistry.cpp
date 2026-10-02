@@ -7,6 +7,7 @@
 #include <algorithm>
 #include <stdlib.h>
 #include <math.h>
+#include <string.h>
 
 // Forward declaration for WiFi access
 class DeviceFrameworkWiFi {
@@ -49,9 +50,9 @@ DeviceFrameworkParameterRegistry::DeviceFrameworkParameterRegistry() :
     lastHAResyncAt(0),
     changeCallback(nullptr) {
     instance = this;
-    if (!ensureParameterCapacity(8)) {
-        LOG_ERRORLN(F("Failed to allocate parameter registry"));
-    }
+    // Parameter storage is allocated immediately before framework/core
+    // registration. That lets beforeSetup() reserve an exact sketch-specific
+    // capacity instead of always constructing an eight-entry array here.
     // Initialize fixed-size arrays to null - will allocate during setup
     wifiManagerRefs = nullptr;
     wifiManagerRefCount = 0;
@@ -142,8 +143,21 @@ bool DeviceFrameworkParameterRegistry::hasParameter(const String& id) const {
     return findParameter(id) != nullptr;
 }
 
+bool DeviceFrameworkParameterRegistry::hasParameter(const char* id) const {
+    return findParameter(id) != nullptr;
+}
+
 // Value access
 String DeviceFrameworkParameterRegistry::getValue(const String& id) const {
+    const DeviceFrameworkParameterEntry* entry = findParameter(id);
+    if (entry != nullptr) {
+        return entry->value.asString();
+    }
+
+    return "";
+}
+
+String DeviceFrameworkParameterRegistry::getValue(const char* id) const {
     const DeviceFrameworkParameterEntry* entry = findParameter(id);
     if (entry != nullptr) {
         return entry->value.asString();
@@ -215,17 +229,33 @@ bool DeviceFrameworkParameterRegistry::setValue(const String& id, bool value, De
 
 // Convenience getters with type conversion
 int DeviceFrameworkParameterRegistry::getValueAsInt(const String& id) const {
-    return getValue(id).toInt();
+    const DeviceFrameworkParameterEntry* entry = findParameter(id);
+    return entry ? entry->value.asInt() : 0;
+}
+
+int DeviceFrameworkParameterRegistry::getValueAsInt(const char* id) const {
+    const DeviceFrameworkParameterEntry* entry = findParameter(id);
+    return entry ? entry->value.asInt() : 0;
 }
 
 float DeviceFrameworkParameterRegistry::getValueAsFloat(const String& id) const {
-    return getValue(id).toFloat();
+    const DeviceFrameworkParameterEntry* entry = findParameter(id);
+    return entry ? entry->value.asFloat() : 0.0f;
+}
+
+float DeviceFrameworkParameterRegistry::getValueAsFloat(const char* id) const {
+    const DeviceFrameworkParameterEntry* entry = findParameter(id);
+    return entry ? entry->value.asFloat() : 0.0f;
 }
 
 bool DeviceFrameworkParameterRegistry::getValueAsBool(const String& id) const {
-    String val = getValue(id);
-    return val == "1" || val.equalsIgnoreCase("true") ||
-           val.equalsIgnoreCase("on") || val.equalsIgnoreCase("yes");
+    const DeviceFrameworkParameterEntry* entry = findParameter(id);
+    return entry ? entry->value.asBool() : false;
+}
+
+bool DeviceFrameworkParameterRegistry::getValueAsBool(const char* id) const {
+    const DeviceFrameworkParameterEntry* entry = findParameter(id);
+    return entry ? entry->value.asBool() : false;
 }
 
 const char* DeviceFrameworkParameterRegistry::getValueAsCStr(const String& id) const {
@@ -237,8 +267,25 @@ const char* DeviceFrameworkParameterRegistry::getValueAsCStr(const String& id) c
     return "";
 }
 
+const char* DeviceFrameworkParameterRegistry::getValueAsCStr(const char* id) const {
+    const DeviceFrameworkParameterEntry* entry = findParameter(id);
+    if (entry != nullptr) {
+        return entry->value.c_str();
+    }
+
+    return "";
+}
+
 // Metadata access
 const DeviceFrameworkParameterMetadata* DeviceFrameworkParameterRegistry::getMetadata(const String& id) const {
+    const DeviceFrameworkParameterEntry* entry = findParameter(id);
+    if (entry != nullptr) {
+        return &entry->metadata;
+    }
+    return nullptr;
+}
+
+const DeviceFrameworkParameterMetadata* DeviceFrameworkParameterRegistry::getMetadata(const char* id) const {
     const DeviceFrameworkParameterEntry* entry = findParameter(id);
     if (entry != nullptr) {
         return &entry->metadata;
@@ -1435,23 +1482,31 @@ void DeviceFrameworkParameterRegistry::printRegistry() const {
 
 // Array management helpers
 DeviceFrameworkParameterEntry* DeviceFrameworkParameterRegistry::findParameter(const String& id) {
-    if (parameters == nullptr) {
+    return findParameter(id.c_str());
+}
+
+const DeviceFrameworkParameterEntry* DeviceFrameworkParameterRegistry::findParameter(const String& id) const {
+    return findParameter(id.c_str());
+}
+
+DeviceFrameworkParameterEntry* DeviceFrameworkParameterRegistry::findParameter(const char* id) {
+    if (parameters == nullptr || id == nullptr) {
         return nullptr;
     }
     for (size_t i = 0; i < parameterCount; i++) {
-        if (parameters[i].metadata.id == id) {
+        if (strcmp(parameters[i].metadata.id.c_str(), id) == 0) {
             return &parameters[i];
         }
     }
     return nullptr;
 }
 
-const DeviceFrameworkParameterEntry* DeviceFrameworkParameterRegistry::findParameter(const String& id) const {
-    if (parameters == nullptr) {
+const DeviceFrameworkParameterEntry* DeviceFrameworkParameterRegistry::findParameter(const char* id) const {
+    if (parameters == nullptr || id == nullptr) {
         return nullptr;
     }
     for (size_t i = 0; i < parameterCount; i++) {
-        if (parameters[i].metadata.id == id) {
+        if (strcmp(parameters[i].metadata.id.c_str(), id) == 0) {
             return &parameters[i];
         }
     }
@@ -1460,18 +1515,30 @@ const DeviceFrameworkParameterEntry* DeviceFrameworkParameterRegistry::findParam
 
 bool DeviceFrameworkParameterRegistry::ensureParameterCapacity(size_t required) {
     static constexpr size_t kInitialCapacity = 8;
-    static constexpr size_t kMaximumCapacity = 32;
     if (required <= parameterCapacity) return true;
-    if (required > kMaximumCapacity) {
+    if (required > maximumParameterCapacity()) {
         LOG_ERRORLN(F("DeviceFramework parameter limit exceeded"));
         return false;
     }
 
-    size_t newCapacity = parameterCapacity == 0 ? kInitialCapacity : parameterCapacity;
-    while (newCapacity < required && newCapacity < kMaximumCapacity) newCapacity *= 2;
-    if (newCapacity > kMaximumCapacity) newCapacity = kMaximumCapacity;
+    // Exact capacity hints may leave a non-power-of-two allocation (for
+    // example, ten entries). On an underestimate, grow to the next canonical
+    // 8/16/32 tier rather than doubling that exact capacity to twenty.
+    size_t newCapacity = kInitialCapacity;
+    while (newCapacity < required && newCapacity < maximumParameterCapacity()) newCapacity *= 2;
+    if (newCapacity > maximumParameterCapacity()) newCapacity = maximumParameterCapacity();
 
-    DeviceFrameworkParameterEntry* replacement = new DeviceFrameworkParameterEntry[newCapacity];
+    return reserveParameterCapacity(newCapacity);
+}
+
+bool DeviceFrameworkParameterRegistry::reserveParameterCapacity(size_t required) {
+    if (required <= parameterCapacity) return true;
+    if (required > maximumParameterCapacity()) {
+        LOG_ERRORLN(F("DeviceFramework parameter limit exceeded"));
+        return false;
+    }
+
+    DeviceFrameworkParameterEntry* replacement = new DeviceFrameworkParameterEntry[required];
     if (replacement == nullptr) {
         LOG_ERRORLN(F("Failed to grow parameter registry"));
         return false;
@@ -1479,7 +1546,7 @@ bool DeviceFrameworkParameterRegistry::ensureParameterCapacity(size_t required) 
     for (size_t i = 0; i < parameterCount; ++i) replacement[i] = parameters[i];
     delete[] parameters;
     parameters = replacement;
-    parameterCapacity = newCapacity;
+    parameterCapacity = required;
     return true;
 }
 

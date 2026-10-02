@@ -61,7 +61,9 @@ TestCase tests[] = {
 
     // Group 5: ParameterRegistry Integration
     TEST_ENTRY(test_parameter_registry_integration),
+    TEST_ENTRY(test_parameter_registry_const_char_read_access),
     TEST_ENTRY(test_parameter_registry_ha_origin_updates_shadow_state),
+    TEST_ENTRY(test_parameter_registry_capacity_hint_fallback),
 };
 
 const size_t TEST_COUNT = sizeof(tests) / sizeof(TestCase);
@@ -241,6 +243,12 @@ void setup() {
 
     Serial.println("[TEST]     Registering parameters...");
 
+    // Preserve compile coverage for sketches which stored the original
+    // one-argument beforeSetup function pointer.
+    typedef void (*BeforeSetupLegacySignature)(void (*)());
+    BeforeSetupLegacySignature legacyBeforeSetup = &DeviceFramework::beforeSetup;
+    (void)legacyBeforeSetup;
+
     DeviceFramework::beforeSetup([]() {
         auto& paramRegistry = DeviceFrameworkParameters::getRegistry();
         DeviceFrameworkParameterMetadata testParamMeta;
@@ -264,7 +272,25 @@ void setup() {
         paramRegistry.registerParameter(haSwitchMeta);
         Serial.println("[TEST]     Custom HA parameter registered: testhaswitch");
 
-    });
+        // These schema-only entries exercise the exact four-custom-parameter
+        // allocation hint without adding portal or HA surfaces to the fixture.
+        DeviceFrameworkParameterMetadata capacityHintOneMeta;
+        capacityHintOneMeta.id = "testhinta";
+        capacityHintOneMeta.label = "Test capacity hint A";
+        capacityHintOneMeta.defaultValue = "1";
+        capacityHintOneMeta.maxLength = 1;
+        capacityHintOneMeta.order = 7;
+        paramRegistry.registerParameter(capacityHintOneMeta);
+
+        DeviceFrameworkParameterMetadata capacityHintTwoMeta;
+        capacityHintTwoMeta.id = "testhintb";
+        capacityHintTwoMeta.label = "Test capacity hint B";
+        capacityHintTwoMeta.defaultValue = "1";
+        capacityHintTwoMeta.maxLength = 1;
+        capacityHintTwoMeta.order = 8;
+        paramRegistry.registerParameter(capacityHintTwoMeta);
+
+    }, 4);
 
     // DeviceFramework 2.2 owns station connection through the profile controller.
     // Seed its candidate instead of relying on the ESP SDK's legacy credential slot.

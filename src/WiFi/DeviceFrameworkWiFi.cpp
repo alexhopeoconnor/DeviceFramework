@@ -69,6 +69,10 @@ bool DeviceFrameworkWiFi::setup() {
         wm.portalAddParameter(wifiParams.parameters[i]);
     }
 
+    // WiFiManager retains each parameter pointer in its own _params array.
+    // The registry's outer pointer array is only needed for the loop above.
+    delete[] wifiParams.parameters;
+
     // Profile mode owns both profile selection and reconnect attempts. ESP
     // Wi-Fi has one active station configuration, so it must not persist or
     // auto-reconnect a competing SDK-owned credential.

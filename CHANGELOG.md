@@ -1,5 +1,21 @@
 # Changelog
 
+## 2.9.0
+
+- Add `beforeSetup(callback, expectedCustomParameterCount)` as an advisory
+  startup allocation hint. It reserves exact registry storage before EEPROM
+  emulation allocates its buffer, so constrained sketches can avoid an
+  unnecessary 8-to-16 entry expansion while retaining safe fallback growth.
+- Add direct `const char*` parameter lookup and typed-read APIs, and make the
+  existing typed `String` reads operate on the stored value rather than a
+  temporary `String` copy.
+- Release the temporary outer WiFiManager parameter-pointer array after its
+  entries have been handed to WiFiManager, while retaining the registry-owned
+  parameter objects for the portal lifetime.
+- Add registry occupancy/capacity diagnostics and ESP8266 regression coverage
+  for exact capacity hints, fallback growth, direct reads, and portal pointer
+  ownership.
+
 ## 2.8.4
 
 - Pin WiFiManager 3.2.5, which completes portal HTTP firmware responses before

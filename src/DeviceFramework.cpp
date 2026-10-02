@@ -116,15 +116,44 @@ DeviceFrameworkRestartReason DeviceFramework::getLastRestartReason() {
     return lastRestartReason;
 }
 
-
-
 void DeviceFramework::beforeSetup(void (*registerParametersCallback)()) {
+    beforeSetup(registerParametersCallback, 0);
+}
+
+void DeviceFramework::beforeSetup(void (*registerParametersCallback)(),
+                                  size_t expectedCustomParameterCount) {
     if (beforeSetupCalled) return;  // Already called
 
     // Initialize early logging with default log level
     applyDefaultLogLevel();
 
-    // Setup storage first
+    // Allocate before EEPROM.begin() claims its emulation buffer. A supplied
+    // count reserves exactly the core and custom entries, avoiding the normal
+    // 8->16 growth step on sketches such as the ten-parameter smart switch.
+    auto& parameterRegistry = DeviceFrameworkParameters::getRegistry();
+    const size_t coreParameterCount = DeviceFrameworkParameters::coreParameterCount();
+    bool usedCapacityHint = false;
+    if (expectedCustomParameterCount != 0) {
+        const size_t maximumParameterCount =
+            DeviceFrameworkParameterRegistry::maximumParameterCapacity();
+        if (coreParameterCount <= maximumParameterCount &&
+            expectedCustomParameterCount <= maximumParameterCount - coreParameterCount) {
+            usedCapacityHint = parameterRegistry.reserveParameterCapacity(
+                coreParameterCount + expectedCustomParameterCount
+            );
+        }
+        if (!usedCapacityHint) {
+            LOG_WARNLN(F("Parameter capacity hint ignored; using default growth policy."));
+        }
+    }
+    if (!usedCapacityHint) {
+        // Preserve the former initial eight-entry allocation when no sketch
+        // has supplied a hint, but defer it until setup rather than global
+        // construction.
+        parameterRegistry.ensureParameterCapacity(coreParameterCount);
+    }
+
+    // Storage setup allocates the EEPROM emulation buffer on ESP8266.
     DeviceFrameworkStorage::setup();
 
     // Initialize DeviceFrameworkParameters BEFORE RTC check

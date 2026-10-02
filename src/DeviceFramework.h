@@ -83,8 +83,15 @@ public:
     static DeviceFrameworkRestartReason getLastRestartReason();
 
 
-    // Initialize core systems with optional callback for custom parameter registration
+    // Initialize core systems with an optional callback for custom parameter
+    // registration.
     static void beforeSetup(void (*registerParametersCallback)() = nullptr);
+
+    // Reserve exact storage for the six framework parameters plus the expected
+    // number of custom parameters before either group is registered. The count
+    // is an allocation hint, not a hard registration limit.
+    static void beforeSetup(void (*registerParametersCallback)(),
+                            size_t expectedCustomParameterCount);
 
     // Sets up the framework
     static void setup();

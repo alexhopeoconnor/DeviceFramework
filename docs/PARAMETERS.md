@@ -54,12 +54,46 @@ void setup() {
 }
 ```
 
+### Size the registry for a fixed schema
+
+On a constrained target, pass the number of custom parameters as the second
+`beforeSetup` argument. The framework then reserves exactly that many entries
+in addition to its six core parameters before any registration occurs:
+
+```cpp
+void setup() {
+    FirmwareIdentity::configure();
+    // Four sketch parameters + six core parameters: allocate ten entries,
+    // rather than start at eight and grow to sixteen while registration runs.
+    DeviceFramework::beforeSetup(registerParameters, 4);
+    DeviceFramework::setup();
+}
+```
+
+This is an allocation hint, not a hard parameter maximum. If the sketch later
+registers more than it declared, the registry grows normally and the extra
+parameters remain valid. Omit the argument (or pass `0`) to preserve the
+default growth policy.
+
 `id` is the durable contract. It is used by storage, an optional local profile,
 and generated integration identifiers. Treat it as an API key: use short,
 lower-case, alphanumeric IDs and do not rename one merely to improve a label.
 A label, icon, unit, entity presentation, or default can evolve without a
 configuration-schema migration. A semantic change to a saved value requires a
 migration; see [Configuration and profiles](CONFIGURATION.md).
+
+Typed reads accept the same `const char*` IDs directly, without constructing a
+temporary `String`. Keep descriptive stable IDs; do not shorten an ID merely
+to fit a platform's small-string optimisation:
+
+```cpp
+void refreshSampleInterval() {
+    const uint32_t intervalMs = static_cast<uint32_t>(
+        parameters.getValueAsInt(kSampleInterval)
+    ) * 1000UL;
+    // Use intervalMs in the sketch's scheduling logic.
+}
+```
 
 ## Schema checklist
 

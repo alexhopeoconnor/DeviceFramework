@@ -61,7 +61,7 @@ demonstration indicator for that reason.
 | Phase | Framework work | Sketch responsibility |
 | --- | --- | --- |
 | Before `beforeSetup()` | Nothing has initialized storage or network services. | Set output pins to their safe electrical state; configure `DeviceFrameworkUIConfig` and web limits if used. |
-| `beforeSetup(callback)` | Initializes storage and core parameters, runs `callback`, then handles reset tracking. | Register every custom parameter and set defaults. Do not start Wi-Fi, MQTT, or long work. |
+| `beforeSetup(callback, hint?)` | Reserves parameter storage, initializes storage and core parameters, runs `callback`, then handles reset tracking. | Register every custom parameter and set defaults. On constrained targets, pass the expected custom-parameter count as `hint`; it is not a limit. Do not start Wi-Fi, MQTT, or long work. |
 | `setup()` | Loads the saved record, applies an eligible profile, then configures Wi-Fi, OTA, HA/MQTT, and optional web service. | Keep native HA entities alive and configure their metadata before this call. Then apply loaded state to hardware. |
 | `loop()` before usable Wi-Fi | Services the WiFiManager portal and reset/web restart plumbing. | Continue only bounded local work. Portal mode is a normal state. |
 | `loop()` after stable Wi-Fi | Starts/maintains mDNS, OTA, MQTT, HA discovery/state, and optional web work. | Continue sensor sampling, state machines, and output enforcement without blocking. |

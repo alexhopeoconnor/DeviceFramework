@@ -35,7 +35,9 @@ void test_mqtt_command_handlers();
 
 // Group 5: ParameterRegistry Integration
 void test_parameter_registry_integration();
+void test_parameter_registry_const_char_read_access();
 void test_parameter_registry_ha_origin_updates_shadow_state();
+void test_parameter_registry_capacity_hint_fallback();
 
 extern bool resourceLimitsConfigured;
 // Group 6: Web Interface

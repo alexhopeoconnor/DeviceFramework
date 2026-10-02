@@ -20,13 +20,17 @@ private:
 
 public:
     // Core parameter IDs (public for registration in WiFi module)
-    // NOTE: If you add or remove core parameter IDs below, update CONFIG_minParameters in DeviceFrameworkConfig.h to match!
+    // Keep coreParameterCount() in sync if this list changes.
     static const char* PARAM_DEVICE_NAME;
     static const char* PARAM_MQTT_SERVER;
     static const char* PARAM_MQTT_PORT;
     static const char* PARAM_MQTT_USER;
     static const char* PARAM_MQTT_PASS;
     static const char* PARAM_LOG_LEVEL;
+
+    // Used by DeviceFramework::beforeSetup() to size the registry before
+    // core registration. This does not allocate storage.
+    static size_t coreParameterCount() { return 6; }
 
     // Initialize and register core framework parameters
     static void initialize();

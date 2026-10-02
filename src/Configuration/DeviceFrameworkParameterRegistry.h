@@ -17,6 +17,7 @@
 class HAMqtt;
 class WiFiManager;
 class HAText;
+class DeviceFramework;
 
 // Combined parameter storage - metadata and value together
 struct DeviceFrameworkParameterEntry {
@@ -36,6 +37,13 @@ private:
     DeviceFrameworkParameterEntry* parameters;
     size_t parameterCount;
     size_t parameterCapacity;
+
+    // Startup-only exact allocation used by DeviceFramework::beforeSetup().
+    // Keeping this private prevents late reallocation after callers may have
+    // borrowed metadata pointers.
+    bool reserveParameterCapacity(size_t required);
+    static constexpr size_t maximumParameterCapacity() { return 32; }
+    friend class DeviceFramework;
 
     // References to created WiFiManager parameters (fixed-size arrays)
     WiFiManagerParameterRef* wifiManagerRefs;
@@ -76,6 +84,8 @@ public:
     // Array management helpers
     DeviceFrameworkParameterEntry* findParameter(const String& id);
     const DeviceFrameworkParameterEntry* findParameter(const String& id) const;
+    DeviceFrameworkParameterEntry* findParameter(const char* id);
+    const DeviceFrameworkParameterEntry* findParameter(const char* id) const;
     bool addParameter(const DeviceFrameworkParameterMetadata& meta);
     bool ensureParameterCapacity(size_t required);
 
@@ -91,9 +101,11 @@ public:
     // Parameter registration
     bool registerParameter(const DeviceFrameworkParameterMetadata& meta);
     bool hasParameter(const String& id) const;
+    bool hasParameter(const char* id) const;
 
     // Value access
     String getValue(const String& id) const;
+    String getValue(const char* id) const;
     bool setValue(const String& id, const String& value, DeviceFrameworkParameterUpdateOrigin origin = DeviceFrameworkParameterUpdateOrigin::DEVICE);
     bool setValue(const String& id, const char* value, DeviceFrameworkParameterUpdateOrigin origin = DeviceFrameworkParameterUpdateOrigin::DEVICE);  // Explicit overload to prevent const char* -> bool conversion
     bool setValue(const String& id, int value, DeviceFrameworkParameterUpdateOrigin origin = DeviceFrameworkParameterUpdateOrigin::DEVICE);
@@ -102,12 +114,17 @@ public:
 
     // Convenience getters with type conversion
     int getValueAsInt(const String& id) const;
+    int getValueAsInt(const char* id) const;
     float getValueAsFloat(const String& id) const;
+    float getValueAsFloat(const char* id) const;
     bool getValueAsBool(const String& id) const;
+    bool getValueAsBool(const char* id) const;
     const char* getValueAsCStr(const String& id) const;
+    const char* getValueAsCStr(const char* id) const;
 
     // Metadata access
     const DeviceFrameworkParameterMetadata* getMetadata(const String& id) const;
+    const DeviceFrameworkParameterMetadata* getMetadata(const char* id) const;
     ParameterIdList getParameterIds() const;
     ParameterIdList getParameterIdsSorted() const;  // Returns IDs sorted by order field
     ParameterIdList getParameterIds(DeviceFrameworkParameterSource source) const;  // Returns IDs filtered by source
@@ -141,6 +158,8 @@ public:
     void setChangeCallback(ParameterChangeCallback callback);
 
     // Debug
+    size_t getParameterCount() const { return parameterCount; }
+    size_t getAllocatedCapacity() const { return parameterCapacity; }
     void printRegistry() const;
 };
 

@@ -19,7 +19,7 @@ code to their internal lifecycle or data layout.
 | --- | --- |
 | `configureApplication(id, firmwareVersion, schema, migration?)` | Call once before setup. Establishes persistent application identity and optional semantic migration. |
 | `getLibraryVersion()`, `getApplicationIdentity()` | Read release/application identity for diagnostics. |
-| `beforeSetup(callback?)` | Initializes core setup state and invokes the one place to register custom parameters/defaults. Call before `setup()` when the sketch needs registration. |
+| `beforeSetup(callback?, expectedCustomParameterCount?)` | Initializes core setup state and invokes the one place to register custom parameters/defaults. The optional count reserves exact storage for the six core plus expected custom parameters; it is a hint, not a limit. |
 | `setup()` | Loads saved configuration/profile input and initializes framework services. Call exactly once. |
 | `loop()` | Service portal/network/mDNS/OTA/MQTT/web work every application loop. |
 | `isInConfigMode()` | Read whether WiFiManager provisioning mode is active. |
@@ -46,10 +46,11 @@ Important members are:
 | --- | --- |
 | `registerParameter(metadata)` | Add a custom parameter during `beforeSetup`. Returns false for invalid/duplicate metadata. |
 | `setDefaultValue(id, value)` | Change a registered parameter's first-boot default before setup. |
-| `getValue*` / `getValueAsInt/Float/Bool/CStr` | Read the current validated value. |
+| `getValue*` / `getValueAsInt/Float/Bool/CStr` | Read the current validated value. Pass a stable `const char*` ID (such as a `constexpr char[]`) for allocation-free typed reads. |
 | `setValue(id, value, origin?)` | Validate, update runtime value, and sync supported surfaces. Direct calls do not save automatically. |
 | `setChangeCallback(callback)` | Observe actual changes. Do not expect load-time callback replay; keep work non-blocking. |
 | `hasParameter`, `getMetadata`, `getParameterIds*` | Inspect schema/registry for diagnostics or UI integration. |
+| `getParameterCount()`, `getAllocatedCapacity()` | Read registry occupancy/allocation for diagnostics without allocating. |
 | `getHADeviceForParameter(id)` | Advanced access to the framework-created HA entity when a sketch genuinely needs it. |
 
 Read [Parameters](PARAMETERS.md) for metadata examples, persistence rules, and
