@@ -113,7 +113,7 @@ void setup() {
     makeOutputSafe();
     FirmwareIdentity::configure();
     configureEntities();
-    DeviceFramework::beforeSetup(registerParameters);
+    DeviceFramework::beforeSetup(registerParameters, 1);
     DeviceFramework::getParameterRegistry().setChangeCallback(onParameterChange);
     DeviceFramework::setup();
 

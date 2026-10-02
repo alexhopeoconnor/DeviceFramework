@@ -35,7 +35,7 @@ void setup() {
         interval.haConstraints.step = 1000;
         interval.haUnitOfMeasurement = "ms";
         parameters.registerParameter(interval);
-    });
+    }, 1);
 
     uptimeSensor.setName("Uptime");
     uptimeSensor.setUnitOfMeasurement("s");

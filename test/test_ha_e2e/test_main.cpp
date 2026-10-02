@@ -97,7 +97,7 @@ void setup() {
     delay(5000);
     Serial.println("[HA_E2E] compact DeviceFramework HA/MQTT fixture starting");
 
-    DeviceFramework::beforeSetup([]() { registerHAE2EParameters(); });
+    DeviceFramework::beforeSetup([]() { registerHAE2EParameters(); }, 3);
     DeviceFrameworkWiFi::preloadWiFi(TEST_WIFI_SSID, TEST_WIFI_PASSWORD);
     DeviceFramework::setup();
 
