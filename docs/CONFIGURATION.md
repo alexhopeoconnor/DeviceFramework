@@ -50,7 +50,15 @@ your-firmware/
 └── profiles.local/home.json          # ignored real profile
 ```
 
-The ignored `platformio.local.ini.<machine>` only selects a local profile, OTA endpoint, or isolated build directory; real values remain in the JSON profile. Keep a consuming fixture's declared dependencies at their released versions while testing its checked-out source. Do not use `lib_extra_dirs`, a broad sibling-worktree parent, or a local override for a tagged transitive dependency: any of those can combine current headers with a released archive or discover nested test/build directories as project inputs. Keep coordinated untagged dependency work in the dependency's own framework project, then adopt its release here. DeviceFramework's package hook uses PlatformIO/SCons and Python’s standard library to generate a C++ header only under `.pio`. Sketches do not declare `extra_scripts`, manage Python, or parse credentials. With no `custom_device_profile`, the hook does nothing.
+The ignored `platformio.local.ini.<machine>` only selects a local profile, OTA endpoint, or isolated build directory; real values remain in the JSON profile. Keep a consuming fixture's declared dependencies at their released versions while testing its checked-out source. Do not use `lib_extra_dirs`, a broad sibling-worktree parent, or a local override for a tagged transitive dependency: any of those can combine current headers with a released archive or discover nested test/build directories as project inputs. Keep coordinated untagged dependency work in the dependency's own framework project, then adopt its release here. DeviceFramework's package hook uses PlatformIO/SCons and Python’s standard library to validate the profile and generate a C++ header only under `.pio`. It deliberately never configures an uploader: library hooks run on a cloned builder environment, not PlatformIO's final project uploader. With no `custom_device_profile`, the hook does nothing.
+
+A consuming project that supports authenticated ESPOTA declares its own
+project-level post-upload hook. That hook reads the selected ignored profile
+only for a real upload and supplies its `device_password` to the host uploader.
+Normal builds do not invoke it. Any prompt or stdin override is host-only and
+must never become a C++ build flag or generated firmware source. Keep the hook
+at project scope, do not put `--auth` in tracked PlatformIO configuration, and
+do not log the resolved password.
 
 ## Profile format and validation
 
@@ -130,7 +138,7 @@ void rotateDevicePassword() {
 }
 ```
 
-The optional web interface provides the same operation at **System Controls → Device Password**. The one active value protects the provisioning AP, Arduino OTA, HTTP Basic authentication, and WebSerial. For OTA, the build-time profile supplies `espota --auth`; after runtime rotation, update that ignored JSON value before the next OTA upload. Matching the JSON only authenticates the uploader—the verified V4 record remains the device’s runtime source of truth. ESP32 OTA also requires an A/B-capable partition table installed by USB/serial; see [Target organization](TARGETS.md#esp32-ota-partitions).
+The optional web interface provides the same operation at **System Controls → Device Password**. The one active value protects the provisioning AP, Arduino OTA, HTTP Basic authentication, and WebSerial. For OTA, the consuming project's project-level host uploader hook reads the selected ignored profile for the uploader's `--auth` value only during an upload; DeviceFramework's library hook never mutates PlatformIO uploader flags. After runtime rotation, update that ignored JSON value before the next OTA upload. Matching the JSON only authenticates the uploader—the verified V4 record remains the device’s runtime source of truth. ESP32 OTA also requires an A/B-capable partition table installed by USB/serial; see [Target organization](TARGETS.md#esp32-ota-partitions).
 
 ## ESP8266 mDNS heap guard
 

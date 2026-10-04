@@ -15,6 +15,9 @@ with an unavailable broker are three normal but different states.
 | `.local` name does not resolve | LAN/client multicast DNS support is unavailable or ESP8266 mDNS is protecting heap. | Use the DHCP IP to distinguish addressability from name resolution. See the mDNS guard in [Configuration](CONFIGURATION.md). |
 | ESP8266 web page returns `503` under concurrent browsing | The streamed-response guard is preserving heap. | Measure heap/largest block and tune only through [Web resource limits](WEB_RESOURCES.md). |
 | Password works in one surface but OTA/web fails after rotation | Existing transports still use the old startup configuration. | Call `DeviceFramework::restart()` after `setDevicePassword()` and update the local OTA uploader credential. |
+| ESPOTA does not receive the selected profile password | A library profile hook cannot configure PlatformIO's final uploader environment. | Use the consuming project's project-level post-upload hook; it should read the selected ignored profile only for an actual upload, add the uploader authentication value there, and never log it. |
+| ESPOTA reports `Authentication Failed` | The active stored password and the selected uploader value differ. | Confirm the intended runtime rotation/reconcile state, then update the ignored local profile or deliberately rotate the device value; do not place a credential in tracked PlatformIO configuration. |
+| ESPOTA authenticates but reports no callback/response | The board accepted authentication but could not open the uploader's callback connection. | Verify the computer's selected host port and firewall rule, route/source address, and Wi-Fi client isolation. |
 | Output briefly energises on reboot | Hardware safe state occurs too late or requested state is used as applied state. | Drive GPIO safe before framework setup, then evaluate interlocks. See [Protected output](scenarios/protected-output-controller.md). |
 
 ## Minimal isolation sequence

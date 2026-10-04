@@ -49,9 +49,14 @@ there was no framework marker and does not distinguish power loss, button,
 watchdog, or other external reset causes.
 
 The value must be empty (intentionally open local access) or 8–31 characters.
-If OTA is part of the deployment process, update the ignored local uploader
-credential as part of the same rotation. The profile file does not become the
-runtime authority just because it contains the matching value.
+If OTA is part of the deployment process, update the selected ignored local
+profile as part of the same rotation. A consuming firmware's project-level
+upload hook reads that profile only to authenticate a real host-side ESPOTA
+transfer. DeviceFramework's library profile hook only validates and compiles a
+private firmware header; it intentionally does not mutate PlatformIO uploader
+flags because library hooks run in a cloned builder environment. The profile
+file does not become the runtime authority just because it contains the
+matching value.
 
 ## Reset scopes
 

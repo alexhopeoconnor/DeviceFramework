@@ -38,6 +38,7 @@ run_test() {
 
 "$project_dir/tools/check-web-assets.sh"
 "$project_dir/tools/check-ota-partitions.sh"
+python3 "$project_dir/scripts/test-profile-hook.py"
 run_test compile --platform esp8266
 run_test compile --platform esp8266 --profile-fixture
 run_test compile --platform esp32

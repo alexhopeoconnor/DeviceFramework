@@ -1,5 +1,13 @@
 # Changelog
 
+## 2.9.1
+
+- Keep the library profile hook limited to validation and private header
+  generation; it no longer attempts to mutate ESPOTA upload flags from a
+  cloned library-builder environment.
+- Document the project-level, host-only uploader boundary and add a regression
+  check that proves profile compilation cannot modify uploader flags.
+
 ## 2.9.0
 
 - Add `beforeSetup(callback, expectedCustomParameterCount)` as an advisory

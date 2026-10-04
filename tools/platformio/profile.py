@@ -105,14 +105,13 @@ device_password = text(document.get("device_password"), "device_password")
 if device_password and not 8 <= len(device_password) <= 31:
     fail("device_password must be empty or 8-31 characters")
 
-# The profile is the only source for the shared OTA password. Endpoint and
-# transport settings remain project-local PlatformIO options, while espota gets
-# its authentication flag from the same device_password compiled into firmware.
-if option("upload_protocol") == "espota" and device_password:
-    configured_upload_flags = option("upload_flags") or ""
-    if "--auth" in str(configured_upload_flags):
-        fail("remove espota --auth from PlatformIO config; use profile device_password")
-    env.Append(UPLOAD_FLAGS=["--auth={}".format(device_password)])
+# This is a library extra script. PlatformIO evaluates library extra scripts on
+# a cloned builder environment, which is not the project's final uploader
+# environment. Keep this hook limited to validating and compiling the profile;
+# in particular, it must never add ESPOTA authentication flags. A consuming
+# project that uses ESPOTA owns a project-level post upload hook, where the
+# selected ignored profile can be read independently for an actual upload
+# without changing the firmware profile or normal-build behavior.
 
 parameters = document.get("parameters", {})
 if not isinstance(parameters, dict):
